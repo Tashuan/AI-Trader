@@ -1687,6 +1687,123 @@ def init_database():
         ON stock_analysis_snapshots(market, symbol)
     """)
 
+    # Agent configs table - stores full agent configuration for the agent manager
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER UNIQUE NOT NULL,
+            tagline TEXT,
+            bio TEXT,
+            risk_tolerance TEXT DEFAULT 'moderate',
+            position_sizing TEXT DEFAULT 'medium',
+            hold_period TEXT DEFAULT 'swing',
+            max_positions INTEGER DEFAULT 6,
+            confidence_threshold REAL DEFAULT 0.60,
+            fomo_resistance REAL DEFAULT 0.70,
+            loss_aversion REAL DEFAULT 0.70,
+            conviction_multiplier REAL DEFAULT 1.2,
+            voice TEXT,
+            emoji_frequency TEXT DEFAULT 'rare',
+            publishes_reasoning INTEGER DEFAULT 1,
+            trash_talk INTEGER DEFAULT 0,
+            strategy_type TEXT,
+            watchlist_json TEXT,
+            quirks_json TEXT,
+            status TEXT DEFAULT 'inactive',
+            auto_start INTEGER DEFAULT 0,
+            poll_interval INTEGER DEFAULT 300,
+            api_base TEXT DEFAULT 'http://localhost:8000/api',
+            initial_cash REAL DEFAULT 100000.0,
+            config_json TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_configs_agent
+        ON agent_configs(agent_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_configs_status
+        ON agent_configs(status)
+    """)
+
+    # Agent stats table - aggregated trading statistics per agent
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_stats (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER UNIQUE NOT NULL,
+            total_trades INTEGER DEFAULT 0,
+            winning_trades INTEGER DEFAULT 0,
+            losing_trades INTEGER DEFAULT 0,
+            total_profit REAL DEFAULT 0,
+            total_loss REAL DEFAULT 0,
+            largest_win REAL DEFAULT 0,
+            largest_loss REAL DEFAULT 0,
+            avg_win REAL DEFAULT 0,
+            avg_loss REAL DEFAULT 0,
+            win_rate REAL DEFAULT 0,
+            profit_factor REAL DEFAULT 0,
+            best_streak INTEGER DEFAULT 0,
+            worst_streak INTEGER DEFAULT 0,
+            current_streak INTEGER DEFAULT 0,
+            total_signals INTEGER DEFAULT 0,
+            total_strategies INTEGER DEFAULT 0,
+            total_discussions INTEGER DEFAULT 0,
+            total_replies INTEGER DEFAULT 0,
+            max_drawdown REAL DEFAULT 0,
+            sharpe_ratio REAL,
+            last_trade_at TEXT,
+            last_stat_update TEXT,
+            metadata_json TEXT,
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_stats_agent
+        ON agent_stats(agent_id)
+    """)
+
+    # Agent trade log - detailed trade history for the agent manager
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_trade_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            signal_id INTEGER,
+            market TEXT,
+            symbol TEXT,
+            token_id TEXT,
+            outcome TEXT,
+            side TEXT,
+            action TEXT,
+            price REAL,
+            quantity REAL,
+            trade_value REAL,
+            fee REAL,
+            pnl REAL,
+            status TEXT DEFAULT 'open',
+            opened_at TEXT,
+            closed_at TEXT,
+            metadata_json TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_trade_log_agent_created
+        ON agent_trade_log(agent_id, created_at DESC)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_trade_log_status
+        ON agent_trade_log(status)
+    """)
+
     if not using_postgres():
         conn.commit()
     elif previous_autocommit is not None:

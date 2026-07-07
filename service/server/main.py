@@ -39,13 +39,14 @@ if os.getenv("API_STDERR_LOG", "false").strip().lower() in {"1", "true", "yes", 
 logger = logging.getLogger(__name__)
 
 from cache import get_cache_status
-from database import init_database, get_database_status
+from database import init_database, get_database_status, get_db_connection
 from routes import create_app
 from routes_shared import api_access_log_enabled
 from tasks import (
     _update_trending_cache,
     background_tasks_enabled_for_api,
     start_background_tasks,
+    _running_tasks,
 )
 
 if not api_access_log_enabled():
@@ -85,13 +86,38 @@ async def startup_event():
     _update_trending_cache()
     if not background_tasks_enabled_for_api():
         logger.info(
-            "API background tasks disabled. Run `python service/server/worker.py` "
-            "to process prices, profit history, settlements, and market intel."
+            "API background tasks disabled by env var AI_TRADER_API_BACKGROUND_TASKS=false. "
+            "Run `python service/server/worker.py` to process prices, profit history, settlements, and market intel."
         )
         return
 
     started = start_background_tasks(logger)
     logger.info("Background tasks started: %s", len(started))
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Graceful shutdown — cancel background tasks and checkpoint WAL."""
+    logger.info("Shutting down: cancelling %d background tasks...", len(_running_tasks))
+    for name, task in _running_tasks.items():
+        if not task.done():
+            task.cancel()
+            logger.info("  cancelled: %s", name)
+    # Wait for tasks to finish cancellation
+    for name, task in _running_tasks.items():
+        try:
+            await task
+        except Exception:
+            pass
+    # Checkpoint WAL so all data is flushed to the main DB file
+    try:
+        conn = get_db_connection()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.close()
+        logger.info("WAL checkpointed — all data flushed to disk")
+    except Exception as e:
+        logger.warning("WAL checkpoint failed: %s", e)
+    logger.info("Shutdown complete.")
 
 
 # ==================== Run ====================

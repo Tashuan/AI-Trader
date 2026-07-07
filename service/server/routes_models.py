@@ -307,3 +307,56 @@ class PointsTransferRequest(BaseModel):
 
 class PointsExchangeRequest(BaseModel):
     amount: int
+
+
+class AgentConfigCreate(BaseModel):
+    name: str
+    email: Optional[str] = None
+    password: Optional[str] = None
+    tagline: str = ""
+    bio: str = ""
+    risk_tolerance: str = "moderate"
+    position_sizing: str = "medium"
+    hold_period: str = "swing"
+    max_positions: int = 6
+    confidence_threshold: float = 0.60
+    fomo_resistance: float = 0.70
+    loss_aversion: float = 0.70
+    conviction_multiplier: float = 1.2
+    voice: str = ""
+    emoji_frequency: str = "rare"
+    publishes_reasoning: bool = True
+    trash_talk: bool = False
+    strategy_type: str = ""
+    watchlist: Optional[List[str]] = None
+    quirks: Optional[List[str]] = None
+    initial_cash: float = 100000.0
+    auto_start: bool = False
+    poll_interval: int = 300
+    api_base: str = "http://localhost:8000/api"
+    generate_files: bool = True
+
+
+class AgentConfigUpdate(BaseModel):
+    tagline: Optional[str] = None
+    bio: Optional[str] = None
+    risk_tolerance: Optional[str] = None
+    position_sizing: Optional[str] = None
+    hold_period: Optional[str] = None
+    max_positions: Optional[int] = None
+    confidence_threshold: Optional[float] = None
+    fomo_resistance: Optional[float] = None
+    loss_aversion: Optional[float] = None
+    conviction_multiplier: Optional[float] = None
+    voice: Optional[str] = None
+    emoji_frequency: Optional[str] = None
+    publishes_reasoning: Optional[bool] = None
+    trash_talk: Optional[bool] = None
+    strategy_type: Optional[str] = None
+    watchlist: Optional[List[str]] = None
+    quirks: Optional[List[str]] = None
+    status: Optional[str] = None
+    auto_start: Optional[bool] = None
+    poll_interval: Optional[int] = None
+    api_base: Optional[str] = None
+    generate_files: bool = False

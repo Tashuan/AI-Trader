@@ -1245,8 +1245,33 @@ DEFAULT_BACKGROUND_TASKS = ",".join(BACKGROUND_TASK_REGISTRY.keys())
 
 
 def background_tasks_enabled_for_api() -> bool:
-    """API workers default to HTTP-only; run worker.py for background loops."""
-    return _env_bool("AI_TRADER_API_BACKGROUND_TASKS", False)
+    """Background tasks run by default in the API server process."""
+    return _env_bool("AI_TRADER_API_BACKGROUND_TASKS", True)
+
+
+_running_tasks: dict[str, asyncio.Task] = {}
+
+
+def register_running_task(name: str, task: asyncio.Task) -> None:
+    _running_tasks[name] = task
+
+
+def get_background_task_status() -> dict:
+    enabled = get_enabled_background_task_names()
+    running: list[dict] = []
+    for name, task in _running_tasks.items():
+        running.append({
+            "name": name,
+            "done": task.done(),
+            "cancelled": task.cancelled(),
+        })
+    return {
+        "enabled_by_default": background_tasks_enabled_for_api(),
+        "enabled_tasks": enabled,
+        "running": running,
+        "active_count": sum(1 for t in _running_tasks.values() if not t.done()),
+        "total_count": len(_running_tasks),
+    }
 
 
 def get_enabled_background_task_names() -> list[str]:
@@ -1261,5 +1286,7 @@ def start_background_tasks(logger: Optional[Any] = None) -> list[asyncio.Task]:
         task_func = BACKGROUND_TASK_REGISTRY[name]
         if logger:
             logger.info("Starting background task: %s", name)
-        started.append(asyncio.create_task(task_func(), name=f"ai-trader:{name}"))
+        task = asyncio.create_task(task_func(), name=f"ai-trader:{name}")
+        register_running_task(name, task)
+        started.append(task)
     return started

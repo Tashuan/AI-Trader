@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { Link, useLocation } from 'react-router-dom'
 
-import { AgentName, type AgentInfo, hasPermission, isVerifiedAgent, useLanguage, useTheme } from './appShared'
+import { API_BASE, AgentName, type AgentInfo, hasPermission, isVerifiedAgent, useLanguage, useTheme } from './appShared'
 
 export function Toast({ message, type, onClose }: { message: string, type: 'success' | 'error', onClose: () => void }) {
   useEffect(() => {
@@ -17,29 +17,6 @@ export type NotificationCounts = {
   discussion: number
   strategy: number
   experiment: number
-}
-
-function LanguageSwitcher() {
-  const { language, setLanguage } = useLanguage()
-
-  return (
-    <div className="control-pill-group">
-      <button
-        type="button"
-        onClick={() => setLanguage('zh')}
-        className={`control-pill ${language === 'zh' ? 'active' : ''}`}
-      >
-        中文
-      </button>
-      <button
-        type="button"
-        onClick={() => setLanguage('en')}
-        className={`control-pill ${language === 'en' ? 'active' : ''}`}
-      >
-        EN
-      </button>
-    </div>
-  )
 }
 
 function ThemeSwitcher() {
@@ -59,11 +36,77 @@ function ThemeSwitcher() {
   )
 }
 
+type BgTaskStatus = {
+  enabled_by_default: boolean
+  enabled_tasks: string[]
+  running: { name: string; done: boolean; cancelled: boolean }[]
+  active_count: number
+  total_count: number
+}
+
+export function BackgroundTaskIndicator() {
+  const [status, setStatus] = useState<BgTaskStatus | null>(null)
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/background-tasks/status`)
+        if (res.ok) {
+          setStatus(await res.json())
+        }
+      } catch {
+        // silent fail
+      }
+    }
+    poll()
+    const interval = setInterval(poll, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  if (!status) return null
+
+  const running = status.running || []
+  const isActive = (status.active_count || 0) > 0
+  const dotClass = isActive ? 'bg-task-dot--active' : 'bg-task-dot--inactive'
+  const label = isActive
+    ? `${status.active_count}/${status.total_count} tasks running`
+    : 'Background tasks off'
+
+  return (
+    <div className="bg-task-indicator" onClick={() => setExpanded(!expanded)}>
+      <span className={`bg-task-dot ${dotClass}`} />
+      <span className="bg-task-label">{label}</span>
+      {expanded && (
+        <div className="bg-task-tooltip">
+          <div className="bg-task-tooltip-title">Background Tasks</div>
+          <div className="bg-task-tooltip-row">
+            <span>Default enabled:</span>
+            <strong>{status.enabled_by_default ? 'Yes' : 'No'}</strong>
+          </div>
+          {running.length > 0 ? (
+            running.map((task) => (
+              <div key={task.name} className="bg-task-tooltip-row">
+                <span>{task.name}</span>
+                <strong style={{ color: task.done ? 'var(--text-muted)' : 'var(--success)' }}>
+                  {task.cancelled ? 'cancelled' : task.done ? 'done' : 'running'}
+                </strong>
+              </div>
+            ))
+          ) : (
+            <div className="bg-task-tooltip-empty">No tasks registered</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function TopbarControls() {
   return (
     <div className="topbar-controls">
+      <BackgroundTaskIndicator />
       <ThemeSwitcher />
-      <LanguageSwitcher />
     </div>
   )
 }
@@ -91,6 +134,12 @@ export function Sidebar({
   const agentToken = agentInfo?.token
 
   const navItems = [
+    { path: '/agents', icon: '🤖', label: 'Agents', requiresAuth: false },
+    { path: '/agent-manager', icon: '⚙️', label: 'Agent Manager', requiresAuth: false },
+    { path: '/agent-builder', icon: '✨', label: 'Agent Builder', requiresAuth: false },
+    { path: '/research', icon: '🔬', label: 'Research', requiresAuth: false },
+    { path: '/compare', icon: '⚖️', label: 'Compare', requiresAuth: false },
+    { path: '/trades', icon: '📋', label: 'Trade Log', requiresAuth: false },
     { path: '/financial-events', icon: '🗞️', label: language === 'zh' ? '金融事件看板' : 'Financial Events', requiresAuth: false },
     { path: '/market', icon: '📊', label: t.nav.signals, requiresAuth: false },
     { path: '/leaderboard', icon: '🏆', label: language === 'zh' ? '排行榜' : 'Leaderboard', requiresAuth: false },

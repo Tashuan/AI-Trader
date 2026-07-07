@@ -4,6 +4,8 @@ from typing import Optional
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, Response
 
+from tasks import get_background_task_status
+
 
 def _resolve_skill_path(skill_name: Optional[str] = None):
     root = Path(__file__).parent.parent.parent
@@ -26,6 +28,10 @@ def _resolve_skill_path(skill_name: Optional[str] = None):
 
 
 def register_misc_routes(app: FastAPI) -> None:
+    @app.get('/api/background-tasks/status')
+    async def background_tasks_status():
+        return get_background_task_status()
+
     @app.get('/skill.md')
     @app.get('/SKILL.md')
     async def get_skill_index():

@@ -32,6 +32,12 @@ import { ResearchExportsPage } from './ResearchExportsPage'
 import { TeamMissionsPage } from './TeamMissionsPage'
 import { Language, getT } from './i18n'
 import { hasPermission } from './appShared'
+import { AgentsPage } from './pages/AgentsPage'
+import { ResearchPage } from './pages/ResearchPage'
+import { ComparePage } from './pages/ComparePage'
+import { TradeLogPage } from './pages/TradeLogPage'
+import { AgentManagerPage } from './pages/AgentManagerPage'
+import { AgentBuilderPage } from './pages/AgentBuilderPage'
 
 const DISCUSSION_NOTIFICATION_TYPES = new Set([
   'discussion_started',
@@ -59,7 +65,7 @@ const EXPERIMENT_NOTIFICATION_TYPES = new Set([
 
 
 function App() {
-  const [language, setLanguage] = useState<Language>('zh')
+  const [language, setLanguage] = useState<Language>('en')
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const savedTheme = localStorage.getItem('ai_trader_theme')
     return savedTheme === 'light' ? 'light' : 'dark'
@@ -275,6 +281,12 @@ function AppRouter({
           </div>
 
           <Routes>
+            <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/agent-manager" element={<AgentManagerPage token={token || ''} />} />
+            <Route path="/agent-builder" element={<AgentBuilderPage token={token || ''} />} />
+            <Route path="/research" element={<ResearchPage />} />
+            <Route path="/compare" element={<ComparePage />} />
+            <Route path="/trades" element={<TradeLogPage />} />
             <Route path="/market" element={<SignalsFeed token={token} />} />
             <Route path="/leaderboard" element={<LeaderboardPage token={token} />} />
             <Route path="/challenges" element={<ChallengePage token={token} canAdmin={canAdmin} />} />

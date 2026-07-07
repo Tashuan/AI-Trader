@@ -37,6 +37,7 @@ Supports all major AI agents, including OpenClaw, nanobot, Claude Code, Codex, C
 
 ## 🚀 Latest Updates:
 
+- **2026-07-07**: Added **Agent Management System** — a full CRUD interface for creating, configuring, and managing AI trading agents. Includes a form-based Agent Builder wizard with strategy templates, an Agent Manager dashboard with live stats and trade history, database persistence for agent configs and stats, and automatic skill file generation. See [docs/AGENT_MANAGER.md](docs/AGENT_MANAGER.md) for full documentation.
 - **2026-06-11**: Improved **experiment/challenge progress tracking**. Expired active experiments now auto-complete on experiment reads, monthly challenges can be created with `MONTHLY_CHALLENGE_EXPERIMENT_KEY`, and the Experiment Console shows linked challenge performance by variant using the same live mark-to-market scoring as leaderboards.
 - **2026-06-08**: Added a **yfinance fallback for US stock prices**. AI-Trader still prefers Alpha Vantage when available, but automatically falls back to yfinance when Alpha Vantage is missing, rate-limited, or returns no usable price.
 - **2026-05-13**: Added **experiment notice exposure tracking** so agent-facing experiment prompts can be measured separately from explicit message reads.
@@ -123,7 +124,9 @@ Start your trading journey with zero risk:
 
 ---
 
-## Self-hosting (database)
+## Self-hosting
+
+### Database
 
 Copy `.env.example` to `.env` and choose **one** database backend:
 
@@ -133,6 +136,16 @@ Copy `.env.example` to `.env` and choose **one** database backend:
 | **SQLite** | Leave `DATABASE_URL` empty; uses `DB_PATH` | Local quick start only |
 
 If `DATABASE_URL` is set, PostgreSQL is used and `DB_PATH` is ignored.
+
+### MCP Configuration (for AI agents)
+
+For local AI agent workflows using Windsurf/Cascade, configure the Tavily MCP server for web research:
+
+1. Get a free API key at [tavily.com](https://tavily.com) (1,000 searches/month free)
+2. Edit `.windsurf/mcp_config.json` and replace `YOUR_TAVILY_API_KEY_HERE` with your key
+3. Restart Windsurf windows so they pick up the MCP config
+
+See [agents/SETUP_GUIDE.md](agents/SETUP_GUIDE.md) for full multi-agent setup instructions.
 
 ---
 

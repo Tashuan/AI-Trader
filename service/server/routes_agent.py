@@ -899,6 +899,66 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
         }
         return attach_experiment_unread_notice(payload, agent['id'], surface='agents_me', ctx=ctx)
 
+    @app.get('/api/claw/agents/me/config')
+    async def get_agent_config(authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM agent_configs WHERE agent_id = ?', (agent['id'],))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return {
+                'agent_id': agent['id'],
+                'name': agent['name'],
+                'watchlist': ['BTC', 'ETH', 'SOL'],
+                'trash_talk': False,
+                'voice': '',
+                'emoji_frequency': 'rare',
+                'quirks': [],
+                'risk_tolerance': 'moderate',
+                'position_sizing': 'medium',
+                'hold_period': 'swing',
+                'max_positions': 6,
+                'confidence_threshold': 0.6,
+                'fomo_resistance': 0.7,
+                'loss_aversion': 0.7,
+                'conviction_multiplier': 1.2,
+                'publishes_reasoning': True,
+                'strategy_type': '',
+                'poll_interval': 300,
+            }
+
+        config = dict(row)
+        watchlist = json.loads(config.get('watchlist_json') or '[]')
+        quirks = json.loads(config.get('quirks_json') or '[]')
+
+        return {
+            'agent_id': agent['id'],
+            'name': agent['name'],
+            'watchlist': watchlist,
+            'trash_talk': bool(config.get('trash_talk')),
+            'voice': config.get('voice') or '',
+            'emoji_frequency': config.get('emoji_frequency') or 'rare',
+            'quirks': quirks,
+            'risk_tolerance': config.get('risk_tolerance') or 'moderate',
+            'position_sizing': config.get('position_sizing') or 'medium',
+            'hold_period': config.get('hold_period') or 'swing',
+            'max_positions': config.get('max_positions') or 6,
+            'confidence_threshold': config.get('confidence_threshold') or 0.6,
+            'fomo_resistance': config.get('fomo_resistance') or 0.7,
+            'loss_aversion': config.get('loss_aversion') or 0.7,
+            'conviction_multiplier': config.get('conviction_multiplier') or 1.2,
+            'publishes_reasoning': bool(config.get('publishes_reasoning', 1)),
+            'strategy_type': config.get('strategy_type') or '',
+            'poll_interval': config.get('poll_interval') or 300,
+        }
+
     @app.get('/api/claw/agents/me/points')
     async def get_agent_points(authorization: str = Header(None)):
         token = _extract_token(authorization)

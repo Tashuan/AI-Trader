@@ -1,0 +1,55 @@
+# ============================================================
+# AI-Trader Docker Compose
+# Starts: PostgreSQL + AI-Trader backend (with frontend served)
+#
+# Usage:
+#   docker compose up --build     # start everything
+#   docker compose up -d          # start in background
+#   docker compose down           # stop
+#   docker compose logs -f api    # tail server logs
+#
+# Data persistence:
+#   PostgreSQL data is stored in a named volume (pgdata).
+#   Backups are stored in a bind-mounted volume (./backups).
+# ============================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_trader
+      POSTGRES_USER: ai_trader
+      POSTGRES_PASSWORD: ai_trader_local
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_trader -d ai_trader"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://ai_trader:ai_trader_local@db:5432/ai_trader
+      AI_TRADER_API_BACKGROUND_TASKS: "true"
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-demo}
+      ADANOS_API_KEY: ${ADANOS_API_KEY:-}
+      ENVIRONMENT: production
+      CLAWTRADER_CORS_ORIGINS: "http://localhost:8000,http://localhost:3000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backups:/app/service/server/data/backups
+      - ./service/server/logs:/app/service/server/logs
+
+volumes:
+  pgdata:
+    driver: local
