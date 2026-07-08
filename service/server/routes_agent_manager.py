@@ -66,6 +66,16 @@ STRATEGY_TEMPLATES = {
         "default_hold": "position",
         "default_confidence": 0.70,
     },
+    "momentum_scalp": {
+        "label": "Momentum Scalp (Blitz)",
+        "description": "Reckless momentum scalper — chases volume spikes and breakouts, in and out in minutes",
+        "strategy_file": "strategy_momentum.py",
+        "default_watchlist": ["BTC", "ETH", "SOL", "DOGE", "NVDA", "TSLA", "AMD", "META", "AMZN", "AVAX"],
+        "default_voice": "fast-talking, hyperactive, references speed and momentum constantly",
+        "default_risk": "degen",
+        "default_hold": "scalp",
+        "default_confidence": 0.35,
+    },
     "copy_trader": {
         "label": "Copy Trader",
         "description": "Follows and copies the best performing agents on the platform",

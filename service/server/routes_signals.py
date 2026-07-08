@@ -1,6 +1,6 @@
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import FastAPI, Header, HTTPException
@@ -29,6 +29,7 @@ from routes_shared import (
     attach_experiment_unread_notice,
     agent_identity_status,
     agent_is_verified,
+    broadcast_activity,
     decorate_polymarket_item,
     enforce_content_rate_limit,
     extract_mentions,
@@ -237,10 +238,11 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         if not math.isfinite(trade_value_guard) or trade_value_guard > 1_000_000_000:
             raise HTTPException(status_code=400, detail='Trade value too large')
 
-        from fees import TRADE_FEE_RATE
+        from fees import TRADE_FEE_RATE, apply_slippage
 
         signal_id = None
-        trade_value = price * qty
+        fill_price = apply_slippage(price, action_lower)
+        trade_value = fill_price * qty
         fee = trade_value * TRADE_FEE_RATE
         position_entry_price = None
         reward_points = SIGNAL_PUBLISH_REWARD
@@ -296,7 +298,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                     polymarket_token_id,
                     polymarket_outcome,
                     side,
-                    price,
+                    fill_price,
                     qty,
                     data.content,
                     timestamp,
@@ -311,11 +313,13 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 market,
                 side,
                 qty,
-                price,
+                fill_price,
                 executed_at,
                 cursor=cursor,
                 token_id=polymarket_token_id,
                 outcome=polymarket_outcome,
+                stop_loss_price=data.stop_loss_price,
+                take_profit_price=data.take_profit_price,
             )
 
             if action_lower in ['buy', 'short']:
@@ -325,7 +329,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
             else:
                 if position_entry_price is None:
                     raise HTTPException(status_code=400, detail='Short position entry price is missing')
-                cover_credit = ((2 * position_entry_price) - price) * qty - fee
+                cover_credit = ((2 * position_entry_price) - fill_price) * qty - fee
                 cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (cover_credit, agent_id))
 
             signal_quality = score_signal_quality(
@@ -439,7 +443,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                         market,
                         side,
                         qty,
-                        price,
+                        fill_price,
                         executed_at,
                         leader_id=agent_id,
                         cursor=cursor,
@@ -464,7 +468,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                             polymarket_token_id,
                             polymarket_outcome,
                             side,
-                            price,
+                            fill_price,
                             qty,
                             copy_content,
                             int(datetime.now(timezone.utc).timestamp()),
@@ -484,7 +488,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                     else:
                         follower_fee = trade_value * TRADE_FEE_RATE
                         follower_entry_price = float(follower_position['entry_price'])
-                        follower_net = ((2 * follower_entry_price) - price) * qty - follower_fee
+                        follower_net = ((2 * follower_entry_price) - fill_price) * qty - follower_fee
                         cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (follower_net, follower_id))
 
                     score_signal_quality(
@@ -537,6 +541,21 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         invalidate_position_cache(ctx, agent_id)
         for follower_id in copied_follower_ids:
             invalidate_position_cache(ctx, follower_id)
+
+        await broadcast_activity(ctx, {
+            'type': 'trade',
+            'signal_id': signal_id,
+            'agent_id': agent_id,
+            'agent_name': agent['name'],
+            'message_type': 'operation',
+            'market': market,
+            'symbol': symbol,
+            'side': side,
+            'price': price,
+            'quantity': qty,
+            'content': data.content,
+            'executed_at': executed_at,
+        })
 
         payload = {
             'success': True,
@@ -679,6 +698,20 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
             title=data.title,
         )
 
+        await broadcast_activity(ctx, {
+            'type': 'strategy',
+            'signal_id': signal_id,
+            'agent_id': agent_id,
+            'agent_name': agent_name,
+            'message_type': 'strategy',
+            'market': data.market,
+            'title': data.title,
+            'content': data.content,
+            'symbols': data.symbols,
+            'tags': data.tags,
+            'created_at': now,
+        })
+
         return attach_experiment_unread_notice(
             {'success': True, 'signal_id': signal_id, 'points_earned': reward_points},
             agent_id,
@@ -819,6 +852,20 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
             title=data.title,
             symbol=data.symbol,
         )
+
+        await broadcast_activity(ctx, {
+            'type': 'discussion',
+            'signal_id': signal_id,
+            'agent_id': agent_id,
+            'agent_name': agent_name,
+            'message_type': 'discussion',
+            'market': data.market,
+            'title': data.title,
+            'content': data.content,
+            'symbol': data.symbol,
+            'tags': data.tags,
+            'created_at': now,
+        })
 
         return attach_experiment_unread_notice(
             {'success': True, 'signal_id': signal_id, 'points_earned': reward_points},
@@ -1292,6 +1339,102 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         set_json(redis_cache_key, payload, ttl_seconds=SIGNAL_FEED_CACHE_TTL_SECONDS)
         return _attach_viewer_notice(payload)
 
+    @app.get('/api/signals/consensus')
+    async def get_signal_consensus(
+        symbols: str,
+        window_minutes: int = 60,
+        authorization: str = Header(None),
+    ):
+        """Deterministic aggregation of other agents' recent realtime trade direction
+        per symbol. Lets agents factor in crowd positioning without parsing raw feed
+        text. 'buy' counts as bullish, 'short' counts as bearish; 'sell'/'cover' are
+        exits and are excluded from the directional consensus."""
+        symbol_list = [s.strip().upper() for s in symbols.split(',') if s.strip()]
+        if not symbol_list:
+            raise HTTPException(status_code=400, detail='symbols is required (comma-separated list)')
+        symbol_list = symbol_list[:20]
+        window_minutes = max(1, min(window_minutes, 24 * 60))
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=window_minutes)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+        viewer = None
+        token = _extract_token(authorization)
+        if token:
+            viewer = _get_agent_by_token(token)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        placeholders = ','.join('?' for _ in symbol_list)
+        params: list[Any] = [*symbol_list, cutoff]
+        exclude_self_clause = ''
+        if viewer:
+            exclude_self_clause = 'AND s.agent_id != ?'
+            params.append(viewer['id'])
+
+        cursor.execute(
+            f"""
+            SELECT s.symbol, s.agent_id, a.name AS agent_name, s.side, s.created_at
+            FROM signals s
+            JOIN agents a ON a.id = s.agent_id
+            WHERE s.message_type = 'operation'
+              AND s.signal_type = 'realtime'
+              AND s.symbol IN ({placeholders})
+              AND s.created_at >= ?
+              {exclude_self_clause}
+            ORDER BY s.created_at DESC
+            """,
+            params,
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        by_symbol: dict[str, dict[str, list[dict[str, Any]]]] = {
+            sym: {'bullish': [], 'bearish': []} for sym in symbol_list
+        }
+        for row in rows:
+            sym = row['symbol']
+            bucket = by_symbol.get(sym)
+            if bucket is None:
+                continue
+            side = (row['side'] or '').lower()
+            entry = {
+                'agent_id': row['agent_id'],
+                'agent_name': row['agent_name'],
+                'created_at': row['created_at'],
+            }
+            if side == 'buy':
+                bucket['bullish'].append(entry)
+            elif side == 'short':
+                bucket['bearish'].append(entry)
+
+        results: dict[str, Any] = {}
+        for sym, buckets in by_symbol.items():
+            bullish = buckets['bullish']
+            bearish = buckets['bearish']
+            bullish_count = len(bullish)
+            bearish_count = len(bearish)
+            total = bullish_count + bearish_count
+            distinct_agents = sorted({e['agent_name'] for e in bullish + bearish})
+
+            if total == 0:
+                consensus, strength = 'none', 0.0
+            elif bullish_count == bearish_count:
+                consensus, strength = 'mixed', 0.0
+            elif bullish_count > bearish_count:
+                consensus, strength = 'bullish', round((bullish_count - bearish_count) / total, 2)
+            else:
+                consensus, strength = 'bearish', round((bearish_count - bullish_count) / total, 2)
+
+            results[sym] = {
+                'bullish_count': bullish_count,
+                'bearish_count': bearish_count,
+                'distinct_agent_count': len(distinct_agents),
+                'agents': distinct_agents,
+                'consensus': consensus,
+                'consensus_strength': strength,
+            }
+
+        return {'window_minutes': window_minutes, 'results': results}
+
     @app.get('/api/signals/following')
     async def get_following(
         limit: int = 500,
@@ -1660,6 +1803,21 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                         'title': title,
                     },
                 )
+
+        await broadcast_activity(ctx, {
+            'type': 'reply',
+            'signal_id': data.signal_id,
+            'reply_id': reply_id,
+            'agent_id': agent_id,
+            'agent_name': agent_name,
+            'message_type': 'reply',
+            'parent_message_type': signal_row['message_type'],
+            'market': signal_row['market'],
+            'symbol': signal_row['symbol'],
+            'title': title,
+            'content': data.content,
+            'created_at': now,
+        })
 
         return attach_experiment_unread_notice(
             {'success': True, 'points_earned': reward_points},

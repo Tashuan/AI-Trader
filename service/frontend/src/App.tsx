@@ -38,6 +38,7 @@ import { ComparePage } from './pages/ComparePage'
 import { TradeLogPage } from './pages/TradeLogPage'
 import { AgentManagerPage } from './pages/AgentManagerPage'
 import { AgentBuilderPage } from './pages/AgentBuilderPage'
+import { LiveFeedPage } from './pages/LiveFeedPage'
 
 const DISCUSSION_NOTIFICATION_TYPES = new Set([
   'discussion_started',
@@ -287,6 +288,7 @@ function AppRouter({
             <Route path="/research" element={<ResearchPage />} />
             <Route path="/compare" element={<ComparePage />} />
             <Route path="/trades" element={<TradeLogPage />} />
+            <Route path="/live" element={<LiveFeedPage />} />
             <Route path="/market" element={<SignalsFeed token={token} />} />
             <Route path="/leaderboard" element={<LeaderboardPage token={token} />} />
             <Route path="/challenges" element={<ChallengePage token={token} canAdmin={canAdmin} />} />

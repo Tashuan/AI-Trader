@@ -650,6 +650,149 @@ async def update_position_prices():
         await asyncio.sleep(refresh_interval)
 
 
+async def auto_close_positions_loop():
+    """Background task to auto-close positions when stop-loss or take-profit thresholds are hit.
+
+    Runs after each price update cycle. Checks all open positions that have
+    stop_loss_price or take_profit_price set, and closes them if the current
+    price has crossed the threshold.
+    """
+    from database import get_db_connection
+    from services import _update_position_from_signal
+
+    await asyncio.sleep(_env_int("AUTO_CLOSE_STARTUP_DELAY_SECONDS", 30, minimum=0))
+
+    while True:
+        try:
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT p.id, p.agent_id, p.symbol, p.market, p.token_id, p.outcome,
+                           p.side, p.quantity, p.entry_price, p.current_price,
+                           p.stop_loss_price, p.take_profit_price, p.opened_at,
+                           a.name as agent_name
+                    FROM positions p
+                    JOIN agents a ON a.id = p.agent_id
+                    WHERE p.stop_loss_price IS NOT NULL OR p.take_profit_price IS NOT NULL
+                """)
+                rows = cursor.fetchall()
+            finally:
+                conn.close()
+
+            if not rows:
+                await asyncio.sleep(_env_int("AUTO_CLOSE_CHECK_INTERVAL", 60, minimum=10))
+                continue
+
+            closed_count = 0
+            for row in rows:
+                current_price = row["current_price"]
+                if current_price is None:
+                    continue
+
+                side = row["side"]
+                stop_loss = row["stop_loss_price"]
+                take_profit = row["take_profit_price"]
+                symbol = row["symbol"]
+                market = row["market"]
+                quantity = abs(row["quantity"])
+                agent_name = row["agent_name"] or "unknown"
+
+                should_close = False
+                close_reason = ""
+
+                if side == "long":
+                    if stop_loss is not None and current_price <= stop_loss:
+                        should_close = True
+                        close_reason = f"stop-loss hit ({current_price:.4f} <= {stop_loss:.4f})"
+                    elif take_profit is not None and current_price >= take_profit:
+                        should_close = True
+                        close_reason = f"take-profit hit ({current_price:.4f} >= {take_profit:.4f})"
+                elif side == "short":
+                    if stop_loss is not None and current_price >= stop_loss:
+                        should_close = True
+                        close_reason = f"stop-loss hit ({current_price:.4f} >= {stop_loss:.4f})"
+                    elif take_profit is not None and current_price <= take_profit:
+                        should_close = True
+                        close_reason = f"take-profit hit ({current_price:.4f} <= {take_profit:.4f})"
+
+                if not should_close:
+                    continue
+
+                now = datetime.now(timezone.utc)
+                executed_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                close_action = "sell" if side == "long" else "cover"
+
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    _update_position_from_signal(
+                        agent_id=row["agent_id"],
+                        symbol=symbol,
+                        market=market,
+                        action=close_action,
+                        quantity=quantity,
+                        price=current_price,
+                        executed_at=executed_at,
+                        cursor=cursor,
+                        token_id=row["token_id"],
+                        outcome=row["outcome"],
+                    )
+
+                    trade_value = current_price * quantity
+                    if side == "long":
+                        cursor.execute(
+                            "UPDATE agents SET cash = cash + ? WHERE id = ?",
+                            (trade_value, row["agent_id"]),
+                        )
+                    else:
+                        entry_price = row["entry_price"]
+                        cover_credit = ((2 * entry_price) - current_price) * quantity
+                        cursor.execute(
+                            "UPDATE agents SET cash = cash + ? WHERE id = ?",
+                            (cover_credit, row["agent_id"]),
+                        )
+
+                    try:
+                        import uuid
+                        signal_id = str(uuid.uuid4())
+                        cursor.execute(
+                            """
+                            INSERT INTO signals
+                                (signal_id, agent_id, message_type, market, signal_type,
+                                 symbol, title, content, tags, timestamp, created_at)
+                            VALUES (?, ?, 'trade', ?, 'auto_close', ?, ?, ?, 'auto-close,stop-loss,take-profit', ?, ?)
+                            """,
+                            (
+                                signal_id,
+                                row["agent_id"],
+                                market,
+                                symbol,
+                                f"Auto-close: {symbol} — {close_reason}",
+                                f"Position auto-closed by worker: {close_reason}. Agent: {agent_name}, side: {side}, qty: {quantity}, entry: {row['entry_price']}, exit: {current_price}",
+                                int(now.timestamp()),
+                                now.isoformat(),
+                            ),
+                        )
+                    except Exception as sig_err:
+                        print(f"[Auto-Close] Signal insert failed for {symbol}: {sig_err}")
+
+                    conn.commit()
+                    closed_count += 1
+                    print(f"[Auto-Close] {agent_name} {symbol} {side} — {close_reason} — closed at {current_price}")
+                finally:
+                    conn.close()
+
+            if closed_count:
+                print(f"[Auto-Close] Processed {closed_count} position(s) this cycle")
+
+        except Exception as e:
+            print(f"[Auto-Close Error] {e}")
+
+        check_interval = _env_int("AUTO_CLOSE_CHECK_INTERVAL", 60, minimum=10)
+        await asyncio.sleep(check_interval)
+
+
 async def refresh_market_news_snapshots_loop():
     """Background task to refresh market-news snapshots on a fixed interval."""
     from market_intel import refresh_market_news_snapshots
@@ -1225,6 +1368,7 @@ async def build_network_edges_loop():
 
 BACKGROUND_TASK_REGISTRY = {
     "prices": update_position_prices,
+    "auto_close": auto_close_positions_loop,
     "profit_history": record_profit_history,
     "polymarket_settlement": settle_polymarket_positions,
     "challenge_settlement": settle_challenges_loop,

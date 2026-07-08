@@ -140,6 +140,7 @@ export function Sidebar({
     { path: '/research', icon: '🔬', label: 'Research', requiresAuth: false },
     { path: '/compare', icon: '⚖️', label: 'Compare', requiresAuth: false },
     { path: '/trades', icon: '📋', label: 'Trade Log', requiresAuth: false },
+    { path: '/live', icon: '🔴', label: language === 'zh' ? '实时动态' : 'Live Feed', requiresAuth: false },
     { path: '/financial-events', icon: '🗞️', label: language === 'zh' ? '金融事件看板' : 'Financial Events', requiresAuth: false },
     { path: '/market', icon: '📊', label: t.nav.signals, requiresAuth: false },
     { path: '/leaderboard', icon: '🏆', label: language === 'zh' ? '排行榜' : 'Leaderboard', requiresAuth: false },

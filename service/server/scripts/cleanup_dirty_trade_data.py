@@ -35,7 +35,7 @@ if str(SERVER_DIR) not in sys.path:
 
 from cache import delete, delete_pattern
 from database import get_db_connection
-from fees import TRADE_FEE_RATE
+from fees import TRADE_FEE_RATE, apply_slippage
 from routes_shared import (
     AGENT_SIGNALS_CACHE_KEY_PREFIX,
     GROUPED_SIGNALS_CACHE_KEY_PREFIX,
@@ -333,7 +333,8 @@ def replay_agent_operations(
 
         key = instrument_key(row)
         pos = positions.get(key)
-        trade_value = price * qty
+        fill_price = apply_slippage(price, action)
+        trade_value = fill_price * qty
         fee = trade_value * TRADE_FEE_RATE
 
         try:
@@ -346,7 +347,7 @@ def replay_agent_operations(
                 cash -= total_cost
                 if pos and pos.quantity > EPSILON:
                     new_qty = pos.quantity + qty
-                    pos.entry_price = ((pos.quantity * pos.entry_price) + (qty * price)) / new_qty
+                    pos.entry_price = ((pos.quantity * pos.entry_price) + (qty * fill_price)) / new_qty
                     pos.quantity = new_qty
                     pos.opened_at = executed_at
                 else:
@@ -374,7 +375,7 @@ def replay_agent_operations(
                 if pos and pos.quantity < -EPSILON:
                     current_abs = abs(pos.quantity)
                     new_abs = current_abs + qty
-                    pos.entry_price = ((current_abs * pos.entry_price) + (qty * price)) / new_abs
+                    pos.entry_price = ((current_abs * pos.entry_price) + (qty * fill_price)) / new_abs
                     pos.quantity = -new_abs
                     pos.opened_at = executed_at
                 else:
@@ -385,7 +386,7 @@ def replay_agent_operations(
                     raise ValueError("cover_without_short")
                 if qty > abs(pos.quantity) + EPSILON:
                     raise ValueError("cover_exceeds_short_quantity")
-                cash += ((2 * pos.entry_price) - price) * qty - fee
+                cash += ((2 * pos.entry_price) - fill_price) * qty - fee
                 pos.quantity += qty
                 if pos.quantity >= -EPSILON:
                     positions.pop(key, None)

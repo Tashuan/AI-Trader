@@ -38,6 +38,7 @@ const STRATEGY_CYCLE_DEFAULTS: Record<string, number> = {
   technical_analysis: 900,
   contrarian: 300,
   momentum: 1500,
+  momentum_scalp: 180,
   copy_trader: 600,
   stat_arb: 900,
   event_driven: 300,

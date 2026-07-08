@@ -666,6 +666,8 @@ def register_trading_routes(app: FastAPI, ctx: RouteContext) -> None:
                 'pnl': pnl,
                 'source': source,
                 'opened_at': row['opened_at'],
+                'stop_loss_price': row['stop_loss_price'] if 'stop_loss_price' in row.keys() else None,
+                'take_profit_price': row['take_profit_price'] if 'take_profit_price' in row.keys() else None,
             })
             if positions[-1]['market'] == 'polymarket':
                 decorate_polymarket_item(positions[-1], fetch_remote=False)

@@ -60,6 +60,8 @@ class RealtimeSignalRequest(BaseModel):
     executed_at: str
     token_id: Optional[str] = None
     outcome: Optional[str] = None
+    stop_loss_price: Optional[float] = None
+    take_profit_price: Optional[float] = None
 
 
 class StrategyRequest(BaseModel):

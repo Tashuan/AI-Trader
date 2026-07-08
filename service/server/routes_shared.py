@@ -157,6 +157,7 @@ class RouteContext:
     experiment_notice_cache: dict[int, tuple[float, Optional[dict[str, Any]]]] = field(default_factory=dict)
     content_rate_limit_state: dict[tuple[int, str], dict[str, Any]] = field(default_factory=dict)
     ws_connections: dict[int, WebSocket] = field(default_factory=dict)
+    broadcast_connections: set[WebSocket] = field(default_factory=set)
     verification_codes: dict[str, dict[str, Any]] = field(default_factory=dict)
     agent_token_recovery_requests: dict[int, dict[str, Any]] = field(default_factory=dict)
 
@@ -803,6 +804,21 @@ async def push_agent_message(
             })
         except Exception:
             pass
+
+
+async def broadcast_activity(
+    ctx: RouteContext,
+    payload: Dict[str, Any],
+) -> None:
+    """Push a real-time activity event to all connected broadcast WebSocket clients."""
+    dead: list[WebSocket] = []
+    for ws in ctx.broadcast_connections:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        ctx.broadcast_connections.discard(ws)
 
 
 async def notify_followers_of_post(

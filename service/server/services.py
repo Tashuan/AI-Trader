@@ -199,6 +199,8 @@ def _update_position_from_signal(
     cursor=None,
     token_id: Optional[str] = None,
     outcome: Optional[str] = None,
+    stop_loss_price: Optional[float] = None,
+    take_profit_price: Optional[float] = None,
 ):
     """
     Update position based on trading signal.
@@ -262,15 +264,15 @@ def _update_position_from_signal(
             # Create new long position
             if leader_id:
                 cursor.execute("""
-                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, leader_id)
-                    VALUES (?, ?, ?, ?, ?, 'long', ?, ?, ?, ?)
-                """, (agent_id, symbol, market, token_id, outcome, quantity, price, executed_at, leader_id))
+                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, leader_id, stop_loss_price, take_profit_price)
+                    VALUES (?, ?, ?, ?, ?, 'long', ?, ?, ?, ?, ?, ?)
+                """, (agent_id, symbol, market, token_id, outcome, quantity, price, executed_at, leader_id, stop_loss_price, take_profit_price))
                 print(f"[Position] {symbol}: created copied long position {quantity} from leader {leader_id}")
             else:
                 cursor.execute("""
-                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at)
-                    VALUES (?, ?, ?, ?, ?, 'long', ?, ?, ?)
-                """, (agent_id, symbol, market, token_id, outcome, quantity, price, executed_at))
+                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, stop_loss_price, take_profit_price)
+                    VALUES (?, ?, ?, ?, ?, 'long', ?, ?, ?, ?, ?)
+                """, (agent_id, symbol, market, token_id, outcome, quantity, price, executed_at, stop_loss_price, take_profit_price))
                 print(f"[Position] {symbol}: created long position {quantity}")
 
     elif action_lower == "sell":
@@ -309,15 +311,15 @@ def _update_position_from_signal(
             # Create new short position (negative quantity for short)
             if leader_id:
                 cursor.execute("""
-                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, leader_id)
-                    VALUES (?, ?, ?, ?, ?, 'short', ?, ?, ?, ?)
-                """, (agent_id, symbol, market, token_id, outcome, -quantity, price, executed_at, leader_id))
+                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, leader_id, stop_loss_price, take_profit_price)
+                    VALUES (?, ?, ?, ?, ?, 'short', ?, ?, ?, ?, ?, ?)
+                """, (agent_id, symbol, market, token_id, outcome, -quantity, price, executed_at, leader_id, stop_loss_price, take_profit_price))
                 print(f"[Position] {symbol}: created copied short position {quantity} from leader {leader_id}")
             else:
                 cursor.execute("""
-                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at)
-                    VALUES (?, ?, ?, ?, ?, 'short', ?, ?, ?)
-                """, (agent_id, symbol, market, token_id, outcome, -quantity, price, executed_at))
+                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, stop_loss_price, take_profit_price)
+                    VALUES (?, ?, ?, ?, ?, 'short', ?, ?, ?, ?, ?)
+                """, (agent_id, symbol, market, token_id, outcome, -quantity, price, executed_at, stop_loss_price, take_profit_price))
                 print(f"[Position] {symbol}: created short position {quantity}")
 
     elif action_lower == "cover":

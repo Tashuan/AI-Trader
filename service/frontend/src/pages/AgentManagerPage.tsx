@@ -19,6 +19,7 @@ const STRATEGY_ICONS: Record<string, string> = {
   technical_analysis: 'T',
   contrarian: 'C',
   momentum: 'M',
+  momentum_scalp: '⚡',
   copy_trader: 'P',
   stat_arb: 'S',
   event_driven: 'E',

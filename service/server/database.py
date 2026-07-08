@@ -1261,6 +1261,16 @@ def init_database():
     except Exception:
         pass
 
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN stop_loss_price REAL")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN take_profit_price REAL")
+    except Exception:
+        pass
+
     # Add cash column if it doesn't exist (for existing databases)
     try:
         cursor.execute("ALTER TABLE agents ADD COLUMN cash REAL DEFAULT 100000.0")

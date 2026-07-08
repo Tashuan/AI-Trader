@@ -6,6 +6,7 @@ from yfinance. Provides a unified interface for agents to get both
 fundamental (news/sentiment) and technical (charts/indicators) data.
 """
 
+import os
 import requests
 import time
 from typing import Optional
@@ -35,6 +36,7 @@ class TechnicalSnapshot:
     return_20d: Optional[float]
     volume: float
     avg_volume: float
+    atr: Optional[float] = None
     signals: list[str] = field(default_factory=list)
 
     @property
@@ -118,6 +120,10 @@ class NewsItem:
 class MarketDataClient:
     """Unified client for fetching market data from the platform and yfinance."""
 
+    # Finnhub API configuration (free tier: 60 calls/min)
+    FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
+    FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
+
     def __init__(self, api_base: str = "http://localhost:8000/api"):
         self.api_base = api_base
         self._yf_available = None
@@ -171,6 +177,19 @@ class MarketDataClient:
         return None
 
     def fetch_technical(self, symbol: str) -> Optional[TechnicalSnapshot]:
+        """Fetch technical analysis using yfinance, with Finnhub fallback."""
+        snapshot = self._fetch_technical_yfinance(symbol)
+        if snapshot is not None:
+            return snapshot
+
+        # yfinance failed or rate-limited — try Finnhub
+        snapshot = self._fetch_technical_finnhub(symbol)
+        if snapshot is not None:
+            return snapshot
+
+        return None
+
+    def _fetch_technical_yfinance(self, symbol: str) -> Optional[TechnicalSnapshot]:
         """Fetch technical analysis using yfinance."""
         try:
             import yfinance as yf
@@ -188,6 +207,8 @@ class MarketDataClient:
 
         closes = df["Close"].squeeze().dropna()
         volumes = df["Volume"].squeeze().dropna() if "Volume" in df else None
+        highs = df["High"].squeeze().dropna() if "High" in df else None
+        lows = df["Low"].squeeze().dropna() if "Low" in df else None
 
         if len(closes) < 20:
             return None
@@ -235,6 +256,9 @@ class MarketDataClient:
         vol = float(volumes.iloc[-1]) if volumes is not None and len(volumes) > 0 else 0
         avg_vol = float(volumes.iloc[-20:].mean()) if volumes is not None and len(volumes) >= 20 else vol
 
+        # ATR (14-period)
+        atr = self._calculate_atr(highs, lows, closes)
+
         # Build signals
         signals = []
         if rsi < 30:
@@ -276,8 +300,189 @@ class MarketDataClient:
             return_20d=ret_20d,
             volume=vol,
             avg_volume=avg_vol,
+            atr=atr,
             signals=signals,
         )
+
+    def _fetch_technical_finnhub(self, symbol: str) -> Optional[TechnicalSnapshot]:
+        """Fallback: Fetch technical analysis using Finnhub API (free tier: 60 calls/min)."""
+        if not self.FINNHUB_API_KEY:
+            return None
+
+        finnhub_symbol = self._normalize_symbol_finnhub(symbol)
+        if not finnhub_symbol:
+            return None
+
+        try:
+            import pandas as pd
+        except ImportError:
+            return None
+
+        # Fetch ~90 calendar days of daily candles
+        end_ts = int(time.time())
+        start_ts = end_ts - 90 * 24 * 3600
+
+        try:
+            resp = requests.get(
+                f"{self.FINNHUB_BASE_URL}/stock/candle",
+                params={
+                    "symbol": finnhub_symbol,
+                    "resolution": "D",
+                    "from": start_ts,
+                    "to": end_ts,
+                    "token": self.FINNHUB_API_KEY,
+                },
+                timeout=10,
+            )
+            if not resp.ok:
+                return None
+            data = resp.json()
+        except Exception:
+            return None
+
+        if not data or data.get("s") != "ok":
+            return None
+
+        try:
+            df = pd.DataFrame({
+                "Close": data["c"],
+                "High": data["h"],
+                "Low": data["l"],
+                "Volume": data["v"],
+            })
+        except (KeyError, TypeError):
+            return None
+
+        closes = df["Close"].dropna()
+        volumes = df["Volume"].dropna()
+        highs = df["High"].dropna()
+        lows = df["Low"].dropna()
+
+        if len(closes) < 20:
+            return None
+
+        latest = float(closes.iloc[-1])
+        sma_20 = float(closes.iloc[-20:].mean())
+        sma_50 = float(closes.iloc[-min(50, len(closes)):].mean()) if len(closes) >= 50 else None
+
+        # RSI (14-period)
+        deltas = closes.diff().dropna()
+        gains = deltas.clip(lower=0)
+        losses = deltas.clip(upper=0).abs()
+        avg_gain = float(gains.iloc[-14:].mean())
+        avg_loss = float(losses.iloc[-14:].mean())
+        rsi = 100 - (100 / (1 + (avg_gain / avg_loss if avg_loss > 0 else 999)))
+
+        # MACD (12, 26, 9)
+        ema_12 = closes.ewm(span=12, adjust=False).mean()
+        ema_26 = closes.ewm(span=26, adjust=False).mean()
+        macd_line = ema_12 - ema_26
+        signal_line = macd_line.ewm(span=9, adjust=False).mean()
+        macd_val = float(macd_line.iloc[-1])
+        signal_val = float(signal_line.iloc[-1])
+        macd_hist = macd_val - signal_val
+
+        # Bollinger Bands
+        bb_std = float(closes.iloc[-20:].std())
+        bb_upper = sma_20 + 2 * bb_std
+        bb_lower = sma_20 - 2 * bb_std
+
+        # Support/Resistance
+        recent = closes.iloc[-20:]
+        support = float(recent.min())
+        resistance = float(recent.max())
+
+        # Returns
+        ret_5d = ((latest - float(closes.iloc[-6])) / float(closes.iloc[-6]) * 100) if len(closes) >= 6 else None
+        ret_20d = ((latest - float(closes.iloc[-21])) / float(closes.iloc[-21]) * 100) if len(closes) >= 21 else None
+
+        # Volume
+        vol = float(volumes.iloc[-1]) if len(volumes) > 0 else 0
+        avg_vol = float(volumes.iloc[-20:].mean()) if len(volumes) >= 20 else vol
+
+        # ATR (14-period)
+        atr = self._calculate_atr(highs, lows, closes)
+
+        # Build signals
+        signals = []
+        if rsi < 30:
+            signals.append("RSI oversold")
+        elif rsi > 70:
+            signals.append("RSI overbought")
+        if macd_hist > 0:
+            signals.append("MACD bullish")
+        else:
+            signals.append("MACD bearish")
+        if latest > sma_20:
+            signals.append("Above SMA20")
+        else:
+            signals.append("Below SMA20")
+        if latest < bb_lower:
+            signals.append("Below lower BB")
+        elif latest > bb_upper:
+            signals.append("Above upper BB")
+        if sma_50 and latest > sma_50:
+            signals.append("Above SMA50")
+        elif sma_50:
+            signals.append("Below SMA50")
+
+        return TechnicalSnapshot(
+            symbol=symbol,
+            price=latest,
+            rsi=rsi,
+            macd=macd_val,
+            macd_signal=signal_val,
+            macd_histogram=macd_hist,
+            sma_20=sma_20,
+            sma_50=sma_50,
+            bollinger_upper=bb_upper,
+            bollinger_lower=bb_lower,
+            bollinger_mid=sma_20,
+            support=support,
+            resistance=resistance,
+            return_5d=ret_5d,
+            return_20d=ret_20d,
+            volume=vol,
+            avg_volume=avg_vol,
+            atr=atr,
+            signals=signals,
+        )
+
+    @staticmethod
+    def _calculate_atr(highs, lows, closes, period: int = 14) -> Optional[float]:
+        """Calculate Average True Range (ATR)."""
+        try:
+            import pandas as pd
+        except ImportError:
+            return None
+        if highs is None or lows is None or closes is None:
+            return None
+        if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
+            return None
+
+        prev_close = closes.shift(1)
+        tr = pd.concat([
+            highs - lows,
+            (highs - prev_close).abs(),
+            (lows - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        atr = tr.rolling(window=period).mean()
+        val = atr.iloc[-1]
+        if hasattr(val, "item"):
+            val = val.item()
+        return float(val) if pd.notna(val) else None
+
+    @staticmethod
+    def _normalize_symbol_finnhub(symbol: str) -> Optional[str]:
+        """Convert platform symbol to Finnhub symbol."""
+        s = symbol.strip().upper()
+        # Finnhub doesn't support crypto candles on free tier for all pairs
+        crypto_map = {"BTC": None, "ETH": None, "SOL": None, "DOGE": None,
+                      "AVAX": None, "ADA": None, "DOT": None, "LINK": None,
+                      "MATIC": None}
+        if s in crypto_map:
+            return None  # Crypto uses Hyperliquid, not Finnhub
+        return s
 
     def fetch_trending(self) -> list[dict]:
         """Fetch trending symbols from the platform."""

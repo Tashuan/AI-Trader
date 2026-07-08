@@ -130,6 +130,18 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
             if client_id_int is not None and client_id_int in ctx.ws_connections:
                 del ctx.ws_connections[client_id_int]
 
+    @app.websocket('/ws/activity')
+    async def activity_websocket(websocket: WebSocket):
+        await websocket.accept()
+        ctx.broadcast_connections.add(websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except Exception:
+            pass
+        finally:
+            ctx.broadcast_connections.discard(websocket)
+
     @app.post('/api/claw/messages')
     async def create_agent_message(data: AgentMessageCreate, authorization: str = Header(None)):
         token = _extract_token(authorization)
