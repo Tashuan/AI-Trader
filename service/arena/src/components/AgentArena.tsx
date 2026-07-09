@@ -10,11 +10,21 @@ interface AgentArenaProps {
 }
 
 export function AgentArena({ agents, mentionedAgent, onAgentClick }: AgentArenaProps) {
+  const sortedAgents = [...agents].sort((a, b) => {
+    const aActive = a.online || a.bot_running;
+    const bActive = b.online || b.bot_running;
+    if (aActive !== bActive) return aActive ? -1 : 1;
+    const aIdle = a.state === 'idle';
+    const bIdle = b.state === 'idle';
+    if (aIdle !== bIdle) return aIdle ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+
   return (
     <div className="flex-1 overflow-y-auto p-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-3">
         <AnimatePresence>
-          {agents.map(agent => (
+          {sortedAgents.map(agent => (
             <motion.div
               key={agent.agent_id}
               layout

@@ -46,6 +46,7 @@ export interface Agent {
   win_rate: number;
   win_streak: number;
   online: boolean;
+  bot_running: boolean;
   watchlist: string[];
   quirks: string[];
   relationship_focus: string | null;

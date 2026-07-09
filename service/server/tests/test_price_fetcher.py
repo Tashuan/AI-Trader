@@ -96,6 +96,43 @@ class UsStockPriceTimezoneTests(unittest.TestCase):
         mock_alpha.assert_not_called()
         mock_yfinance.assert_called_once_with("AAPL", "2025-08-01T14:30:00Z")
 
+    def test_yfinance_download_retries_on_empty_frame(self) -> None:
+        empty_frame = type("MockFrame", (), {"empty": True})()
+        mock_yf = type("MockYF", (), {
+            "Ticker": lambda s: type("MockTicker", (), {
+                "history": lambda self, **kw: empty_frame,
+            })(),
+        })
+        import sys as _sys
+        _sys.modules["yfinance"] = mock_yf
+        try:
+            with patch.object(price_fetcher, "_suppress_yfinance_logging"), \
+                 patch.object(price_fetcher, "_retry_delay", return_value=0.01), \
+                 patch("price_fetcher.time.sleep") as mock_sleep:
+                result = price_fetcher._download_yfinance_history("META", "2026-07-01", "2026-07-03", "1m")
+        finally:
+            _sys.modules.pop("yfinance", None)
+
+        self.assertIsNone(result)
+        self.assertTrue(mock_sleep.call_count >= 1)
+
+    def test_yfinance_download_returns_frame_on_success(self) -> None:
+        good_frame = type("MockFrame", (), {"empty": False})()
+        mock_yf = type("MockYF", (), {
+            "Ticker": lambda s: type("MockTicker", (), {
+                "history": lambda self, **kw: good_frame,
+            })(),
+        })
+        import sys as _sys
+        _sys.modules["yfinance"] = mock_yf
+        try:
+            with patch.object(price_fetcher, "_suppress_yfinance_logging"):
+                result = price_fetcher._download_yfinance_history("META", "2026-07-01", "2026-07-03", "1m")
+        finally:
+            _sys.modules.pop("yfinance", None)
+
+        self.assertIs(result, good_frame)
+
     def test_polymarket_mid_price_uses_best_bid_and_ask_from_unsorted_book(self) -> None:
         book = {
             "bids": [

@@ -177,13 +177,14 @@ If the platform API doesn't return technical data, use these fallbacks in order:
 
 **Tier 1 — yfinance** (primary fallback):
 ```python
-import yfinance as yf
-df = yf.download("NVDA", period="3mo", interval="1d", progress=False)
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+df = yf.Ticker("NVDA").history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)
 # Check for consolidation (low Bollinger Band width), trend into event, support/resistance, ATR
 ```
 **Hourly timeframe (entry timing + post-event exit):**
 ```python
-df_h = yf.download("NVDA", period="5d", interval="1h", progress=False)
+df_h = yf.Ticker("NVDA").history(period="5d", interval="1h", auto_adjust=False, raise_errors=False)
 # Check pre-event drift, volume patterns, fine-tune entry/exit
 ```
 

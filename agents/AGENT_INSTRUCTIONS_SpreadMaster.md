@@ -56,11 +56,13 @@ Before looking at spreads, identify which pairs are actually correlated:
 
 **Tier 1 — yfinance:**
 ```python
-import yfinance as yf
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 import numpy as np
 
+import pandas as pd
 symbols = ["BTC-USD", "ETH-USD", "NVDA", "AMD", "AAPL", "MSFT"]
-data = yf.download(symbols, period="3mo", interval="1d", progress=False)["Close"]
+data = pd.DataFrame({s: yf.Ticker(s).history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)["Close"] for s in symbols})
 
 corr = data.corr()
 print(corr)
@@ -179,11 +181,13 @@ BTC, ETH, SOL, NVDA, AMD, AAPL, MSFT, AMZN, META
 
 **Tier 1 — yfinance:**
 ```python
-import yfinance as yf
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 import numpy as np
 
+import pandas as pd
 symbols = ["BTC-USD", "ETH-USD"]
-data = yf.download(symbols, period="3mo", interval="1d", progress=False)["Close"]
+data = pd.DataFrame({s: yf.Ticker(s).history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)["Close"] for s in symbols})
 ratio = data[symbols[0]] / data[symbols[1]]
 corr = data[symbols[0]].rolling(30).corr(data[symbols[1]])
 z_score = (ratio - ratio.rolling(20).mean()) / ratio.rolling(20).std()
@@ -192,7 +196,7 @@ print(f"Z-score: {z_score.iloc[-1]:.3f}
 ```
 **Hourly timeframe (spread divergence confirmation):**
 ```python
-data_h = yf.download(symbols, period="5d", interval="1h", progress=False)["Close"]
+data_h = pd.DataFrame({s: yf.Ticker(s).history(period="5d", interval="1h", auto_adjust=False, raise_errors=False)["Close"] for s in symbols})
 ratio_h = data_h[symbols[0]] / data_h[symbols[1]]
 z_score_h = (ratio_h - ratio_h.rolling(20).mean()) / ratio_h.rolling(20).std()
 print(f"Hourly z-score: {z_score_h.iloc[-1]:.3f}

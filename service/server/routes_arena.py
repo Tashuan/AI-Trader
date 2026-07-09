@@ -722,6 +722,25 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         states = get_agent_states()
         all_relationships = compute_all_relationships()
         personalities = _load_personalities()
+        bot_statuses = get_all_bot_statuses()
+
+        # Check for recently active AI agents (any signal in last 5 min)
+        recently_active: set[int] = set()
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if agent_ids:
+            placeholders = ",".join("?" for _ in agent_ids)
+            cursor.execute(
+                f"""
+                SELECT DISTINCT agent_id FROM signals
+                WHERE agent_id IN ({placeholders})
+                AND created_at > datetime('now', '-5 minutes')
+                """,
+                agent_ids,
+            )
+            for row in cursor.fetchall():
+                recently_active.add(row["agent_id"])
+        conn.close()
 
         # Build agent list
         agents = []
@@ -824,7 +843,8 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 "trade_count": trade_info.get("count", 0),
                 "win_rate": round(win_rate, 2) if win_rate else 0,
                 "win_streak": win_streak,
-                "online": bool(state_info),
+                "online": bool(state_info) or aid in recently_active,
+                "bot_running": bot_statuses.get(name.lower(), {}).get("running", False),
                 "watchlist": personality.get("watchlist", []),
                 "quirks": personality.get("quirks", []),
                 "relationship_focus": rel_focus,

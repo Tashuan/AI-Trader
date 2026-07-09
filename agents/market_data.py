@@ -189,6 +189,17 @@ class MarketDataClient:
 
         return None
 
+    @staticmethod
+    def _suppress_yfinance_logging() -> None:
+        """Silence yfinance's internal error prints (Failed download, etc.)."""
+        import logging
+        logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+        try:
+            import yfinance as yf
+            yf.enableDebugMode(False) if hasattr(yf, "enableDebugMode") else None
+        except Exception:
+            pass
+
     def _fetch_technical_yfinance(self, symbol: str) -> Optional[TechnicalSnapshot]:
         """Fetch technical analysis using yfinance."""
         try:
@@ -196,13 +207,16 @@ class MarketDataClient:
         except ImportError:
             return None
 
+        self._suppress_yfinance_logging()
+
         yf_symbol = self._normalize_symbol(symbol)
         try:
-            df = yf.download(yf_symbol, period="3mo", interval="1d", progress=False)
+            ticker = yf.Ticker(yf_symbol)
+            df = ticker.history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)
         except Exception:
             return None
 
-        if df is None or df.empty:
+        if df is None or getattr(df, "empty", True):
             return None
 
         closes = df["Close"].squeeze().dropna()

@@ -739,20 +739,53 @@ def _normalize_yfinance_us_symbol(symbol: str) -> str:
     return normalized
 
 
+def _suppress_yfinance_logging() -> None:
+    """Silence yfinance's internal error prints (Failed download, etc.)."""
+    import logging
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+    try:
+        import yfinance as yf
+        yf.enableDebugMode(False) if hasattr(yf, "enableDebugMode") else None
+    except Exception:
+        pass
+
+
 def _download_yfinance_history(symbol: str, start_date: str, end_date: str, interval: str):
     import yfinance as yf
 
-    return yf.download(
-        symbol,
-        start=start_date,
-        end=end_date,
-        interval=interval,
-        auto_adjust=False,
-        progress=False,
-        prepost=True,
-        threads=False,
-        timeout=PRICE_FETCH_TIMEOUT_SECONDS,
-    )
+    _suppress_yfinance_logging()
+
+    max_attempts = max(1, PRICE_FETCH_MAX_RETRIES + 1)
+    for attempt in range(max_attempts):
+        try:
+            ticker = yf.Ticker(symbol)
+            frame = ticker.history(
+                start=start_date,
+                end=end_date,
+                interval=interval,
+                auto_adjust=False,
+                prepost=True,
+                timeout=PRICE_FETCH_TIMEOUT_SECONDS,
+                raise_errors=False,
+            )
+            if frame is not None and not getattr(frame, "empty", True):
+                return frame
+        except Exception as exc:
+            _price_log(
+                f"[Price API] yfinance attempt {attempt + 1}/{max_attempts} "
+                f"failed for {symbol}: {exc}"
+            )
+
+        if attempt < max_attempts - 1:
+            delay = _retry_delay(attempt)
+            _price_log(
+                f"[Price API] yfinance retry {attempt + 1}/{max_attempts - 1} "
+                f"for {symbol}; sleeping {delay:.2f}s"
+            )
+            if delay > 0:
+                time.sleep(delay)
+
+    return None
 
 
 def _extract_yfinance_close_price(frame: Any, symbol: str, target_utc: datetime) -> Optional[float]:

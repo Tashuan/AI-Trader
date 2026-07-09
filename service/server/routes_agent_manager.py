@@ -283,8 +283,10 @@ You have access to a Tavily web search MCP server. Use it to find context:
 ## Technical Analysis with yfinance
 If the platform API doesn't return technical data, run Python to calculate it yourself:
 ```python
-import yfinance as yf
-df = yf.download("BTC-USD", period="3mo", interval="1d", progress=False)
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+ticker = yf.Ticker("BTC-USD")
+df = ticker.history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)
 # Calculate RSI, Bollinger Bands, returns
 ```
 

@@ -51,10 +51,11 @@ For each symbol on your watchlist, determine if it's ranging:
 
 **Tier 1 — yfinance:**
 ```python
-import yfinance as yf
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 import numpy as np
 
-df = yf.download("BTC-USD", period="3mo", interval="1d", progress=False)
+df = yf.Ticker("BTC-USD").history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)
 
 # ADX (trend strength) — below 20 = ranging
 high, low, close = df["High"], df["Low"], df["Close"]
@@ -208,13 +209,14 @@ BTC, ETH, SOL, DOGE, NVDA, AAPL, MSFT, AMZN, META, AMD
 
 **Tier 1 — yfinance:**
 ```python
-import yfinance as yf
-df = yf.download("BTC-USD", period="3mo", interval="1d", progress=False)
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+df = yf.Ticker("BTC-USD").history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)
 # Calculate ADX, Bollinger Band width, range boundaries, RSI, volume ratio, ATR
 ```
 **Hourly timeframe (entry timing at range boundaries):**
 ```python
-df_h = yf.download("BTC-USD", period="5d", interval="1h", progress=False)
+df_h = yf.Ticker("BTC-USD").history(period="5d", interval="1h", auto_adjust=False, raise_errors=False)
 # Check hourly RSI, rejection wicks at boundaries, volume at support/resistance
 ```
 

@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
 import { LayoutDashboard, ChevronLeft, ChevronRight, Settings, TrendingUp, Users } from 'lucide-react';
+import { BackgroundTaskIndicator } from './BackgroundTaskIndicator';
 
 export type PageId = 'arena' | 'agents' | 'markets' | 'settings';
 
@@ -81,12 +82,15 @@ export function SidebarNav({ currentPage, onNavigate }: SidebarNavProps) {
       </nav>
 
       {/* Footer */}
-      {!collapsed && (
-        <div className="p-3 border-t border-arena-border shrink-0">
-          <div className="text-[9px] text-arena-text-dim">Stockboy</div>
-          <div className="text-[9px] text-arena-text-dim">v1.0</div>
-        </div>
-      )}
+      <div className="p-2 border-t border-arena-border shrink-0">
+        <BackgroundTaskIndicator />
+        {!collapsed && (
+          <div className="px-2 pt-1">
+            <div className="text-[9px] text-arena-text-dim">Stockboy</div>
+            <div className="text-[9px] text-arena-text-dim">v1.0</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -59,7 +59,7 @@ Your strategy is phase-dependent. Before any analysis, determine which phase you
 
 ### Phase 2: Opening Range Formation (9:30-9:35 AM ET)
 - This is the **mapping phase** — DO NOT TRADE YET
-- Fetch 1-minute candles for your target symbols: `yf.download("NVDA", period="1d", interval="1m")`
+- Fetch 1-minute candles for your target symbols: `yf.Ticker("NVDA").history(period="1d", interval="1m", auto_adjust=False, raise_errors=False)`
 - Track the HIGH and LOW of the first 5 minutes — this is your **Opening Range (OR)**
 - The OR high and OR low are your breakout trigger levels
 - Volume should be SURGING — if first-5-min volume is less than 2x the 20-day average first-5-min volume, the setup is weak — skip that symbol
@@ -148,11 +148,12 @@ Before engaging, do a FAST macro check:
 The opening range is the foundation of your entire strategy. Calculate it precisely:
 
 ```python
-import yfinance as yf
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 from datetime import datetime, timedelta
 
 # Fetch 1-minute candles for today
-df = yf.download("NVDA", period="1d", interval="1m", progress=False)
+df = yf.Ticker("NVDA").history(period="1d", interval="1m", auto_adjust=False, raise_errors=False)
 
 # Filter for first 5 minutes after open (9:30-9:35 AM ET)
 # For crypto, use the first 5 minutes of the current high-volume session
@@ -299,21 +300,23 @@ If the platform API doesn't return technical data, use these fallbacks in order:
 
 **Tier 1 — yfinance** (primary fallback):
 ```python
-import yfinance as yf
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # 1-minute candles for opening range detection (CRITICAL)
-df_1m = yf.download("NVDA", period="1d", interval="1m", progress=False)
+df_1m = yf.Ticker("NVDA").history(period="1d", interval="1m", auto_adjust=False, raise_errors=False)
 # 2-minute candles for slightly smoother view
-df_2m = yf.download("NVDA", period="5d", interval="2m", progress=False)
+df_2m = yf.Ticker("NVDA").history(period="5d", interval="2m", auto_adjust=False, raise_errors=False)
 # Daily for ATR and context
-df_1d = yf.download("NVDA", period="3mo", interval="1d", progress=False)
+df_1d = yf.Ticker("NVDA").history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)
 # Calculate: opening range (first 5 min), volume ratio, ATR, RSI on 1-min
 ```
 
 **Pre-market data (for gap scanning):**
 ```python
-import yfinance as yf
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 # Use 1m interval with prepost=True to get pre-market candles
-df_pm = yf.download("NVDA", period="1d", interval="1m", prepost=True, progress=False)
+df_pm = yf.Ticker("NVDA").history(period="1d", interval="1m", auto_adjust=False, prepost=True, raise_errors=False)
 # Filter for pre-market hours (4:00 AM - 9:30 AM ET)
 pm_candles = df_pm.between_time("04:00", "09:30")
 pm_high = pm_candles["High"].max()

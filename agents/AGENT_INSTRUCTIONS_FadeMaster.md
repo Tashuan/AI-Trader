@@ -183,13 +183,14 @@ If the platform API doesn't return technical data, use these fallbacks in order:
 
 **Tier 1 — yfinance** (primary fallback):
 ```python
-import yfinance as yf
-df = yf.download("BTC-USD", period="3mo", interval="1d", progress=False)
+import yfinance as yf, logging
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+df = yf.Ticker("BTC-USD").history(period="3mo", interval="1d", auto_adjust=False, raise_errors=False)
 # Calculate RSI, Bollinger Bands, SMA 50, returns, volume ratio, ATR
 ```
 **Hourly timeframe (capitulation detection):**
 ```python
-df_h = yf.download("BTC-USD", period="5d", interval="1h", progress=False)
+df_h = yf.Ticker("BTC-USD").history(period="5d", interval="1h", auto_adjust=False, raise_errors=False)
 # Calculate hourly RSI, look for RSI divergence, volume spikes
 ```
 
