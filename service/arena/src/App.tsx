@@ -1,22 +1,27 @@
 import { useState } from 'react';
 import { useArenaData } from './hooks/useArenaData';
+import { SidebarNav, type PageId } from './components/SidebarNav';
 import { TopMarketBar } from './components/TopMarketBar';
 import { EventTicker } from './components/EventTicker';
 import { AgentArena } from './components/AgentArena';
 import { CommentaryPanel, ConversationPanel, HeadlinesPanel, EventTimelinePanel } from './components/SidePanels';
 import { AgentDrawer } from './components/AgentDrawer';
+import { MarketsPage } from './pages/MarketsPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { AgentsPage } from './pages/AgentsPage';
 import type { Agent } from './types';
 
 export default function App() {
   const { data, loading, error, commentary, mentionedAgent } = useArenaData();
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+  const [currentPage, setCurrentPage] = useState<PageId>('arena');
 
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center bg-arena-bg">
         <div className="text-center">
-          <div className="text-2xl font-bold text-white mb-2">AI TRADER <span className="text-arena-purple">ARENA</span></div>
-          <div className="text-sm text-arena-text-dim animate-pulse">Initializing arena...</div>
+          <div className="text-2xl font-bold text-white mb-2">STOCK<span className="text-arena-purple">BOY</span></div>
+          <div className="text-sm text-arena-text-dim animate-pulse">Initializing stockboy...</div>
         </div>
       </div>
     );
@@ -46,36 +51,56 @@ export default function App() {
   const breakingEvent = data?.breaking_event || null;
 
   return (
-    <div className="h-screen flex flex-col bg-arena-bg overflow-hidden">
-      {/* Top Market Bar */}
-      <TopMarketBar markets={markets} breakingEvent={breakingEvent} />
+    <div className="h-screen flex bg-arena-bg overflow-hidden">
+      {/* Collapsible Sidebar Nav */}
+      <SidebarNav currentPage={currentPage} onNavigate={setCurrentPage} />
 
-      {/* Event Ticker */}
-      <EventTicker events={timeline} />
+      {/* Main column */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Top Market Bar */}
+        <TopMarketBar markets={markets} breakingEvent={breakingEvent} />
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar: Commentary + Headlines + Conversation */}
-        <div className="w-80 shrink-0 border-r border-arena-border p-3 flex flex-col overflow-hidden">
-          <CommentaryPanel commentary={commentary} />
-          <HeadlinesPanel headlines={headlines} />
-          <ConversationPanel timeline={timeline} />
-        </div>
+        {/* Event Ticker */}
+        <EventTicker events={timeline} />
 
-        {/* Center: Agent Arena Grid */}
-        <AgentArena
-          agents={agents}
-          mentionedAgent={mentionedAgent}
-          onAgentClick={(agent) => setSelectedAgent(agent)}
-        />
+        {/* Page Content */}
+        {currentPage === 'arena' && (
+          <div className="flex-1 flex overflow-hidden">
+            {/* Left Sidebar: Commentary + Headlines + Conversation */}
+            <div className="w-80 shrink-0 border-r border-arena-border p-3 flex flex-col overflow-hidden">
+              <CommentaryPanel commentary={commentary} />
+              <HeadlinesPanel headlines={headlines} />
+              <ConversationPanel timeline={timeline} />
+            </div>
 
-        {/* Right Sidebar: Event Timeline */}
-        <div className="w-72 shrink-0 border-l border-arena-border p-3 flex flex-col overflow-hidden">
-          <EventTimelinePanel timeline={timeline} />
-        </div>
+            {/* Center: Agent Arena Grid */}
+            <AgentArena
+              agents={agents}
+              mentionedAgent={mentionedAgent}
+              onAgentClick={(agent) => setSelectedAgent(agent)}
+            />
+
+            {/* Right Sidebar: Event Timeline */}
+            <div className="w-72 shrink-0 border-l border-arena-border p-3 flex flex-col overflow-hidden">
+              <EventTimelinePanel timeline={timeline} />
+            </div>
+          </div>
+        )}
+
+        {currentPage === 'markets' && (
+          <MarketsPage markets={markets} />
+        )}
+
+        {currentPage === 'agents' && (
+          <AgentsPage />
+        )}
+
+        {currentPage === 'settings' && (
+          <SettingsPage />
+        )}
       </div>
 
-      {/* Agent Drawer */}
+      {/* Agent Drawer (available from any page) */}
       <AgentDrawer agent={selectedAgent} onClose={() => setSelectedAgent(null)} />
     </div>
   );

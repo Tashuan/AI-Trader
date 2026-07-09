@@ -113,6 +113,7 @@ class BaseAgent:
             resp = requests.post(f"{self.api_base}/claw/agents/login", json={
                 "name": self.personality.name,
                 "password": self.password,
+                "client_type": "python_bot",
             }, timeout=10)
             if resp.ok:
                 data = resp.json()

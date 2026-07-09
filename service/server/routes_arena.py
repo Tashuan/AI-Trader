@@ -39,6 +39,14 @@ from arena_narrative import (
     build_timeline_events,
     generate_commentary,
 )
+from bot_manager import (
+    start_bot,
+    stop_bot,
+    stop_bot_by_name,
+    get_bot_status,
+    get_all_bot_statuses,
+    disconnect_agent,
+)
 
 
 # ============================================================
@@ -185,7 +193,38 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     @app.get("/api/arena/personalities")
     async def arena_personalities():
-        return {"personalities": _load_personalities()}
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        agents_dir = os.path.join(project_root, "agents")
+        return {
+            "personalities": _load_personalities(),
+            "agents_dir": agents_dir,
+            "project_root": project_root,
+        }
+
+    # ─── Bot management endpoints ──────────────────────────────────
+
+    @app.post("/api/arena/bot/{agent_key}/start")
+    async def arena_start_bot(agent_key: str):
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        agents_dir = os.path.join(project_root, "agents")
+        api_base = "http://localhost:8000/api"
+        result = start_bot(agent_key, agents_dir, api_base)
+        status_code = 200 if result["success"] else 409
+        return result
+
+    @app.post("/api/arena/bot/{agent_key}/stop")
+    async def arena_stop_bot(agent_key: str):
+        result = stop_bot(agent_key)
+        return result
+
+    @app.get("/api/arena/bots")
+    async def arena_bot_statuses():
+        return {"bots": get_all_bot_statuses()}
+
+    @app.post("/api/arena/agent/{agent_id}/disconnect")
+    async def arena_disconnect_agent(agent_id: int):
+        result = disconnect_agent(agent_id)
+        return result
 
     # ─── GET /api/arena/markets — Market battlefield data ───────────
 
@@ -851,6 +890,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             "commentary": [],
             "timeline": timeline,
             "breaking_event": None,
+            "bots": get_all_bot_statuses(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 

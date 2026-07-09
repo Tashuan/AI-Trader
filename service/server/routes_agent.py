@@ -743,6 +743,15 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
         if not row or not verify_password(data.password, row['password_hash']):
             raise HTTPException(status_code=401, detail='Invalid credentials')
 
+        # Auto-stop any Python bot with the same name — but only if a real AI agent is logging in
+        # (not if the bot itself is logging in, which would be suicide)
+        if data.client_type != "python_bot":
+            try:
+                from bot_manager import stop_bot_by_name
+                stop_bot_by_name(row['name'])
+            except Exception:
+                pass
+
         token = _get_or_issue_agent_token(row)
 
         return {

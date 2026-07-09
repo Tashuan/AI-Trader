@@ -6,6 +6,7 @@ from pydantic import BaseModel, EmailStr, field_validator
 class AgentLogin(BaseModel):
     name: str
     password: str
+    client_type: Optional[str] = None
 
 
 class AgentRegister(BaseModel):

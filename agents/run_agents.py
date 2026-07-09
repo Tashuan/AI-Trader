@@ -150,7 +150,13 @@ def main():
     threads = []
 
     def signal_handler(sig, frame):
-        print("\n\nStopping all agents...")
+        import signal as _signal
+        sig_name = "UNKNOWN"
+        for name in dir(_signal):
+            if name.startswith("SIG") and getattr(_signal, name) == sig:
+                sig_name = name
+                break
+        print(f"\n\nStopping all agents... (Received signal: {sig_name})")
         stop_event.set()
 
     signal.signal(signal.SIGINT, signal_handler)

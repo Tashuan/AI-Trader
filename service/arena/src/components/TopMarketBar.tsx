@@ -59,8 +59,8 @@ export function TopMarketBar({ markets, breakingEvent }: TopMarketBarProps) {
       {/* Logo + LIVE indicator */}
       <div className="flex items-center gap-3 shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-bold tracking-tight text-white">AI TRADER</span>
-          <span className="text-sm font-bold text-arena-purple">ARENA</span>
+          <span className="text-sm font-bold tracking-tight text-white">STOCK</span>
+          <span className="text-sm font-bold text-arena-purple">BOY</span>
         </div>
         <div className="flex items-center gap-1.5">
           <motion.span
