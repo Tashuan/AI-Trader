@@ -360,6 +360,22 @@ class BaseAgent:
         return None
 
     # ============================================================
+    # Arena State Reporting
+    # ============================================================
+
+    def _report_state(self, state: str, detail: str = "", symbol: str = "", confidence: float = 0.0):
+        """Report current state to the arena. Never raises — state reporting is best-effort."""
+        if not self.token:
+            return
+        try:
+            requests.post(f"{self.api_base}/arena/state",
+                headers=self.headers,
+                json={"state": state, "detail": detail, "symbol": symbol, "confidence": confidence},
+                timeout=5)
+        except Exception:
+            pass
+
+    # ============================================================
     # Heartbeat
     # ============================================================
 
@@ -439,10 +455,11 @@ class BaseAgent:
             cycle += 1
             self._bought_this_cycle.clear()
             try:
+                self._report_state("scanning", "Scanning watchlist", confidence=0.0)
                 self.on_cycle()
                 self.fetch_portfolio()
 
-                # Run strategy analysis
+                self._report_state("researching", "Analyzing market data")
                 decisions = self.analyze()
                 for decision in decisions:
                     if decision.publish_strategy and decision.strategy_title:
@@ -453,17 +470,21 @@ class BaseAgent:
                             symbols=decision.symbol,
                             tags=decision.strategy_tags or "agent,automated",
                         )
+                    if decision.action in ("buy", "short"):
+                        self._report_state("entering", detail=decision.reason,
+                            symbol=decision.symbol, confidence=decision.confidence)
+                    elif decision.action in ("sell", "cover"):
+                        self._report_state("exiting", detail=decision.reason,
+                            symbol=decision.symbol, confidence=decision.confidence)
                     self.execute_trade(decision)
 
-                # Heartbeat
+                self._report_state("reviewing", "Reviewing portfolio and community")
                 hb = self.heartbeat()
                 if hb:
                     self.on_heartbeat(hb)
 
-                # Community engagement — reply to other agents' signals
                 self.engage_community(max_replies=2)
 
-                # Occasionally publish a discussion post (every 5 cycles)
                 self._discussion_cooldown -= 1
                 if self._discussion_cooldown <= 0:
                     if self.publish_market_discussion():
@@ -483,6 +504,7 @@ class BaseAgent:
                 self.logger.info(f"Reached max cycles ({max_cycles}). Stopping.")
                 break
 
+            self._report_state("idle", "Waiting for next cycle")
             time.sleep(self.poll_interval)
 
     def stop(self) -> None:

@@ -151,6 +151,15 @@ a {
   gap: 10px;
 }
 
+.sidebar-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 0;
+  margin-bottom: 12px;
+}
+
 /* Background Task Indicator */
 
 .bg-task-indicator {
@@ -326,17 +335,49 @@ a {
 
 /* Sidebar */
 .sidebar {
-  width: 260px;
   background:
     linear-gradient(180deg, rgba(10, 16, 21, 0.98), rgba(8, 12, 16, 0.98)),
     linear-gradient(180deg, rgba(216, 169, 91, 0.05), transparent 35%);
   border-right: 1px solid rgba(214, 175, 110, 0.12);
-  padding: 24px 16px;
   display: flex;
   flex-direction: column;
   position: fixed;
   height: 100vh;
   overflow-y: auto;
+  transition: width 0.2s ease, padding 0.2s ease;
+}
+
+.sidebar-open {
+  width: 260px;
+  padding: 24px 16px;
+}
+
+.sidebar-collapsed {
+  width: 48px;
+  padding: 24px 0;
+}
+
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 16px;
+  margin: 0 auto 16px;
+  transition: var(--transition);
+}
+
+.sidebar-toggle:hover {
+  background: color-mix(in srgb, var(--bg-hover) 82%, transparent);
+  color: var(--text-primary);
+}
+
+.sidebar-collapsed .sidebar-toggle {
+  margin: 0 auto;
 }
 
 :root[data-theme='light'] .sidebar {
@@ -430,9 +471,58 @@ a {
 /* Main Content */
 .main-content {
   flex: 1;
-  margin-left: 260px;
+  margin-left: 48px;
   padding: 28px 32px 40px;
+  max-width: calc(100% - 48px);
+  transition: margin-left 0.2s ease, max-width 0.2s ease;
+}
+
+.sidebar-expanded .main-content {
+  margin-left: 260px;
   max-width: calc(100% - 260px);
+}
+
+/* Trending Sidebar Toggle */
+.trending-sidebar-collapsed {
+  width: 32px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 24px;
+  align-self: flex-start;
+}
+
+.trending-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 16px;
+  transition: var(--transition);
+}
+
+.trending-toggle:hover {
+  background: color-mix(in srgb, var(--bg-hover) 82%, transparent);
+  color: var(--text-primary);
+}
+
+.trending-toggle-open {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 8px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: var(--transition);
+}
+
+.trending-toggle-open:hover {
+  color: var(--text-primary);
 }
 
 /* Header */
@@ -3423,10 +3513,13 @@ a {
     max-width: none;
   }
 
-  .sidebar {
+  .sidebar,
+  .sidebar-open,
+  .sidebar-collapsed {
     width: 100%;
     position: relative;
     height: auto;
+    padding: 16px;
   }
 
   .main-content {

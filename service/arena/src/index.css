@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: theme('colors.arena.border');
+  }
+
+  body {
+    background-color: #05070B;
+    color: #FFFFFF;
+    font-family: 'Inter', system-ui, sans-serif;
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+}
+
+@layer utilities {
+  .glow-blue {
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
+  }
+  .glow-green {
+    box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
+  }
+  .glow-purple {
+    box-shadow: 0 0 12px rgba(139, 92, 246, 0.3);
+  }
+  .glow-red {
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.3);
+  }
+  .glow-orange {
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.3);
+  }
+  .text-glow {
+    text-shadow: 0 0 8px currentColor;
+  }
+  .card-base {
+    background-color: #10141B;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+  }
+  .card-hover {
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  }
+  .card-hover:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+    transform: translateY(-2px);
+  }
+}

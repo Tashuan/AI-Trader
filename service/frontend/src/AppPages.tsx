@@ -2930,7 +2930,7 @@ export function TradePage({ token, agentInfo, onTradeSuccess }: { token: string,
 }
 
 // Trending Sidebar - Shows most held symbols with current prices
-export function TrendingSidebar() {
+export function TrendingSidebar({ isOpen, onToggle }: { isOpen: boolean, onToggle: () => void }) {
   const [trending, setTrending] = useState<any[]>([])
   const [agentCount, setAgentCount] = useState(0)
   const { language } = useLanguage()
@@ -2976,6 +2976,16 @@ export function TrendingSidebar() {
     return market
   }
 
+  if (!isOpen) {
+    return (
+      <div className="trending-sidebar-collapsed">
+        <div className="trending-toggle" onClick={onToggle} title={language === 'zh' ? '展开' : 'Expand'}>
+          ◀
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{
       width: '280px',
@@ -2984,6 +2994,9 @@ export function TrendingSidebar() {
       top: '24px',
       alignSelf: 'flex-start'
     }}>
+      <div className="trending-toggle-open" onClick={onToggle} title={language === 'zh' ? '收起' : 'Collapse'}>
+        {language === 'zh' ? '收起 ▶' : 'Collapse ▶'}
+      </div>
       {/* Agent Count */}
       <div className="card" style={{ padding: '16px', marginBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

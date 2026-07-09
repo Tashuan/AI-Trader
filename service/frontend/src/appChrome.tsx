@@ -116,13 +116,17 @@ export function Sidebar({
   agentInfo,
   onLogout,
   notificationCounts,
-  onMarkCategoryRead
+  onMarkCategoryRead,
+  isOpen,
+  onToggle
 }: {
   token: string | null
   agentInfo: AgentInfo | null
   onLogout: () => void
   notificationCounts: NotificationCounts
   onMarkCategoryRead: (category: 'discussion' | 'strategy' | 'experiment') => void
+  isOpen: boolean
+  onToggle: () => void
 }) {
   const location = useLocation()
   const { t, language } = useLanguage()
@@ -134,6 +138,7 @@ export function Sidebar({
   const agentToken = agentInfo?.token
 
   const navItems = [
+    { path: '/dashboard', icon: '🏠', label: language === 'zh' ? '仪表盘' : 'Dashboard', requiresAuth: false },
     { path: '/agents', icon: '🤖', label: 'Agents', requiresAuth: false },
     { path: '/agent-manager', icon: '⚙️', label: 'Agent Manager', requiresAuth: false },
     { path: '/agent-builder', icon: '✨', label: 'Agent Builder', requiresAuth: false },
@@ -164,61 +169,74 @@ export function Sidebar({
   }, [location.pathname, notificationCounts.discussion, notificationCounts.strategy, notificationCounts.experiment])
 
   return (
-    <div className="sidebar">
-      <div className="logo">
-        <div className="logo-icon">CT</div>
-        <span className="logo-text">AI-Trader</span>
+    <div className={`sidebar ${isOpen ? 'sidebar-open' : 'sidebar-collapsed'}`}>
+      <div className="sidebar-toggle" onClick={onToggle} title={isOpen ? (language === 'zh' ? '收起菜单' : 'Collapse menu') : (language === 'zh' ? '展开菜单' : 'Expand menu')}>
+        {isOpen ? '◀' : '▶'}
       </div>
+      {isOpen && (
+        <>
+          <div className="logo" style={{ marginBottom: '32px' }}>
+            <div className="logo-icon">CT</div>
+            <span className="logo-text">AI-Trader</span>
+          </div>
 
-      <nav className="nav-section">
-        <div className="nav-section-title">{language === 'zh' ? '导航' : 'Navigation'}</div>
-        {navItems.map((item) => (
-          <Link
-            key={item.path}
-            to={item.path}
-            className={`nav-link ${location.pathname === item.path || location.pathname.startsWith(`${item.path}/`) ? 'active' : ''}`}
-            title={!token && item.requiresAuth ? (language === 'zh' ? '登录后可用' : 'Login required') : undefined}
-            onClick={() => {
-              if (item.category && (item.badge || 0) > 0) {
-                onMarkCategoryRead(item.category)
-              }
-            }}
-          >
-            <span className="nav-icon">{item.icon}</span>
-            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '8px' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span>{item.label}</span>
-                {(item.badge || 0) > 0 && (
-                  <span style={{
-                    minWidth: '18px',
-                    height: '18px',
-                    padding: '0 6px',
-                    borderRadius: '999px',
-                    background: '#ef4444',
-                    color: '#fff',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    lineHeight: 1
-                  }}>
-                    {item.badge && item.badge > 99 ? '99+' : item.badge}
+          <nav className="nav-section">
+            <div className="nav-section-title">{language === 'zh' ? '导航' : 'Navigation'}</div>
+            {navItems.map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={`nav-link ${location.pathname === item.path || location.pathname.startsWith(`${item.path}/`) ? 'active' : ''}`}
+                title={!token && item.requiresAuth ? (language === 'zh' ? '登录后可用' : 'Login required') : item.label}
+                onClick={() => {
+                  if (item.category && (item.badge || 0) > 0) {
+                    onMarkCategoryRead(item.category)
+                  }
+                }}
+              >
+                <span className="nav-icon">{item.icon}</span>
+                <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '8px' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span>{item.label}</span>
+                    {(item.badge || 0) > 0 && (
+                      <span style={{
+                        minWidth: '18px',
+                        height: '18px',
+                        padding: '0 6px',
+                        borderRadius: '999px',
+                        background: '#ef4444',
+                        color: '#fff',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        lineHeight: 1
+                      }}>
+                        {item.badge && item.badge > 99 ? '99+' : item.badge}
+                      </span>
+                    )}
                   </span>
-                )}
-              </span>
-              {!token && item.requiresAuth && (
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                  {language === 'zh' ? '需登录' : 'Login'}
+                  {!token && item.requiresAuth && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {language === 'zh' ? '需登录' : 'Login'}
+                    </span>
+                  )}
                 </span>
-              )}
-            </span>
-          </Link>
-        ))}
-      </nav>
+              </Link>
+            ))}
+          </nav>
+        </>
+      )}
 
       <div style={{ marginTop: 'auto' }}>
-        {token && agentInfo ? (
+        {isOpen && (
+          <div className="sidebar-controls">
+            <BackgroundTaskIndicator />
+            <ThemeSwitcher />
+          </div>
+        )}
+        {isOpen && (token && agentInfo ? (
           <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px' }}>
             <div className="user-info">
               <div className="user-avatar">{agentInfo.name?.charAt(0) || 'A'}</div>
@@ -301,7 +319,7 @@ export function Sidebar({
               {language === 'zh' ? '先看看市场' : 'Browse Market'}
             </Link>
           </div>
-        )}
+        ))}
       </div>
     </div>
   )

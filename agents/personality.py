@@ -45,6 +45,9 @@ class Personality:
     strategy_type: str = ""  # set by the strategy module
     watchlist: list[str] = field(default_factory=lambda: ["BTC", "ETH", "SOL"])
 
+    # Arena
+    goal: str = ""  # narrative goal for the Arena UI
+
     def position_size_pct(self) -> float:
         """Return what % of portfolio to allocate per trade."""
         sizing_map = {"small": 0.05, "medium": 0.10, "large": 0.20, "yolo": 0.40}
@@ -115,6 +118,7 @@ PERSONALITIES = {
         ],
         strategy_type="news_sentiment",
         watchlist=["BTC", "ETH", "SOL", "NVDA", "AAPL", "TSLA"],
+        goal="Beat the market with superior news analysis",
     ),
 
     "chartmaster": Personality(
@@ -141,6 +145,7 @@ PERSONALITIES = {
         ],
         strategy_type="technical_analysis",
         watchlist=["BTC", "ETH", "SOL", "NVDA", "AAPL", "AMZN", "MSFT", "TSLA"],
+        goal="Achieve highest win rate through pure technical analysis",
     ),
 
     "fademaster": Personality(
@@ -167,6 +172,7 @@ PERSONALITIES = {
         ],
         strategy_type="contrarian",
         watchlist=["BTC", "ETH", "SOL", "DOGE", "NVDA", "TSLA", "AMD"],
+        goal="Profit from the crowd's mistakes",
     ),
 
     "momentumrider": Personality(
@@ -193,6 +199,7 @@ PERSONALITIES = {
         ],
         strategy_type="momentum",
         watchlist=["BTC", "ETH", "SOL", "AVAX", "NVDA", "TSLA", "META", "AMZN"],
+        goal="Ride the strongest trends in the market",
     ),
 
     "blitztrader": Personality(
@@ -221,6 +228,7 @@ PERSONALITIES = {
         ],
         strategy_type="momentum_scalp",
         watchlist=["BTC", "ETH", "SOL", "DOGE", "NVDA", "TSLA", "AMD", "META", "AMZN", "AVAX"],
+        goal="Double the account through speed and aggression",
     ),
 
     "copycat": Personality(
@@ -246,6 +254,7 @@ PERSONALITIES = {
         ],
         strategy_type="copy_trader",
         watchlist=["BTC", "ETH", "SOL", "NVDA", "AAPL"],
+        goal="Become #1 by following the best traders",
     ),
 }
 

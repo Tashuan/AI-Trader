@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import {
   API_BASE,
   type AgentInfo,
   ExchangePage,
   FinancialEventsPage,
-  LandingPage,
   LanguageContext,
   LoginPage,
   type NotificationCounts,
@@ -19,7 +18,6 @@ import {
   ThemeContext,
   type ThemeMode,
   Toast,
-  TopbarControls,
   TradePage,
   TrendingSidebar,
   CopyTradingPage,
@@ -39,6 +37,7 @@ import { TradeLogPage } from './pages/TradeLogPage'
 import { AgentManagerPage } from './pages/AgentManagerPage'
 import { AgentBuilderPage } from './pages/AgentBuilderPage'
 import { LiveFeedPage } from './pages/LiveFeedPage'
+import { DashboardPage } from './pages/DashboardPage'
 
 const DISCUSSION_NOTIFICATION_TYPES = new Set([
   'discussion_started',
@@ -248,8 +247,8 @@ function AppRouter({
   notificationCounts: NotificationCounts
   markCategoryRead: (category: 'discussion' | 'strategy' | 'experiment') => void
 }) {
-  const location = useLocation()
-  const isLanding = location.pathname === '/'
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [trendingOpen, setTrendingOpen] = useState(false)
   const canUseExperiments = hasPermission(agentInfo, 'experiment_admin')
   const canUseResearchExports = hasPermission(agentInfo, 'research_exports')
   const canUseTeamMissionAdmin = hasPermission(agentInfo, 'team_mission_admin')
@@ -257,31 +256,23 @@ function AppRouter({
   const permissionLoading = Boolean(token && agentInfoLoading)
   const permissionLoadingView = <div className="loading"><div className="spinner"></div></div>
 
-  if (isLanding) {
-    return (
-      <Routes>
-        <Route path="/" element={<LandingPage token={token} />} />
-      </Routes>
-    )
-  }
-
   return (
-    <div className="app-container">
+    <div className={`app-container ${sidebarOpen ? 'sidebar-expanded' : 'sidebar-closed'}`}>
       <Sidebar
         token={token}
         agentInfo={agentInfo}
         onLogout={logout}
         notificationCounts={notificationCounts}
         onMarkCategoryRead={markCategoryRead}
+        isOpen={sidebarOpen}
+        onToggle={() => setSidebarOpen(!sidebarOpen)}
       />
 
       <main className="main-content" style={{ display: 'flex', gap: '24px' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
-            <TopbarControls />
-          </div>
-
           <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/agent-manager" element={<AgentManagerPage token={token || ''} />} />
             <Route path="/agent-builder" element={<AgentBuilderPage token={token || ''} />} />
@@ -307,11 +298,11 @@ function AppRouter({
             <Route path="/exchange" element={token ? <ExchangePage token={token} onExchangeSuccess={fetchAgentInfo} /> : <Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage onLogin={login} />} />
             <Route path="/register" element={<RegisterPage onLogin={login} />} />
-            <Route path="*" element={<Navigate to="/market" replace />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </div>
 
-        <TrendingSidebar />
+        <TrendingSidebar isOpen={trendingOpen} onToggle={() => setTrendingOpen(!trendingOpen)} />
       </main>
     </div>
   )

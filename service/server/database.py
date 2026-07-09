@@ -1814,6 +1814,67 @@ def init_database():
         ON agent_trade_log(status)
     """)
 
+    # Arena: Agent state tracking (Decision Engine)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_states (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            detail TEXT,
+            symbol TEXT,
+            confidence REAL,
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_states_agent
+        ON agent_states(agent_id, updated_at DESC)
+    """)
+
+    # Arena: Agent relationships (Arena Engine)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_relationships (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            target_agent_id INTEGER NOT NULL,
+            trust_score REAL DEFAULT 0.5,
+            dislike_score REAL DEFAULT 0.0,
+            agreement_count INTEGER DEFAULT 0,
+            disagreement_count INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(agent_id, target_agent_id),
+            FOREIGN KEY (agent_id) REFERENCES agents(id),
+            FOREIGN KEY (target_agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_relationships_agent
+        ON agent_relationships(agent_id)
+    """)
+
+    # Arena: Agent memories (Arena Engine)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            memory_type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            symbol TEXT,
+            related_agent_id INTEGER,
+            impact REAL DEFAULT 0.5,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_memories_agent_created
+        ON agent_memories(agent_id, created_at DESC)
+    """)
+
     if not using_postgres():
         conn.commit()
     elif previous_autocommit is not None:
