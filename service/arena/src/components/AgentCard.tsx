@@ -67,9 +67,6 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
           <div>
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-semibold text-white">{agent.name}</span>
-              {isActive && (
-                <span className="text-[8px] font-mono font-semibold text-arena-green uppercase">Online</span>
-              )}
             </div>
             <div className="text-[10px] text-arena-text-dim">{agent.goal}</div>
           </div>
@@ -143,9 +140,23 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
       </div>
 
       {/* Position Display */}
-      <div className="mb-2 min-h-[20px] flex items-center justify-between">
-        {position ? (
-          <>
+      <div className="mb-2 min-h-[20px] space-y-1">
+        {agent.all_positions && agent.all_positions.length > 0 ? (
+          agent.all_positions.map((pos, i) => (
+            <div key={i} className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[9px] font-mono font-bold ${pos.side === 'long' ? 'text-arena-green' : 'text-arena-red'}`}>
+                  {pos.side.toUpperCase()}
+                </span>
+                <span className="text-[10px] font-mono text-white">{pos.symbol}</span>
+              </div>
+              <span className={`text-[10px] font-mono ${pos.pnl_pct >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+                {pos.pnl_pct >= 0 ? '+' : ''}{pos.pnl_pct.toFixed(1)}%
+              </span>
+            </div>
+          ))
+        ) : position ? (
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <span className={`text-[9px] font-mono font-bold ${position.side === 'long' ? 'text-arena-green' : 'text-arena-red'}`}>
                 {position.side.toUpperCase()}
@@ -155,7 +166,7 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
             <span className={`text-[10px] font-mono ${position.pnl_pct >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
               {position.pnl_pct >= 0 ? '+' : ''}{position.pnl_pct.toFixed(1)}%
             </span>
-          </>
+          </div>
         ) : (
           <span className="text-[10px] text-arena-text-dim/50">No open position</span>
         )}
@@ -179,9 +190,11 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
         )}
       </div>
 
-      {/* Footer: Today's P&L */}
+      {/* Footer: P&L */}
       <div className="flex items-center justify-between pt-2 border-t border-arena-border mt-auto">
-        <span className="text-[9px] text-arena-text-dim">TODAY</span>
+        <span className="text-[9px] text-arena-text-dim">
+          {agent.all_positions && agent.all_positions.length > 0 ? 'UNREALIZED' : 'TOTAL'}
+        </span>
         <div className="flex items-center gap-2">
           <span className={`text-[11px] font-mono font-semibold ${pnlPositive ? 'text-arena-green' : 'text-arena-red'}`}>
             {pnlPositive ? '+' : ''}${Math.abs(agent.today_pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}

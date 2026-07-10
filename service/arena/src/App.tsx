@@ -4,11 +4,12 @@ import { SidebarNav, type PageId } from './components/SidebarNav';
 import { TopMarketBar } from './components/TopMarketBar';
 import { EventTicker } from './components/EventTicker';
 import { AgentArena } from './components/AgentArena';
-import { CommentaryPanel, ConversationPanel, HeadlinesPanel, EventTimelinePanel } from './components/SidePanels';
+import { CommentaryPanel, ConversationPanel, HeadlinesPanel } from './components/SidePanels';
 import { AgentDrawer } from './components/AgentDrawer';
 import { MarketsPage } from './pages/MarketsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AgentsPage } from './pages/AgentsPage';
+import { TimelinePage } from './pages/TimelinePage';
 import type { Agent } from './types';
 
 export default function App() {
@@ -79,11 +80,6 @@ export default function App() {
               mentionedAgent={mentionedAgent}
               onAgentClick={(agent) => setSelectedAgent(agent)}
             />
-
-            {/* Right Sidebar: Event Timeline */}
-            <div className="w-72 shrink-0 border-l border-arena-border p-3 flex flex-col overflow-hidden">
-              <EventTimelinePanel timeline={timeline} />
-            </div>
           </div>
         )}
 
@@ -93,6 +89,10 @@ export default function App() {
 
         {currentPage === 'agents' && (
           <AgentsPage />
+        )}
+
+        {currentPage === 'timeline' && (
+          <TimelinePage timeline={timeline} />
         )}
 
         {currentPage === 'settings' && (

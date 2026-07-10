@@ -1,9 +1,9 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { LayoutDashboard, ChevronLeft, ChevronRight, Settings, TrendingUp, Users } from 'lucide-react';
+import { LayoutDashboard, ChevronLeft, ChevronRight, Settings, TrendingUp, Users, Activity } from 'lucide-react';
 import { BackgroundTaskIndicator } from './BackgroundTaskIndicator';
 
-export type PageId = 'arena' | 'agents' | 'markets' | 'settings';
+export type PageId = 'arena' | 'agents' | 'markets' | 'timeline' | 'settings';
 
 interface NavItem {
   id: PageId;
@@ -16,6 +16,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'arena', label: 'Arena', icon: <LayoutDashboard size={16} />, description: 'Live agent dashboard' },
   { id: 'agents', label: 'Agents', icon: <Users size={16} />, description: 'Launch & manage agents' },
   { id: 'markets', label: 'Markets', icon: <TrendingUp size={16} />, description: 'Market battlefield' },
+  { id: 'timeline', label: 'Timeline', icon: <Activity size={16} />, description: 'Event & trade history' },
   { id: 'settings', label: 'Settings', icon: <Settings size={16} />, description: 'Configuration' },
 ];
 

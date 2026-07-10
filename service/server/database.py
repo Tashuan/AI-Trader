@@ -664,7 +664,7 @@ def init_database():
         )
     """)
 
-    cursor.execute("SELECT COALESCE(MAX(signal_id), 0) AS max_signal_id FROM signals")
+    cursor.execute("SELECT COALESCE(MAX(CAST(signal_id AS INTEGER)), 0) AS max_signal_id FROM signals WHERE CAST(signal_id AS TEXT) = CAST(signal_id AS INTEGER) AND CAST(signal_id AS INTEGER) > 0")
     max_signal_id = int(cursor.fetchone()["max_signal_id"] or 0)
     cursor.execute("SELECT COALESCE(MAX(id), 0) AS max_sequence_id FROM signal_sequence")
     max_sequence_id = int(cursor.fetchone()["max_sequence_id"] or 0)

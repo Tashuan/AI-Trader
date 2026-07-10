@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { X, TrendingUp, TrendingDown, Brain, Users, Target } from 'lucide-react';
 import type { Agent } from '../types';
+import { GrowthChart } from './GrowthChart';
 
 interface AgentDrawerProps {
   agent: Agent | null;
@@ -98,6 +99,27 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                   <p className="text-[11px] text-arena-text-secondary">{detail.state?.detail || agent.state_detail}</p>
                 </Section>
 
+                {/* Performance Stats */}
+                {detail.stats && Object.keys(detail.stats).length > 0 && (
+                  <Section title="Performance Stats" icon={<TrendingUp size={12} />}>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <Stat label="Total Trades" value={detail.stats.total_trades || 0} />
+                      <Stat label="Win Rate" value={`${Math.round((detail.stats.win_rate || 0) * 100)}%`} />
+                      <Stat label="Current Streak" value={detail.stats.current_streak > 0 ? `W${detail.stats.current_streak}` : detail.stats.current_streak < 0 ? `L${Math.abs(detail.stats.current_streak)}` : 0} />
+                      <Stat label="Best Streak" value={detail.stats.best_streak || 0} />
+                      <Stat label="Total P&L" value={`$${(detail.stats.total_profit || 0).toFixed(0)}`} positive={detail.stats.total_profit >= 0} />
+                      <Stat label="Max DD" value={`$${(detail.stats.max_drawdown || 0).toFixed(0)}`} negative />
+                    </div>
+                  </Section>
+                )}
+
+                {/* Growth Chart */}
+                {detail.profit_history && detail.profit_history.length > 1 && (
+                  <Section title="Growth" icon={<TrendingUp size={12} />}>
+                    <GrowthChart data={detail.profit_history} height={240} />
+                  </Section>
+                )}
+
                 {/* Positions */}
                 {detail.positions && detail.positions.length > 0 && (
                   <Section title="Open Positions" icon={<TrendingUp size={12} />}>
@@ -169,20 +191,6 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                           {mem.content}
                         </div>
                       ))}
-                    </div>
-                  </Section>
-                )}
-
-                {/* Stats */}
-                {detail.stats && Object.keys(detail.stats).length > 0 && (
-                  <Section title="Performance Stats" icon={<TrendingUp size={12} />}>
-                    <div className="grid grid-cols-2 gap-2 text-[11px]">
-                      <Stat label="Total Trades" value={detail.stats.total_trades || 0} />
-                      <Stat label="Win Rate" value={`${Math.round((detail.stats.win_rate || 0) * 100)}%`} />
-                      <Stat label="Current Streak" value={detail.stats.current_streak || 0} />
-                      <Stat label="Best Streak" value={detail.stats.best_streak || 0} />
-                      <Stat label="Total P&L" value={`$${(detail.stats.total_profit || 0).toFixed(0)}`} positive={detail.stats.total_profit >= 0} />
-                      <Stat label="Max DD" value={`$${(detail.stats.max_drawdown || 0).toFixed(0)}`} negative />
                     </div>
                   </Section>
                 )}

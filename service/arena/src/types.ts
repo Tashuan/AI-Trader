@@ -38,6 +38,7 @@ export interface Agent {
   thesis: string;
   personality_quote: string;
   position: AgentPosition | null;
+  all_positions: AgentPosition[];
   last_trade: AgentLastTrade | null;
   today_pnl: number;
   today_pnl_pct: number;

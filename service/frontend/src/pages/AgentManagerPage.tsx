@@ -269,6 +269,7 @@ function AgentDetailPanel({
   confirmDelete,
   setConfirmDelete,
   actionMsg,
+  setActionMsg,
 }: {
   agent: AgentConfig
   detail: any

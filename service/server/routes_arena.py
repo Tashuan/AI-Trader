@@ -60,6 +60,82 @@ class StateReport(BaseModel):
     confidence: float = 0.0
 
 
+def _compute_arena_stats(cursor, agent_id: int) -> dict[str, Any]:
+    """Compute live performance stats from signals and profit_history.
+
+    signals.pnl is never populated by the trading system, so we derive
+    win rate and streaks from profit_history deltas (each snapshot where
+    profit increased = win, decreased = loss).
+    """
+    # Total trades = count of operation signals (buy/sell actions)
+    cursor.execute(
+        "SELECT COUNT(*) as cnt FROM signals WHERE agent_id = ? AND message_type = 'operation'",
+        (agent_id,),
+    )
+    total_trades = cursor.fetchone()["cnt"]
+
+    # Profit history — sorted chronologically
+    cursor.execute(
+        """
+        SELECT total_value, profit, recorded_at
+        FROM profit_history WHERE agent_id = ?
+        ORDER BY recorded_at ASC
+        """,
+        (agent_id,),
+    )
+    ph_rows = cursor.fetchall()
+
+    # Compute win/loss streaks and total P&L from profit deltas
+    current_streak = 0
+    best_streak = 0
+    streak = 0
+    winning_periods = 0
+    losing_periods = 0
+    max_profit_seen = 0.0
+    max_drawdown = 0.0
+
+    for i, row in enumerate(ph_rows):
+        profit = row["profit"] or 0
+        # Track max drawdown
+        if profit > max_profit_seen:
+            max_profit_seen = profit
+        dd = max_profit_seen - profit
+        if dd > max_drawdown:
+            max_drawdown = dd
+
+        # Compare to previous snapshot for win/loss
+        if i > 0:
+            prev_profit = ph_rows[i - 1]["profit"] or 0
+            delta = profit - prev_profit
+            if delta > 0:
+                winning_periods += 1
+                streak = streak + 1 if streak > 0 else 1
+            elif delta < 0:
+                losing_periods += 1
+                streak = streak - 1 if streak < 0 else -1
+            else:
+                streak = 0
+            best_streak = max(best_streak, abs(streak))
+
+    current_streak = streak
+    total_periods = winning_periods + losing_periods
+    win_rate = (winning_periods / total_periods) if total_periods > 0 else 0.0
+
+    # Total P&L = latest profit value
+    total_pnl = ph_rows[-1]["profit"] if ph_rows else 0.0
+
+    return {
+        "total_trades": total_trades,
+        "winning_trades": winning_periods,
+        "losing_trades": losing_periods,
+        "win_rate": win_rate,
+        "current_streak": current_streak,
+        "best_streak": best_streak,
+        "total_profit": total_pnl,
+        "max_drawdown": max_drawdown,
+    }
+
+
 # ============================================================
 # Personality data (loaded from agents/personality.py)
 # ============================================================
@@ -383,37 +459,37 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Get agents with stats
+        # Get agents with live-computed stats
         cursor.execute(
             """
-            SELECT a.id, a.name,
-                   COALESCE(s.total_trades, 0) as trade_count,
-                   COALESCE(s.win_rate, 0) as win_rate,
-                   COALESCE(s.current_streak, 0) as win_streak,
-                   s.last_trade_at
+            SELECT a.id, a.name
             FROM agents a
-            LEFT JOIN agent_stats s ON s.agent_id = a.id
             WHERE NOT EXISTS (
                 SELECT 1 FROM agent_leaderboard_exclusions ale
                 WHERE ale.agent_id = a.id AND COALESCE(ale.active, 1) = 1
             )
             """
         )
-        agents = [dict(row) for row in cursor.fetchall()]
-
-        # Fallback: compute basic stats from signals if agent_stats is empty
-        for agent in agents:
-            if agent["trade_count"] == 0:
-                cursor.execute(
-                    "SELECT COUNT(*) as count FROM signals WHERE agent_id = ? AND message_type = 'operation'",
-                    (agent["id"],),
-                )
-                agent["trade_count"] = cursor.fetchone()["count"]
-                cursor.execute(
-                    "SELECT MAX(created_at) as last_signal FROM signals WHERE agent_id = ?",
-                    (agent["id"],),
-                )
-                agent["last_trade_at"] = cursor.fetchone()["last_signal"]
+        agents = []
+        for row in cursor.fetchall():
+            aid = row["id"]
+            live = _compute_arena_stats(cursor, aid)
+            agents.append({
+                "id": aid,
+                "name": row["name"],
+                "trade_count": live["total_trades"],
+                "win_rate": live["win_rate"],
+                "win_streak": live["current_streak"],
+                "last_trade_at": None,
+            })
+            # Get last trade timestamp
+            cursor.execute(
+                "SELECT MAX(created_at) as last_signal FROM signals WHERE agent_id = ?",
+                (aid,),
+            )
+            lt = cursor.fetchone()
+            if lt and lt["last_signal"]:
+                agents[-1]["last_trade_at"] = lt["last_signal"]
 
         conn.close()
 
@@ -570,10 +646,8 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         )
         conversations = [dict(row) for row in cursor.fetchall()]
 
-        # Agent stats
-        cursor.execute("SELECT * FROM agent_stats WHERE agent_id = ?", (agent_id,))
-        stats = cursor.fetchone()
-        stats = dict(stats) if stats else {}
+        # Agent stats — compute live from signals + profit_history
+        stats = _compute_arena_stats(cursor, agent_id)
 
         # State
         states = get_agent_states()
@@ -689,16 +763,11 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 if row:
                     latest_strategy[aid] = dict(row)
 
-        # Get agent stats
+        # Get agent stats — compute live per agent
         stats_by_agent: dict[int, dict] = {}
         if agent_ids:
-            placeholders = ",".join("?" for _ in agent_ids)
-            cursor.execute(
-                f"SELECT * FROM agent_stats WHERE agent_id IN ({placeholders})",
-                agent_ids,
-            )
-            for row in cursor.fetchall():
-                stats_by_agent[row["agent_id"]] = dict(row)
+            for aid in agent_ids:
+                stats_by_agent[aid] = _compute_arena_stats(cursor, aid)
 
         # Get last completed trade (for "Last Trade" display)
         last_trade_by_agent: dict[int, dict] = {}
@@ -734,7 +803,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 f"""
                 SELECT DISTINCT agent_id FROM signals
                 WHERE agent_id IN ({placeholders})
-                AND created_at > datetime('now', '-5 minutes')
+                AND datetime(created_at) > datetime('now', '-5 minutes')
                 """,
                 agent_ids,
             )
@@ -757,25 +826,28 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             personality = personalities.get(name, {})
             rels = all_relationships.get(aid, {})
 
-            # Determine position
-            position = None
-            if positions:
-                primary = positions[0]
+            # Determine position — compute total unrealized P&L across ALL positions
+            all_positions = []
+            total_unrealized_pnl = 0
+            for pos_row in positions:
                 pos_pnl = 0
-                if primary.get("current_price") and primary.get("entry_price"):
-                    if primary["side"] == "long":
-                        pos_pnl = (primary["current_price"] - primary["entry_price"]) * abs(primary["quantity"])
+                if pos_row.get("current_price") and pos_row.get("entry_price"):
+                    if pos_row["side"] == "long":
+                        pos_pnl = (pos_row["current_price"] - pos_row["entry_price"]) * abs(pos_row["quantity"])
                     else:
-                        pos_pnl = (primary["entry_price"] - primary["current_price"]) * abs(primary["quantity"])
+                        pos_pnl = (pos_row["entry_price"] - pos_row["current_price"]) * abs(pos_row["quantity"])
+                total_unrealized_pnl += pos_pnl
                 pos_pnl_pct = 0
-                if primary.get("entry_price") and primary["entry_price"] > 0:
-                    pos_pnl_pct = (pos_pnl / (primary["entry_price"] * abs(primary["quantity"]))) * 100 if primary.get("quantity") else 0
-                position = {
-                    "side": primary["side"],
-                    "symbol": primary["symbol"],
+                if pos_row.get("entry_price") and pos_row["entry_price"] > 0:
+                    pos_pnl_pct = (pos_pnl / (pos_row["entry_price"] * abs(pos_row["quantity"]))) * 100 if pos_row.get("quantity") else 0
+                all_positions.append({
+                    "side": pos_row["side"],
+                    "symbol": pos_row["symbol"],
                     "pnl": pos_pnl,
                     "pnl_pct": round(pos_pnl_pct, 1),
-                }
+                })
+            # Primary position for backwards compat (first position)
+            position = all_positions[0] if all_positions else None
 
             # State: use reported state or infer
             if state_info:
@@ -801,11 +873,15 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             memories = get_agent_memories(aid, limit=3)
             memory_strings = [m["content"] for m in memories]
 
-            # Today's P&L (simplified: use total profit as proxy)
+            # Today's P&L — use unrealized P&L from open positions, fall back to profit_history
             total_profit = profit_info.get("profit", 0)
             total_value = profit_info.get("total_value", 100000.0)
-            today_pnl = total_profit
-            today_pnl_pct = (total_profit / 100000.0) * 100 if total_value else 0
+            if all_positions:
+                today_pnl = total_unrealized_pnl
+                today_pnl_pct = (total_unrealized_pnl / 100000.0) * 100
+            else:
+                today_pnl = total_profit
+                today_pnl_pct = (total_profit / 100000.0) * 100 if total_value else 0
 
             # Win streak
             win_streak = stats_info.get("current_streak", 0)
@@ -836,6 +912,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 "thesis": strategy_info.get("content", "")[:200] if strategy_info else "",
                 "personality_quote": personality.get("tagline", ""),
                 "position": position,
+                "all_positions": all_positions,
                 "last_trade": last_trade_pnl,
                 "today_pnl": round(today_pnl, 2),
                 "today_pnl_pct": round(today_pnl_pct, 1),
@@ -899,9 +976,27 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             """
         )
         recent_signals = [dict(row) for row in cursor.fetchall()]
+
+        # Get recent replies for those signals
+        signal_ids = [s["id"] for s in recent_signals if s.get("id")]
+        replies = []
+        if signal_ids:
+            placeholders = ",".join("?" for _ in signal_ids[:20])
+            cursor.execute(
+                f"""
+                SELECT r.*, a.name as agent_name
+                FROM signal_replies r
+                JOIN agents a ON a.id = r.agent_id
+                WHERE r.signal_id IN ({placeholders})
+                ORDER BY r.created_at DESC
+                LIMIT 50
+                """,
+                signal_ids[:20],
+            )
+            replies = [dict(row) for row in cursor.fetchall()]
         conn.close()
 
-        timeline = build_timeline_events(recent_signals, [], limit=15)
+        timeline = build_timeline_events(recent_signals, replies, limit=15)
 
         result = {
             "agents": agents,

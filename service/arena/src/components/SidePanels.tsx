@@ -42,7 +42,7 @@ export function CommentaryPanel({ commentary }: { commentary: CommentaryEntry[] 
 
 export function ConversationPanel({ timeline }: { timeline: TimelineEvent[] }) {
   const messages = timeline.filter(
-    e => e.type === 'discussion' || e.type === 'strategy' || (e.type === 'trade' && e.reactions.length > 0)
+    e => e.type === 'discussion' || e.type === 'reply' || (e.type === 'trade' && e.reactions.length > 0)
   );
 
   return (
@@ -142,18 +142,18 @@ export function EventTimelinePanel({ timeline }: { timeline: TimelineEvent[] }) 
         <span className="text-[10px] font-semibold text-arena-green tracking-wider">EVENT TIMELINE</span>
       </div>
       <div className="space-y-1.5 overflow-y-auto flex-1">
-        {timeline.slice(0, 20).map((event, i) => (
+        {timeline.filter(e => e.type !== 'discussion' && e.type !== 'reply').slice(0, 50).map((event, i) => (
           <div key={event.id} className="flex items-start gap-2 text-[10px]">
             <span className="text-arena-text-dim font-mono shrink-0">
               {formatTime(event.timestamp)}
             </span>
-            <span className={`shrink-0 ${event.type === 'trade' ? 'text-arena-green' : event.type === 'discussion' ? 'text-arena-blue' : 'text-arena-text-secondary'}`}>
-              {event.type === 'trade' ? '⚡' : event.type === 'discussion' ? '💬' : '📊'}
+            <span className={`shrink-0 ${event.type === 'trade' ? 'text-arena-green' : event.type === 'strategy' ? 'text-arena-purple' : 'text-arena-text-secondary'}`}>
+              {event.type === 'trade' ? '⚡' : event.type === 'strategy' ? '🎯' : '📊'}
             </span>
             <span className="text-arena-text-secondary line-clamp-2">{event.content}</span>
           </div>
         ))}
-        {timeline.length === 0 && (
+        {timeline.filter(e => e.type !== 'discussion' && e.type !== 'reply').length === 0 && (
           <div className="text-[10px] text-arena-text-dim italic">No events yet...</div>
         )}
       </div>
@@ -164,7 +164,12 @@ export function EventTimelinePanel({ timeline }: { timeline: TimelineEvent[] }) 
 function formatTime(timestamp: string): string {
   try {
     const dt = new Date(timestamp);
-    return dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return dt.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'America/New_York',
+    });
   } catch {
     return '';
   }
