@@ -57,9 +57,39 @@
 - **What went wrong:** Volume sustained for 3 candles then faded — breakout still lacked follow-through. The issue isn't entry timing, it's that these ranges are too tight (0.4-0.6% of price) to generate meaningful breakouts. Need wider ranges or stronger catalysts.
 - **Lesson:** Tight consolidation ranges (<0.7% of price) produce weak breakouts. Require range width > 1% of price for meaningful breakout trades. CIRCUIT BREAKER: 3 consecutive losses — cut size 50% and require score 8+/12 until breakeven.
 
+### Trade 4 — LIT Short (LOSS)
+- **Entry:** 2026-07-10 21:26 ET | **Exit:** 2026-07-10 21:49 ET
+- **Hold time:** ~23 minutes (VIOLATION — server outage prevented management)
+- **Entry price:** $2.6571 | **Exit price:** $2.6591 (cover) + $2.6605 (accidental long sell)
+- **PnL:** -$36.58 (-0.04%)
+- **Opening range:** $2.682-$2.711 (60-min consolidation, 1.08% width)
+- **Breakout direction:** Short below range low $2.682
+- **Volume surge:** 5.87x sustained over 3 cycles
+- **Entry thesis:** LIT broke below 60-min range low with sustained volume, score 8/12
+- **Exit reason:** TIME EXIT — server went down at ~8 min hold, position sat unmanaged for 30+ min. Used "buy" instead of "cover" to close short, accidentally opening a long. Fixed by covering short then selling long.
+- **Breakout score:** 8/12 (range tightness 2, volume surge 3, speed 2, gap alignment 1)
+- **Phase:** Opportunistic crypto (21:26 ET Friday)
+- **What worked:** Breakout identification correct — LIT did drop to $2.6364 (-0.79% from entry) before bouncing
+- **What went wrong:** Server outage prevented exit at profit. Used wrong action ("buy" instead of "cover") to close short — opened accidental long. Need to remember: cover closes shorts, sell closes longs.
+- **Lesson:** Use "cover" to close shorts, "sell" to close longs. Server outages happen — auto SL/TP is critical. Position was profitable at $2.6364 but I couldn't exit.
+
+### Trade 5 — MON Long (WIN)
+- **Entry:** 2026-07-10 21:51 ET | **Exit:** 2026-07-10 21:57 ET
+- **Hold time:** ~6 minutes (within 10-min limit ✓)
+- **Entry price:** $0.02390 | **Exit price:** $0.023968 | **PnL:** +$14.25 (+0.28%)
+- **Opening range:** $0.02294-$0.02383 (60-min consolidation, 3.88% width)
+- **Breakout direction:** Long above range high $0.02383
+- **Volume surge:** 5.04x sustained over 2 cycles
+- **Entry thesis:** MON broke range high with 5x volume, score 9/12. Clean breakout with sustained volume.
+- **Exit reason:** End of session — user requested close before shutdown. Position was in profit.
+- **Breakout score:** 9/12 (range tightness 2, volume surge 3, speed 3, gap alignment 1)
+- **Phase:** Opportunistic crypto (21:51 ET Friday)
+- **What worked:** Patience — waited for breakout confirmation across 2 cycles before entering. Volume sustained. Range width >1% produced a meaningful move.
+- **What was wrong:** Exit was forced by session end, not by TP hit. Position was only +0.28% vs +2% target. Would have held longer if session continued.
+- **Lesson:** Wider ranges (3.88%) DO produce better breakouts. Patience waiting for confirmation pays off. First win after 4 losses — circuit breaker lifted.
+
 ## Circuit Breaker Status
-- **3 consecutive losses** — ACTIVE
-- Size reduced to 50% ($5,000 notional max)
-- Entry score threshold raised to 8+/12
-- Require range width > 1% of price
-- Remain active until 1 winning trade restores confidence
+- **LIFTED** — Trade 5 (MON long) was a win. Back to normal sizing and score thresholds.
+- Normal size: $10,000 notional max
+- Normal score threshold: 6+/12
+- Range width >1% still recommended based on Trade 3 lesson

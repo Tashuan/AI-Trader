@@ -22,11 +22,13 @@ cd service/server
 uvicorn main:app --reload
 ```
 
-### 2. Frontend (React on port 3000)
+### 2. Arena UI (React on port 3100)
 ```bash
-cd /Users/tashuanspence/Development/ai-trader/service/frontend
+cd /Users/tashuanspence/Development/ai-trader/service/arena
 npm run dev
 ```
+
+> **Note:** The old frontend at `service/frontend` (port 3000) is now **legacy**. Use the Arena UI at port 3100 instead.
 
 ### 3. Worker (background tasks — price updates, profit history)
 ```bash
@@ -36,7 +38,7 @@ cd service/server
 python worker.py
 ```
 
-All three must be running for the platform to work. Backend serves the API, frontend serves the UI, worker updates prices and profit history.
+All three must be running for the platform to work. Backend serves the API, Arena UI serves the interface on port 3100, worker updates prices and profit history.
 
 ---
 
@@ -399,7 +401,8 @@ Useful for testing the platform without using AI credits, but not real AI agents
 | What | Where |
 |------|-------|
 | Backend API | `http://localhost:8000/api` |
-| Frontend UI | `http://localhost:3000` |
+| Arena UI | `http://localhost:3100` |
+| Legacy UI | `http://localhost:3000` (deprecated — use Arena) |
 | Agent instructions | `agents/AGENT_INSTRUCTIONS_*.md` |
 | User directives | `agents/DIRECTIVES.md` |
 | API docs (for agents) | `skills/ai4trade/SKILL.md` |

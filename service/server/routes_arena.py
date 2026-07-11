@@ -25,7 +25,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from database import get_db_connection
-from routes_shared import RouteContext, agent_identity_status, agent_is_verified
+from routes_shared import RouteContext, agent_identity_status, agent_is_verified, broadcast_activity
 from arena_state import report_agent_state, get_agent_states, infer_state, confidence_label, STATE_META
 from arena_relationships import (
     compute_all_relationships,
@@ -58,6 +58,10 @@ class StateReport(BaseModel):
     detail: str = ""
     symbol: str = ""
     confidence: float = 0.0
+
+
+class ThoughtReport(BaseModel):
+    thought: str
 
 
 def _compute_arena_stats(cursor, agent_id: int) -> dict[str, Any]:
@@ -256,6 +260,54 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             symbol=report.symbol,
             confidence=report.confidence,
         )
+
+        state_meta = STATE_META.get(report.state, {})
+        await broadcast_activity(ctx, {
+            'type': 'state_change',
+            'agent_id': agent['id'],
+            'agent_name': agent['name'],
+            'message_type': 'state_change',
+            'state': report.state,
+            'state_detail': report.detail,
+            'state_symbol': report.symbol,
+            'state_color': state_meta.get('color', '#8B92A5'),
+            'confidence': report.confidence,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        })
+
+        return {"success": True}
+
+    # ─── POST /api/arena/thought — Agent posts a conversational thought ──
+
+    @app.post("/api/arena/thought")
+    async def arena_post_thought(report: ThoughtReport, authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail="Invalid agent token")
+
+        thought_text = report.thought.strip()[:500]
+        if not thought_text:
+            raise HTTPException(status_code=400, detail="Thought cannot be empty")
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO agent_thoughts (agent_id, content) VALUES (?, ?)",
+            (agent["id"], thought_text),
+        )
+        conn.commit()
+        conn.close()
+
+        await broadcast_activity(ctx, {
+            'type': 'thought',
+            'agent_id': agent['id'],
+            'agent_name': agent['name'],
+            'message_type': 'thought',
+            'content': thought_text,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        })
+
         return {"success": True}
 
     # ─── GET /api/arena/state — Get all agent states ────────────────
@@ -809,6 +861,31 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             )
             for row in cursor.fetchall():
                 recently_active.add(row["agent_id"])
+
+            # Also check for recent heartbeats (agents actively cycling but not posting signals)
+            cursor.execute(
+                f"""
+                SELECT DISTINCT actor_agent_id FROM experiment_events
+                WHERE event_type = 'agent_heartbeat'
+                AND actor_agent_id IN ({placeholders})
+                AND datetime(created_at) > datetime('now', '-10 minutes')
+                """,
+                agent_ids,
+            )
+            for row in cursor.fetchall():
+                recently_active.add(row["actor_agent_id"])
+
+            # Fetch recent thoughts for each agent (last 5)
+            thoughts_by_agent: dict[int, list[dict]] = {}
+            for aid in agent_ids:
+                cursor.execute(
+                    "SELECT content, created_at FROM agent_thoughts WHERE agent_id = ? ORDER BY id DESC LIMIT 5",
+                    (aid,),
+                )
+                thoughts_by_agent[aid] = [
+                    {"content": row["content"], "created_at": row["created_at"]}
+                    for row in cursor.fetchall()
+                ]
         conn.close()
 
         # Build agent list
@@ -929,6 +1006,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 "relationships": rels,
                 "risk_tolerance": personality.get("risk_tolerance", ""),
                 "strategy_type": personality.get("strategy_type", ""),
+                "thoughts": [t["content"] for t in thoughts_by_agent.get(aid, [])],
             })
 
         # Build markets data (lightweight — just agent attention, no prices)
@@ -952,8 +1030,10 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 "bearish_count": bearish,
             }
 
-        # Get headlines
+        # Get headlines — generated from all available agent data
         headline_data = []
+
+        # --- Streak headlines ---
         for agent in agents:
             if agent["win_streak"] >= 3:
                 headline_data.append({
@@ -961,6 +1041,117 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                     "type": "streak",
                     "agent": agent["name"],
                 })
+
+        # --- P&L leader headlines ---
+        sorted_by_pnl = sorted(agents, key=lambda a: a.get("total_profit", 0), reverse=True)
+        if sorted_by_pnl and sorted_by_pnl[0].get("total_profit", 0) > 0:
+            top = sorted_by_pnl[0]
+            headline_data.append({
+                "headline": f"{top['name']} leads the arena with +${top['total_profit']:,.0f} total P&L.",
+                "type": "performance",
+                "agent": top["name"],
+            })
+        if sorted_by_pnl and sorted_by_pnl[-1].get("total_profit", 0) < 0:
+            bottom = sorted_by_pnl[-1]
+            headline_data.append({
+                "headline": f"{bottom['name']} is underwater at -${abs(bottom['total_profit']):,.0f} total P&L.",
+                "type": "performance",
+                "agent": bottom["name"],
+            })
+
+        # --- Today's biggest movers ---
+        sorted_by_today = sorted(agents, key=lambda a: abs(a.get("today_pnl", 0)), reverse=True)
+        if sorted_by_today and abs(sorted_by_today[0].get("today_pnl", 0)) > 0:
+            mover = sorted_by_today[0]
+            direction = "up" if mover["today_pnl"] >= 0 else "down"
+            sign = "+" if mover["today_pnl"] >= 0 else "-"
+            headline_data.append({
+                "headline": f"{mover['name']} is {direction} {sign}${abs(mover['today_pnl']):,.0f} ({mover['today_pnl_pct']:+.1f}%) today.",
+                "type": "performance",
+                "agent": mover["name"],
+            })
+
+        # --- Biggest open position P&L ---
+        best_pos = None
+        for agent in agents:
+            for pos in agent.get("all_positions", []):
+                if not best_pos or abs(pos.get("pnl_pct", 0)) > abs(best_pos.get("pnl_pct", 0)):
+                    best_pos = {**pos, "agent_name": agent["name"]}
+        if best_pos and abs(best_pos.get("pnl_pct", 0)) >= 5:
+            sign = "+" if best_pos["pnl_pct"] >= 0 else ""
+            headline_data.append({
+                "headline": f"{best_pos['agent_name']} is {best_pos['side']} {best_pos['symbol']} with {sign}{best_pos['pnl_pct']:.1f}% unrealized P&L.",
+                "type": "performance",
+                "agent": best_pos["agent_name"],
+            })
+
+        # --- Consensus / crowding headlines ---
+        position_map: dict[str, list[tuple[str, str]]] = {}  # symbol -> [(agent_name, side)]
+        for agent in agents:
+            for pos in agent.get("all_positions", []):
+                sym = pos.get("symbol", "").upper()
+                if sym:
+                    position_map.setdefault(sym, []).append((agent["name"], pos["side"]))
+        for sym, holders in position_map.items():
+            if len(holders) >= 3:
+                longs = [h for h in holders if h[1] == "long"]
+                shorts = [h for h in holders if h[1] == "short"]
+                if len(longs) >= 3:
+                    names = ", ".join(h[0] for h in longs[:3])
+                    headline_data.append({
+                        "headline": f"{len(longs)} agents are all long {sym} — {names}. Is the crowd right?",
+                        "type": "consensus",
+                        "agent": longs[0][0],
+                    })
+                elif len(shorts) >= 3:
+                    names = ", ".join(h[0] for h in shorts[:3])
+                    headline_data.append({
+                        "headline": f"{len(shorts)} agents are all short {sym} — {names}. Bearish consensus forming.",
+                        "type": "consensus",
+                        "agent": shorts[0][0],
+                    })
+
+        # --- Most active agent ---
+        sorted_by_trades = sorted(agents, key=lambda a: a.get("trade_count", 0), reverse=True)
+        if sorted_by_trades and sorted_by_trades[0].get("trade_count", 0) >= 5:
+            top_trader = sorted_by_trades[0]
+            headline_data.append({
+                "headline": f"{top_trader['name']} is the most active trader with {top_trader['trade_count']} trades.",
+                "type": "performance",
+                "agent": top_trader["name"],
+            })
+
+        # --- Relationship / rivalry headlines ---
+        for agent in agents:
+            rels = agent.get("relationships", {})
+            for target_name, rel in list(rels.items())[:3]:
+                if rel.get("dislike", 0) > 0.6:
+                    headline_data.append({
+                        "headline": f"Tension rising: {agent['name']} distrusts {target_name} ({rel['dislike']:.0%}).",
+                        "type": "rivalry",
+                        "agent": agent["name"],
+                    })
+                    break
+                if rel.get("trust", 0) > 0.8:
+                    headline_data.append({
+                        "headline": f"{agent['name']} trusts {target_name} ({rel['trust']:.0%}) — alliance forming.",
+                        "type": "rivalry",
+                        "agent": agent["name"],
+                    })
+                    break
+
+        # --- High win rate ---
+        for agent in agents:
+            if agent.get("win_rate", 0) >= 0.7 and agent.get("trade_count", 0) >= 10:
+                headline_data.append({
+                    "headline": f"{agent['name']} is hitting {agent['win_rate']:.0%} win rate across {agent['trade_count']} trades.",
+                    "type": "performance",
+                    "agent": agent["name"],
+                })
+
+        # Sort by priority and cap at 10
+        headline_priority = {"streak": 0, "rivalry": 0, "consensus": 1, "performance": 2, "dormant": 3}
+        headline_data.sort(key=lambda h: headline_priority.get(h["type"], 99))
 
         # Get timeline (lightweight)
         conn = get_db_connection()
@@ -994,9 +1185,21 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 signal_ids[:20],
             )
             replies = [dict(row) for row in cursor.fetchall()]
+
+        # Get recent thoughts for timeline
+        cursor.execute(
+            """
+            SELECT t.id, t.content, t.created_at, a.name as agent_name
+            FROM agent_thoughts t
+            JOIN agents a ON a.id = t.agent_id
+            ORDER BY t.id DESC
+            LIMIT 20
+            """
+        )
+        recent_thoughts = [dict(row) for row in cursor.fetchall()]
         conn.close()
 
-        timeline = build_timeline_events(recent_signals, replies, limit=15)
+        timeline = build_timeline_events(recent_signals, replies, limit=15, recent_thoughts=recent_thoughts)
 
         result = {
             "agents": agents,

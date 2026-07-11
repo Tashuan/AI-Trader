@@ -1,4 +1,3 @@
-import { motion, AnimatePresence } from 'framer-motion';
 import { useEffect, useState } from 'react';
 import { X, TrendingUp, TrendingDown, Brain, Users, Target } from 'lucide-react';
 import type { Agent } from '../types';
@@ -42,24 +41,15 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
       .catch(() => setLoading(false));
   }, [agent]);
 
-  return (
-    <AnimatePresence>
-      {agent && (
-        <motion.div
-          className="fixed inset-0 z-50 flex justify-end"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-        >
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+  if (!agent) return null;
 
-          <motion.div
-            className="relative w-full max-w-md bg-arena-card border-l border-arena-border overflow-y-auto"
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-          >
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+
+      <div
+        className="relative w-full max-w-md bg-arena-card border-l border-arena-border overflow-y-auto drawer-slide-in"
+      >
             {/* Header */}
             <div className="sticky top-0 z-10 bg-arena-card border-b border-arena-border p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -210,10 +200,8 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                 )}
               </div>
             )}
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
+      </div>
+    </div>
   );
 }
 

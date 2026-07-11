@@ -30,7 +30,7 @@ export function SidebarNav({ currentPage, onNavigate }: SidebarNavProps) {
 
   return (
     <div
-      className={`shrink-0 border-r border-arena-border bg-arena-card/50 backdrop-blur-sm flex flex-col transition-all duration-200 ${
+      className={`shrink-0 border-r border-arena-border bg-arena-card/80 flex flex-col transition-all duration-200 ${
         collapsed ? 'w-14' : 'w-48'
       }`}
     >

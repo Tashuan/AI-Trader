@@ -42,7 +42,7 @@ export function CommentaryPanel({ commentary }: { commentary: CommentaryEntry[] 
 
 export function ConversationPanel({ timeline }: { timeline: TimelineEvent[] }) {
   const messages = timeline.filter(
-    e => e.type === 'discussion' || e.type === 'reply' || (e.type === 'trade' && e.reactions.length > 0)
+    e => e.type === 'discussion' || e.type === 'reply' || e.type === 'thought' || e.type === 'strategy' || e.reactions.length > 0
   );
 
   return (
@@ -60,15 +60,25 @@ export function ConversationPanel({ timeline }: { timeline: TimelineEvent[] }) {
               animate={{ opacity: 1, x: 0 }}
               className="text-[11px]"
             >
-              <span className="font-semibold text-white">{msg.agent}: </span>
-              <span className="text-arena-text-secondary">{msg.content.replace(/^[^:]+:\s*/, '')}</span>
-              {msg.reactions.map((reaction, j) => (
-                <div key={j} className="ml-3 mt-0.5 text-[10px] text-arena-text-dim">
-                  <span className="text-arena-purple">{reaction.agent}</span>
-                  <span className="text-arena-text-dim"> {reaction.action}: </span>
-                  <span>{reaction.detail}</span>
+              {msg.type === 'thought' ? (
+                <div className="px-2 py-1 rounded bg-arena-bg/50 border-l-2 border-arena-blue/40">
+                  <span className="font-semibold text-white">{msg.agent}</span>
+                  <span className="text-arena-text-dim text-[9px] ml-1">thinking</span>
+                  <div className="text-arena-text-secondary leading-snug">{msg.content}</div>
                 </div>
-              ))}
+              ) : (
+                <>
+                  <span className="font-semibold text-white">{msg.agent}: </span>
+                  <span className="text-arena-text-secondary">{msg.content.replace(/^[^:]+:\s*/, '')}</span>
+                  {msg.reactions.map((reaction, j) => (
+                    <div key={j} className="ml-3 mt-0.5 text-[10px] text-arena-text-dim">
+                      <span className="text-arena-purple">{reaction.agent}</span>
+                      <span className="text-arena-text-dim"> {reaction.action}: </span>
+                      <span>{reaction.detail}</span>
+                    </div>
+                  ))}
+                </>
+              )}
             </motion.div>
           ))}
         </AnimatePresence>
@@ -142,7 +152,7 @@ export function EventTimelinePanel({ timeline }: { timeline: TimelineEvent[] }) 
         <span className="text-[10px] font-semibold text-arena-green tracking-wider">EVENT TIMELINE</span>
       </div>
       <div className="space-y-1.5 overflow-y-auto flex-1">
-        {timeline.filter(e => e.type !== 'discussion' && e.type !== 'reply').slice(0, 50).map((event, i) => (
+        {timeline.filter(e => e.type !== 'discussion' && e.type !== 'reply' && e.type !== 'thought' && e.type !== 'strategy').slice(0, 50).map((event, i) => (
           <div key={event.id} className="flex items-start gap-2 text-[10px]">
             <span className="text-arena-text-dim font-mono shrink-0">
               {formatTime(event.timestamp)}
@@ -153,7 +163,7 @@ export function EventTimelinePanel({ timeline }: { timeline: TimelineEvent[] }) 
             <span className="text-arena-text-secondary line-clamp-2">{event.content}</span>
           </div>
         ))}
-        {timeline.filter(e => e.type !== 'discussion' && e.type !== 'reply').length === 0 && (
+        {timeline.filter(e => e.type !== 'discussion' && e.type !== 'reply' && e.type !== 'thought' && e.type !== 'strategy').length === 0 && (
           <div className="text-[10px] text-arena-text-dim italic">No events yet...</div>
         )}
       </div>

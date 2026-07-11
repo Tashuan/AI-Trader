@@ -364,14 +364,47 @@ class BaseAgent:
     # Arena State Reporting
     # ============================================================
 
-    def _report_state(self, state: str, detail: str = "", symbol: str = "", confidence: float = 0.0):
-        """Report current state to the arena. Never raises — state reporting is best-effort."""
+    def _infer_confidence(self) -> float:
+        """Infer a baseline confidence from current portfolio state."""
+        if not self.positions:
+            return 0.1  # No positions — slightly engaged, watching
+        # Has open positions — confidence reflects position engagement
+        total_pnl_pct = 0.0
+        for p in self.positions:
+            entry = float(p.get("entry_price") or 0)
+            current = float(p.get("current_price") or 0)
+            qty = abs(float(p.get("quantity") or 0))
+            if entry > 0 and qty > 0:
+                side = p.get("side", "long")
+                if side == "long":
+                    pnl_pct = ((current - entry) / entry) * 100
+                else:
+                    pnl_pct = ((entry - current) / entry) * 100
+                total_pnl_pct += pnl_pct
+        avg_pnl = total_pnl_pct / len(self.positions) if self.positions else 0
+        # Map P&L to confidence: winning positions boost confidence, losing ones reduce it
+        if avg_pnl > 5:
+            return 0.75  # High conviction — positions are working
+        elif avg_pnl > 1:
+            return 0.5   # Confident
+        elif avg_pnl > -1:
+            return 0.3   # Interested — positions are flat
+        elif avg_pnl > -5:
+            return 0.2   # Cautious — positions slightly underwater
+        else:
+            return 0.1   # Low confidence — positions bleeding
+
+    def _report_state(self, state: str, detail: str = "", symbol: str = "", confidence: float = -1.0):
+        """Report current state to the arena. Never raises — state reporting is best-effort.
+        If confidence is -1 (default), infer it from current portfolio state."""
         if not self.token:
             return
+        if confidence < 0:
+            confidence = self._infer_confidence()
         try:
             requests.post(f"{self.api_base}/arena/state",
                 headers=self.headers,
-                json={"state": state, "detail": detail, "symbol": symbol, "confidence": confidence},
+                json={"state": state, "detail": detail, "symbol": symbol, "confidence": round(confidence, 2)},
                 timeout=5)
         except Exception:
             pass
@@ -456,7 +489,7 @@ class BaseAgent:
             cycle += 1
             self._bought_this_cycle.clear()
             try:
-                self._report_state("scanning", "Scanning watchlist", confidence=0.0)
+                self._report_state("scanning", "Scanning watchlist")
                 self.on_cycle()
                 self.fetch_portfolio()
 

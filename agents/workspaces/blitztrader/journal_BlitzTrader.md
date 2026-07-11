@@ -69,3 +69,18 @@
 - What was wrong: RSI 71 at entry was too close to overbought. The +7.68% 1h spike meant the easy money was already made — I entered at the top of the first leg. The dip to -1.61% recovered to breakeven but then dipped again to hit -2% SL. Should have waited for a pullback entry rather than chasing the spike.
 - Confidence: 6/6 signals at entry → outcome: LOSS (-2% SL hit). Calibration: perfect score ≠ perfect entry timing. Volume signals were right but price entry was late.
 - Lesson: 6/6 signals with +7.68% 1h return means the move already happened — entering after a massive spike is chasing, not momentum scalping. Wait for the next pullback to enter on a volume explosion, not after the price has already moved 7%+.
+
+## 2026-07-10 AVAX CLOSE — Result: -73% (-$54,755)
+- Entry thesis: (Inherited from previous session — 3000 AVAX at $25)
+- Exit reason: Massive bag, way past -2% stop. Cut at $6.74. Momentum dead.
+- What was wrong: Position was held way too long — -2% stop should have triggered immediately. Never let a scalp become a bag.
+- Lesson: NEVER let a position go past -2%. A scalp is a scalp, not an investment. Cut immediately when stop hits.
+
+## 2026-07-10 ETH BLITZ — Entry @ $1,792.30
+- Entry thesis: Short squeeze setup. +2.93% 24h, shorts dominate >$2.5M accounts at 48.8%, $1.4B OI, 25x lev. Big money short + price rising = squeeze fuel. MCP confirmed positioning. Unusual activity alert from MCP news.
+- Position: 5.57 ETH at $1,792.30 (~$9,978 notional)
+- Target: +2% ($1,828.86) | Stop: -2% ($1,757.14)
+- Momentum score at entry: 5/6 — Calibration: pending
+
+## 2026-07-10 BTC RE-ENTRY — Entry @ $63,633 (from prior session, still holding)
+- Status: +0.73% as of Cycle 2. Shorts dominate big accounts (49.3%) — squeeze potential. Holding for +2% target ($64,906).

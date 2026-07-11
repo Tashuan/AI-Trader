@@ -55,6 +55,9 @@ export interface Agent {
   relationships: Record<string, AgentRelationship>;
   risk_tolerance: string;
   strategy_type: string;
+  last_action?: string;
+  last_action_at?: number;
+  thoughts: string[];
 }
 
 export interface MarketData {
@@ -127,4 +130,10 @@ export interface WsActivityEvent {
   price: number;
   quantity: number;
   timestamp: string;
+  // state_change fields
+  state?: string;
+  state_detail?: string;
+  state_symbol?: string;
+  state_color?: string;
+  confidence?: number;
 }

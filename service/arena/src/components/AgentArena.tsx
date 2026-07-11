@@ -27,7 +27,6 @@ export function AgentArena({ agents, mentionedAgent, onAgentClick }: AgentArenaP
           {sortedAgents.map(agent => (
             <motion.div
               key={agent.agent_id}
-              layout
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}

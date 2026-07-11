@@ -96,7 +96,7 @@ export function useArenaData() {
   }, []);
 
   const handleWsEvent = useCallback((msg: WsActivityEvent) => {
-    // Update agent state based on WebSocket event
+    // Update agent state and card data based on WebSocket event
     setData(prev => {
       if (!prev) return prev;
 
@@ -114,6 +114,60 @@ export function useArenaData() {
         }
       }
 
+      // Build last-action text for card flash
+      let lastAction = '';
+      if (msg.message_type === 'state_change') {
+        // no last action text for state changes — the state itself updates
+      } else if (msg.message_type === 'operation') {
+        const action = msg.action || msg.signal_type || msg.side || 'traded';
+        lastAction = `${action.toUpperCase()} ${msg.symbol || ''}`.trim();
+      } else if (msg.message_type === 'strategy') {
+        lastAction = `Published: ${msg.title || 'analysis'}`;
+      } else if (msg.message_type === 'discussion') {
+        lastAction = `Discussion: ${msg.title || 'post'}`;
+      } else if (msg.message_type === 'reply') {
+        lastAction = `Replied to signal`;
+      }
+
+      // Update agent data in real-time
+      const nowTs = Date.now();
+      const agents = prev.agents.map(a => {
+        if (a.agent_id !== msg.agent_id) return a;
+
+        // Handle thought messages — prepend to thoughts array
+        if (msg.message_type === 'thought' && msg.content) {
+          return {
+            ...a,
+            thoughts: [msg.content, ...a.thoughts].slice(0, 5),
+            online: true,
+          };
+        }
+
+        if (msg.message_type === 'state_change') {
+          return {
+            ...a,
+            state: msg.state || a.state,
+            state_detail: msg.state_detail || a.state_detail,
+            state_symbol: msg.state_symbol || a.state_symbol,
+            state_color: msg.state_color || a.state_color,
+            confidence: msg.confidence ?? a.confidence,
+            confidence_label: msg.confidence != null
+              ? (msg.confidence >= 0.9 ? 'All In' : msg.confidence >= 0.75 ? 'High Conviction' : msg.confidence >= 0.5 ? 'Confident' : msg.confidence >= 0.3 ? 'Interested' : 'Unsure')
+              : a.confidence_label,
+          };
+        }
+
+        if (lastAction) {
+          return {
+            ...a,
+            last_action: lastAction,
+            last_action_at: nowTs,
+          };
+        }
+
+        return a;
+      });
+
       // Update timeline with new event
       const newTimelineEvent = {
         id: `ws_${Date.now()}`,
@@ -126,6 +180,7 @@ export function useArenaData() {
 
       return {
         ...prev,
+        agents,
         timeline: [newTimelineEvent, ...prev.timeline].slice(0, 20),
       };
     });
@@ -149,6 +204,9 @@ function formatWsEvent(msg: WsActivityEvent): string {
   }
   if (msg.message_type === 'reply') {
     return `${name} replied: ${(msg.content || '').slice(0, 100)}`;
+  }
+  if (msg.message_type === 'thought') {
+    return msg.content || '';
   }
   return `${name}: ${msg.title || msg.content || 'Activity'}`;
 }

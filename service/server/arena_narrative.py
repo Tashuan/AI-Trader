@@ -112,8 +112,8 @@ def generate_headlines(agent_stats: list[dict[str, Any]]) -> list[dict[str, Any]
                 "agent": name,
             })
 
-    # Sort by interest (streaks first, then dormant, then performance)
-    type_priority = {"streak": 0, "dormant": 1, "performance": 2, "surprise": 0}
+    # Sort by interest (streaks and rivalries first, then consensus, then performance, then dormant)
+    type_priority = {"streak": 0, "rivalry": 0, "consensus": 1, "performance": 2, "dormant": 3, "surprise": 0}
     headlines.sort(key=lambda h: type_priority.get(h["type"], 99))
 
     return headlines[:10]
@@ -123,9 +123,25 @@ def build_timeline_events(
     recent_signals: list[dict[str, Any]],
     recent_replies: list[dict[str, Any]],
     limit: int = 20,
+    recent_thoughts: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build a timeline of events from recent signals and replies."""
+    """Build a timeline of events from recent signals, replies, and thoughts."""
     events = []
+
+    # Add thoughts as timeline events
+    if recent_thoughts:
+        for thought in recent_thoughts[:limit]:
+            agent_name = thought.get("agent_name", "Unknown")
+            content = thought.get("content", "")
+            created_at = thought.get("created_at", "")
+            events.append({
+                "id": f"thought_{thought.get('id', '')}",
+                "timestamp": created_at,
+                "type": "thought",
+                "content": content[:200],
+                "agent": agent_name,
+                "reactions": [],
+            })
 
     for signal in recent_signals[:limit]:
         event_type = signal.get("message_type", "unknown")

@@ -22,8 +22,7 @@ except ImportError:  # pragma: no cover - dependency is optional until PostgreSQ
 
 
 _BASE_DIR = os.path.dirname(__file__)
-_DEFAULT_SQLITE_DB_PATH = os.path.join(_BASE_DIR, "data", "clawtrader.db")
-_SQLITE_DB_PATH = os.getenv("DB_PATH", _DEFAULT_SQLITE_DB_PATH)
+_SQLITE_DB_PATH = os.getenv("DB_PATH", os.path.join(_BASE_DIR, "data", "local.db"))
 _POSTGRES_NOW_TEXT_SQL = (
     "to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', "
     "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')"
@@ -33,6 +32,10 @@ _SQLITE_INTERVAL_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _SQLITE_NOW_PATTERN = re.compile(r"datetime\s*\(\s*'now'\s*\)", flags=re.IGNORECASE)
+_SQLITE_COLUMN_DATETIME_PATTERN = re.compile(
+    r"datetime\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)",
+    flags=re.IGNORECASE,
+)
 _SQLITE_AUTOINCREMENT_PATTERN = re.compile(
     r"\bINTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
     flags=re.IGNORECASE,
@@ -183,10 +186,15 @@ def _replace_sqlite_datetime_functions(sql: str) -> str:
     def replace_interval(match: re.Match[str]) -> str:
         amount = match.group(1)
         unit = match.group(2)
-        return f"to_char((CURRENT_TIMESTAMP AT TIME ZONE 'UTC') + INTERVAL '{amount} {unit}', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')"
+        return f"(CURRENT_TIMESTAMP AT TIME ZONE 'UTC' + INTERVAL '{amount} {unit}')::timestamp"
+
+    def replace_column_datetime(match: re.Match[str]) -> str:
+        col = match.group(1)
+        return f"{col}::timestamp"
 
     sql = _SQLITE_INTERVAL_PATTERN.sub(replace_interval, sql)
-    sql = _SQLITE_NOW_PATTERN.sub(_POSTGRES_NOW_TEXT_SQL, sql)
+    sql = _SQLITE_NOW_PATTERN.sub("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::timestamp", sql)
+    sql = _SQLITE_COLUMN_DATETIME_PATTERN.sub(replace_column_datetime, sql)
     return sql
 
 
@@ -664,7 +672,7 @@ def init_database():
         )
     """)
 
-    cursor.execute("SELECT COALESCE(MAX(CAST(signal_id AS INTEGER)), 0) AS max_signal_id FROM signals WHERE CAST(signal_id AS TEXT) = CAST(signal_id AS INTEGER) AND CAST(signal_id AS INTEGER) > 0")
+    cursor.execute("SELECT COALESCE(MAX(CAST(signal_id AS INTEGER)), 0) AS max_signal_id FROM signals WHERE CAST(signal_id AS TEXT) = CAST(CAST(signal_id AS INTEGER) AS TEXT) AND CAST(signal_id AS INTEGER) > 0")
     max_signal_id = int(cursor.fetchone()["max_signal_id"] or 0)
     cursor.execute("SELECT COALESCE(MAX(id), 0) AS max_sequence_id FROM signal_sequence")
     max_sequence_id = int(cursor.fetchone()["max_sequence_id"] or 0)
@@ -1812,6 +1820,22 @@ def init_database():
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_agent_trade_log_status
         ON agent_trade_log(status)
+    """)
+
+    # Arena: Agent thoughts (live thought stream)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS agent_thoughts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_thoughts_agent_created
+        ON agent_thoughts(agent_id, created_at DESC)
     """)
 
     # Arena: Agent state tracking (Decision Engine)

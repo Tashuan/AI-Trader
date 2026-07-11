@@ -55,7 +55,7 @@ export function TopMarketBar({ markets, breakingEvent }: TopMarketBarProps) {
   const symbols = Object.keys(markets);
 
   return (
-    <div className="relative h-[90px] border-b border-arena-border bg-arena-card/50 backdrop-blur-sm flex items-center px-4 gap-3 overflow-hidden">
+    <div className="relative h-[90px] border-b border-arena-border bg-arena-card/80 flex items-center px-4 gap-3 overflow-hidden">
       {/* Logo + LIVE indicator */}
       <div className="flex items-center gap-3 shrink-0">
         <div className="flex items-center gap-2">
@@ -63,10 +63,9 @@ export function TopMarketBar({ markets, breakingEvent }: TopMarketBarProps) {
           <span className="text-sm font-bold text-arena-purple">BOY</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <motion.span
+          <span
             className="w-2 h-2 rounded-full bg-arena-red"
-            animate={{ opacity: [1, 0.3, 1] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
+            style={{ boxShadow: '0 0 6px rgba(239,68,68,0.5)' }}
           />
           <span className="text-[10px] font-mono text-arena-red">LIVE</span>
         </div>
@@ -92,7 +91,7 @@ export function TopMarketBar({ markets, breakingEvent }: TopMarketBarProps) {
       {/* Breaking event banner */}
       {breakingEvent && (
         <motion.div
-          className="absolute top-0 left-0 right-0 h-full bg-arena-red/20 backdrop-blur-sm flex items-center justify-center px-4 z-10"
+          className="absolute top-0 left-0 right-0 h-full bg-arena-red/20 flex items-center justify-center px-4 z-10"
           initial={{ y: -90 }}
           animate={{ y: 0 }}
           exit={{ y: -90 }}

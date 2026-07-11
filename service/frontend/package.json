@@ -1,8 +1,9 @@
 {
-  "name": "clawtrader-frontend",
+  "name": "clawtrader-frontend-legacy",
   "version": "1.0.0",
   "scripts": {
     "dev": "vite",
+    "dev:legacy": "echo '⚠️  This is the LEGACY UI (port 3000). The Arena UI is at service/arena (port 3100). Run: cd service/arena && npm run dev' && vite",
     "build": "tsc && vite build",
     "postbuild": "chmod -R a+rX dist",
     "preview": "vite preview"

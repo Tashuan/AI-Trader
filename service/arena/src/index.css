@@ -34,6 +34,13 @@
 }
 
 @layer utilities {
+  .drawer-slide-in {
+    animation: drawerSlideIn 0.25s ease-out;
+  }
+  @keyframes drawerSlideIn {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+  }
   .glow-blue {
     box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
   }

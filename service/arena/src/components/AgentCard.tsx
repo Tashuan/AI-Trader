@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import type { Agent } from '../types';
 
 interface AgentCardProps {
@@ -11,32 +11,41 @@ interface AgentCardProps {
 const ONLINE_COLOR = '#34D399';
 const IDLE_COLOR = '#5A6275';
 
+const ACTIVE_STATES = ['scanning', 'researching', 'reading_news', 'comparing_technicals', 'building_thesis', 'entering', 'managing', 'exiting', 'reviewing'];
+
+const STATE_LABELS: Record<string, string> = {
+  idle: 'IDLE',
+  scanning: 'SCANNING',
+  researching: 'RESEARCHING',
+  reading_news: 'READING NEWS',
+  comparing_technicals: 'COMPARING',
+  building_thesis: 'BUILDING THESIS',
+  waiting: 'WAITING',
+  entering: 'ENTERING',
+  managing: 'MANAGING',
+  exiting: 'EXITING',
+  reviewing: 'REVIEWING',
+};
+
 export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
   const isActive = agent.online || agent.bot_running;
-  const stateColor = isActive ? ONLINE_COLOR : IDLE_COLOR;
-  const stateLabel = isActive ? 'ONLINE' : 'IDLE';
-  const pnlPositive = agent.today_pnl >= 0;
+  const isWorking = isActive && ACTIVE_STATES.includes(agent.state);
+  const stateColor = isWorking ? (agent.state_color || '#3B82F6') : (isActive ? ONLINE_COLOR : IDLE_COLOR);
+  const stateLabel = isActive ? (STATE_LABELS[agent.state] || 'ONLINE') : 'IDLE';
   const position = agent.position;
-  const [thinkingText, setThinkingText] = useState(agent.state_detail || '');
+  const [showFlash, setShowFlash] = useState(false);
+  const [flashText, setFlashText] = useState('');
 
-  // Rotate thinking feed text from quirks
+  // Flash last action when it changes
   useEffect(() => {
-    if (agent.state_detail) {
-      setThinkingText(agent.state_detail);
-      return;
-    }
-    const quirks = agent.quirks || [];
-    if (quirks.length === 0) return;
-
-    let idx = 0;
-    setThinkingText(quirks[0]);
-    const interval = setInterval(() => {
-      idx = (idx + 1) % quirks.length;
-      setThinkingText(quirks[idx]);
-    }, 4000);
-
-    return () => clearInterval(interval);
-  }, [agent.state_detail, agent.quirks]);
+    if (!agent.last_action || !agent.last_action_at) return;
+    const ageMs = Date.now() - agent.last_action_at;
+    if (ageMs > 5000) return; // Only flash if recent
+    setFlashText(agent.last_action);
+    setShowFlash(true);
+    const timer = setTimeout(() => setShowFlash(false), 3000);
+    return () => clearTimeout(timer);
+  }, [agent.last_action, agent.last_action_at]);
 
   return (
     <motion.div
@@ -44,13 +53,19 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
       style={{ borderColor: mentioned ? 'rgba(139,92,246,.4)' : undefined }}
       onClick={onClick}
       whileHover={{ y: -2 }}
-      layout
     >
-      {/* State border glow */}
+      {/* State border glow — pulses when actively working */}
       <div
         className="absolute top-0 left-0 right-0 h-0.5"
-        style={{ backgroundColor: stateColor, boxShadow: `0 0 8px ${stateColor}` }}
+        style={{
+          backgroundColor: stateColor,
+          boxShadow: `0 0 8px ${stateColor}`,
+          animation: isWorking ? `pulse-border 1.5s ease-in-out infinite` : undefined,
+        }}
       />
+      {isWorking && (
+        <style>{`@keyframes pulse-border { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
+      )}
 
       {/* Header: Name + Status */}
       <div className="flex items-center justify-between mb-3">
@@ -72,15 +87,26 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
           </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <motion.span
+          <span
             className="w-1.5 h-1.5 rounded-full"
-            style={{ backgroundColor: stateColor }}
-            animate={isActive ? { opacity: [1, 0.4, 1] } : { opacity: 1 }}
-            transition={isActive ? { duration: 2, repeat: Infinity } : { duration: 0 }}
+            style={{
+              backgroundColor: stateColor,
+              animation: isWorking ? `pulse-dot 1s ease-in-out infinite` : undefined,
+            }}
           />
           <span className="text-[9px] font-mono font-semibold" style={{ color: stateColor }}>
             {stateLabel}
           </span>
+          {isWorking && (
+            <span className="flex items-center gap-0.5 ml-0.5">
+              <span className="w-0.5 h-0.5 rounded-full bg-current opacity-60" style={{ color: stateColor, animation: 'blink 1.4s infinite 0s' }} />
+              <span className="w-0.5 h-0.5 rounded-full bg-current opacity-60" style={{ color: stateColor, animation: 'blink 1.4s infinite 0.2s' }} />
+              <span className="w-0.5 h-0.5 rounded-full bg-current opacity-60" style={{ color: stateColor, animation: 'blink 1.4s infinite 0.4s' }} />
+            </span>
+          )}
+          {isWorking && (
+            <style>{`@keyframes pulse-dot { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.4); } } @keyframes blink { 0%, 80%, 100% { opacity: 0.2; } 40% { opacity: 1; } }`}</style>
+          )}
         </div>
       </div>
 
@@ -96,11 +122,30 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
         )}
       </div>
 
-      {/* Current Thesis */}
-      <div className="mb-3 min-h-[40px]">
-        <div className="text-[9px] text-arena-text-dim mb-0.5">CURRENT THESIS</div>
-        <div className="text-[11px] text-arena-text-secondary line-clamp-2">
-          {agent.thesis || <span className="text-arena-text-dim/50">No active thesis</span>}
+      {/* Thought Stream (live conversational thoughts) */}
+      <div className="mb-3 min-h-[80px]">
+        <div className="text-[9px] text-arena-text-dim mb-1">THOUGHTS</div>
+        <div className="space-y-1">
+          {agent.thoughts && agent.thoughts.length > 0 ? (
+            agent.thoughts.slice(0, 5).map((thought, i) => (
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={`${thought}-${i}`}
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="text-[11px] text-arena-text-secondary leading-snug px-2 py-1 rounded bg-arena-bg/50 border-l-2"
+                  style={{ borderColor: i === 0 && isActive ? '#3B82F6' : 'rgba(255,255,255,.06)' }}
+                >
+                  {thought}
+                </motion.div>
+              </AnimatePresence>
+            ))
+          ) : (
+            <div className="text-[10px] italic text-arena-text-dim/50">
+              {isActive ? 'Thinking...' : 'No recent thoughts'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -123,20 +168,31 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
         </div>
       </div>
 
-      {/* Thinking Feed (rotating) */}
-      <div className="mb-3 min-h-[28px]">
-        <AnimatePresence mode="wait">
+      {/* Live Action Flash — shows recent trade/strategy/discussion */}
+      <AnimatePresence>
+        {showFlash && (
           <motion.div
-            key={thinkingText}
-            initial={{ opacity: 0, y: 5 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -5 }}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.3 }}
-            className="text-[10px] italic text-arena-text-secondary"
+            className="mb-2 overflow-hidden"
           >
-            {thinkingText}
+            <div className="text-[10px] font-mono font-bold px-2 py-1 rounded bg-arena-bg border-l-2"
+              style={{ borderColor: stateColor, color: stateColor }}
+            >
+              ⚡ {flashText}
+            </div>
           </motion.div>
-        </AnimatePresence>
+        )}
+      </AnimatePresence>
+
+      {/* Current Thesis */}
+      <div className="mb-3 min-h-[40px]">
+        <div className="text-[9px] text-arena-text-dim mb-0.5">CURRENT THESIS</div>
+        <div className="text-[11px] text-arena-text-secondary line-clamp-2">
+          {agent.thesis || <span className="text-arena-text-dim/50">No active thesis</span>}
+        </div>
       </div>
 
       {/* Position Display */}
@@ -190,17 +246,17 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
         )}
       </div>
 
-      {/* Footer: P&L */}
+      {/* Footer: Total P&L */}
       <div className="flex items-center justify-between pt-2 border-t border-arena-border mt-auto">
         <span className="text-[9px] text-arena-text-dim">
-          {agent.all_positions && agent.all_positions.length > 0 ? 'UNREALIZED' : 'TOTAL'}
+          TOTAL P&L
         </span>
         <div className="flex items-center gap-2">
-          <span className={`text-[11px] font-mono font-semibold ${pnlPositive ? 'text-arena-green' : 'text-arena-red'}`}>
-            {pnlPositive ? '+' : ''}${Math.abs(agent.today_pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          <span className={`text-[11px] font-mono font-semibold ${agent.total_profit >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+            {agent.total_profit >= 0 ? '+' : ''}${Math.abs(agent.total_profit).toLocaleString(undefined, { maximumFractionDigits: 0 })}
           </span>
-          <span className={`text-[9px] font-mono ${pnlPositive ? 'text-arena-green' : 'text-arena-red'}`}>
-            ({pnlPositive ? '+' : ''}{agent.today_pnl_pct.toFixed(1)}%)
+          <span className={`text-[9px] font-mono ${agent.total_profit >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+            ({agent.total_profit >= 0 ? '+' : ''}{((agent.total_profit / 100000) * 100).toFixed(1)}%)
           </span>
         </div>
       </div>

@@ -5,7 +5,6 @@ import {
   CartesianGrid,
   Line,
   LineChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -158,9 +157,8 @@ export function GrowthChart({ data, height = 240 }: GrowthChartProps) {
         </div>
       </div>
 
-      <div style={{ height, minHeight: height }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <Chart data={processed} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+      <div style={{ height, minHeight: height, width: '100%' }}>
+        <Chart data={processed} margin={{ top: 5, right: 10, left: -10, bottom: 0 }} width={400} height={height}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
             <XAxis dataKey="date" stroke="#6B7280" tick={{ fontSize: 10 }} minTickGap={24} />
             <YAxis
@@ -183,7 +181,6 @@ export function GrowthChart({ data, height = 240 }: GrowthChartProps) {
             />
             {DataViz}
           </Chart>
-        </ResponsiveContainer>
       </div>
     </div>
   );
