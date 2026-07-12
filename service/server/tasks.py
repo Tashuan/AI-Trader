@@ -777,6 +777,52 @@ async def auto_close_positions_loop():
                     except Exception as sig_err:
                         print(f"[Auto-Close] Signal insert failed for {symbol}: {sig_err}")
 
+                    try:
+                        import json as _json
+                        cursor.execute(
+                            """
+                            SELECT id FROM trading_decision_log
+                            WHERE agent_id = ? AND symbol = ? AND action IN ('buy', 'short')
+                              AND closing_log_id IS NULL
+                            ORDER BY created_at DESC LIMIT 1
+                            """,
+                            (row["agent_id"], symbol),
+                        )
+                        prior_entry = cursor.fetchone()
+                        cursor.execute(
+                            """
+                            INSERT INTO trading_decision_log
+                            (agent_id, action, market, symbol, reason, metadata_json, closing_log_id, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                row["agent_id"],
+                                close_action,
+                                market,
+                                symbol,
+                                f"Auto-close: {close_reason}",
+                                _json.dumps({
+                                    "price": float(current_price),
+                                    "quantity": float(quantity),
+                                    "trade_value": float(current_price * quantity),
+                                    "entry_price": float(row["entry_price"]) if row["entry_price"] else None,
+                                    "stop_loss_price": float(stop_loss) if stop_loss else None,
+                                    "take_profit_price": float(take_profit) if take_profit else None,
+                                    "trigger": "auto_close",
+                                }),
+                                prior_entry["id"] if prior_entry else None,
+                                now.isoformat(),
+                            ),
+                        )
+                        exit_log_id = cursor.lastrowid
+                        if prior_entry:
+                            cursor.execute(
+                                "UPDATE trading_decision_log SET closing_log_id = ? WHERE id = ?",
+                                (exit_log_id, prior_entry["id"]),
+                            )
+                    except Exception as log_err:
+                        print(f"[Auto-Close] Decision log insert failed for {symbol}: {log_err}")
+
                     conn.commit()
                     closed_count += 1
                     print(f"[Auto-Close] {agent_name} {symbol} {side} — {close_reason} — closed at {current_price}")

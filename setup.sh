@@ -121,7 +121,7 @@ echo "  Python dependencies installed."
 # ============================================================
 # 4. Node.js + frontend dependencies
 # ============================================================
-echo "[4/8] Setting up Node.js + frontend..."
+echo "[4/8] Setting up Node.js + legacy frontend..."
 
 if ! command -v node &>/dev/null; then
   if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -135,13 +135,13 @@ fi
 
 echo "  Node version: $(node --version)"
 
-cd service/frontend
+cd service/frontend-legacy
 if [ ! -d node_modules ]; then
   npm install
 fi
 npm run build
 cd "$PROJECT_DIR"
-echo "  Frontend built."
+echo "  Legacy frontend built."
 
 # ============================================================
 # 5. .env configuration
@@ -261,12 +261,12 @@ echo "  Setup Complete!"
 echo "============================================"
 echo ""
 echo "  Server:   http://localhost:8000"
-echo "  Frontend: http://localhost:3000 (dev) or served at :8000 (built)"
+echo "  Legacy Frontend: http://localhost:3000 (dev) or served at :8000 (built)"
 echo "  Database: PostgreSQL @ 127.0.0.1:5432/$DB_NAME"
 echo "  Backups:  service/server/data/backups/ (every 15 min)"
 echo ""
-echo "  To start frontend dev server:"
-echo "    cd service/frontend && npm run dev"
+echo "  To start legacy frontend dev server:"
+echo "    cd service/frontend-legacy && npm run dev"
 echo ""
 echo "  To stop server:"
 echo "    pkill -f 'service/server/main.py'"

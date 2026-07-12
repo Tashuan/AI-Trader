@@ -1,15 +1,15 @@
 # ============================================================
 # AI-Trader Dockerfile
-# Multi-stage build: frontend -> backend -> final image
+# Multi-stage build: frontend-legacy -> backend -> final image
 # ============================================================
 
-# --- Stage 1: Build frontend ---
+# --- Stage 1: Build legacy frontend ---
 FROM node:20-slim AS frontend-builder
 
-WORKDIR /app/service/frontend
-COPY service/frontend/package.json service/frontend/package-lock.json* ./
+WORKDIR /app/service/frontend-legacy
+COPY service/frontend-legacy/package.json service/frontend-legacy/package-lock.json* ./
 RUN npm ci || npm install
-COPY service/frontend/ ./
+COPY service/frontend-legacy/ ./
 RUN npm run build
 
 # --- Stage 2: Python backend ---
@@ -30,7 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY service/server/ ./service/server/
 
 # Copy built frontend from stage 1
-COPY --from=frontend-builder /app/service/frontend/dist/ ./service/frontend/dist/
+COPY --from=frontend-builder /app/service/frontend-legacy/dist/ ./service/frontend-legacy/dist/
 
 # Copy skills, agents, etc.
 COPY skills/ ./skills/

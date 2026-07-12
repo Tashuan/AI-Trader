@@ -1,3 +1,4 @@
+import json
 import math
 import time
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,7 @@ from routes_shared import (
     validate_market,
 )
 from services import _add_agent_points, _get_agent_by_token, _reserve_signal_id, _update_position_from_signal
+from scalp_guardrails import GuardrailViolation, validate_entry
 from signal_quality import score_signal_quality
 from team_missions import TeamMissionError, record_team_message_from_signal, record_team_reply_from_parent_signal
 from utils import _extract_token
@@ -161,6 +163,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                         detail='Polymarket trades require token_id when sync price fetch is disabled.',
                     )
 
+        server_priced = False
         get_price_from_market = None
         if fetch_price_in_request:
             from price_fetcher import get_price_from_market as _get_price_from_market
@@ -195,6 +198,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 if not actual_price:
                     raise HTTPException(status_code=400, detail=f'Unable to fetch current price for {symbol}')
                 price = actual_price
+                server_priced = True
             else:
                 price = data.price
         else:
@@ -220,6 +224,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                         detail=f'Unable to fetch historical price for {symbol} at {executed_at}',
                     )
                 price = actual_price
+                server_priced = True
             else:
                 price = data.price
 
@@ -241,7 +246,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         from fees import TRADE_FEE_RATE, apply_slippage
 
         signal_id = None
-        fill_price = apply_slippage(price, action_lower)
+        fill_price = price if server_priced else apply_slippage(price, action_lower)
         trade_value = fill_price * qty
         fee = trade_value * TRADE_FEE_RATE
         position_entry_price = None
@@ -254,6 +259,19 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         try:
             begin_write_transaction(cursor)
             signal_id = _reserve_signal_id(cursor)
+
+            try:
+                validate_entry(
+                    cursor,
+                    agent_id=agent_id,
+                    market=market,
+                    symbol=symbol,
+                    action=action_lower,
+                    trade_value=trade_value + fee,
+                    now=now,
+                )
+            except GuardrailViolation as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
 
             if action_lower in ('sell', 'cover'):
                 pos = get_position_snapshot(cursor, agent_id, market, symbol, polymarket_token_id)
@@ -307,6 +325,33 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 ),
             )
 
+            entry_log_id = None
+            if action_lower in ("buy", "short"):
+                cursor.execute(
+                    """
+                    INSERT INTO trading_decision_log
+                    (agent_id, action, market, symbol, reason, metadata_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        agent_id,
+                        action_lower,
+                        market,
+                        symbol,
+                        (data.content or "No rationale supplied")[:1000],
+                        json.dumps({
+                            "price": fill_price,
+                            "quantity": qty,
+                            "trade_value": trade_value,
+                            "server_priced": server_priced,
+                            "stop_loss_price": data.stop_loss_price,
+                            "take_profit_price": data.take_profit_price,
+                        }),
+                        now,
+                    ),
+                )
+                entry_log_id = cursor.lastrowid
+
             _update_position_from_signal(
                 agent_id,
                 symbol,
@@ -331,6 +376,47 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                     raise HTTPException(status_code=400, detail='Short position entry price is missing')
                 cover_credit = ((2 * position_entry_price) - fill_price) * qty - fee
                 cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (cover_credit, agent_id))
+
+            if action_lower in ("sell", "cover"):
+                cursor.execute(
+                    """
+                    SELECT id FROM trading_decision_log
+                    WHERE agent_id = ? AND symbol = ? AND action IN ('buy', 'short')
+                      AND closing_log_id IS NULL
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (agent_id, symbol),
+                )
+                prior_entry = cursor.fetchone()
+                cursor.execute(
+                    """
+                    INSERT INTO trading_decision_log
+                    (agent_id, action, market, symbol, reason, metadata_json, closing_log_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        agent_id,
+                        action_lower,
+                        market,
+                        symbol,
+                        (data.content or "No rationale supplied")[:1000],
+                        json.dumps({
+                            "price": fill_price,
+                            "quantity": qty,
+                            "trade_value": trade_value,
+                            "server_priced": server_priced,
+                            "entry_price": position_entry_price,
+                        }),
+                        prior_entry["id"] if prior_entry else None,
+                        now,
+                    ),
+                )
+                exit_log_id = cursor.lastrowid
+                if prior_entry:
+                    cursor.execute(
+                        "UPDATE trading_decision_log SET closing_log_id = ? WHERE id = ?",
+                        (exit_log_id, prior_entry["id"]),
+                    )
 
             signal_quality = score_signal_quality(
                 {

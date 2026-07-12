@@ -1341,6 +1341,11 @@ def init_database():
     except Exception:
         pass
 
+    try:
+        cursor.execute("ALTER TABLE trading_decision_log ADD COLUMN closing_log_id INTEGER")
+    except Exception:
+        pass
+
     # Profit history table - tracks agent profit over time
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS profit_history (
@@ -1353,6 +1358,49 @@ def init_database():
             recorded_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (agent_id) REFERENCES agents(id)
         )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trading_risk_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL UNIQUE,
+            day_key TEXT NOT NULL,
+            starting_equity REAL NOT NULL,
+            halted INTEGER NOT NULL DEFAULT 0,
+            halt_reason TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_trading_risk_state_day ON trading_risk_state(day_key)
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trading_decision_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            market TEXT,
+            symbol TEXT,
+            reason TEXT NOT NULL,
+            metadata_json TEXT,
+            closing_log_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id),
+            FOREIGN KEY (closing_log_id) REFERENCES trading_decision_log(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_trading_decision_log_agent_created
+        ON trading_decision_log(agent_id, created_at DESC)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_trading_decision_log_symbol
+        ON trading_decision_log(agent_id, symbol, created_at DESC)
     """)
 
     cursor.execute("""
