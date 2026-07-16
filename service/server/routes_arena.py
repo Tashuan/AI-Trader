@@ -25,6 +25,8 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from database import get_db_connection
+from permissions import agent_role, require_admin, require_agent
+from portfolio_risk_engine import _load_sector_map, _total_portfolio_equity, _utc_day_start
 from routes_shared import RouteContext, agent_identity_status, agent_is_verified, broadcast_activity
 from arena_state import report_agent_state, get_agent_states, infer_state, confidence_label, STATE_META
 from arena_relationships import (
@@ -1214,3 +1216,234 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         _ARENA_FULL_CACHE = (now_ts, result)
         return result
+
+    # ─── GET /api/arena/me — Current user info ─────────────────────
+
+    @app.get("/api/arena/me")
+    async def arena_me(authorization: str = Header(None)):
+        try:
+            agent = require_agent(authorization)
+        except HTTPException:
+            return {"name": None, "role": "anonymous", "is_admin": False}
+        role = agent_role(agent)
+        return {
+            "name": agent.get("name"),
+            "role": role,
+            "is_admin": role == "admin",
+        }
+
+    # ─── GET /api/arena/portfolio-risk — Portfolio risk status ────
+
+    @app.get("/api/arena/portfolio-risk")
+    async def arena_portfolio_risk():
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        day_key = _utc_day_start()
+
+        # Get today's portfolio risk state
+        cursor.execute(
+            "SELECT day_key, starting_equity, halted, halt_reason FROM portfolio_risk_state WHERE day_key = ?",
+            (day_key,),
+        )
+        state_row = cursor.fetchone()
+        starting_equity = float(state_row["starting_equity"]) if state_row else 0.0
+        halted = int(state_row["halted"]) if state_row else 0
+        halt_reason = state_row["halt_reason"] if state_row else None
+
+        # Total portfolio equity (dynamic, live)
+        total_equity = _total_portfolio_equity(cursor)
+
+        # Per-symbol aggregate gross exposure
+        cursor.execute(
+            """
+            SELECT symbol,
+                   ABS(SUM(quantity * COALESCE(current_price, entry_price, 0))) AS gross,
+                   COUNT(DISTINCT agent_id) AS agent_count
+            FROM positions
+            GROUP BY symbol
+            """
+        )
+        symbol_exposure: dict[str, dict[str, Any]] = {}
+        for row in cursor.fetchall():
+            sym = row["symbol"]
+            gross = abs(float(row["gross"] or 0))
+            pct = gross / starting_equity if starting_equity > 0 else 0.0
+            symbol_exposure[sym] = {
+                "value": gross,
+                "pct": pct,
+                "agents": int(row["agent_count"] or 0),
+            }
+
+        # Per-sector aggregate gross exposure
+        sector_map = _load_sector_map()
+        sector_exposure: dict[str, dict[str, Any]] = {}
+        for sym, sym_data in symbol_exposure.items():
+            sector = sector_map.get(sym.upper(), "unknown")
+            if sector not in sector_exposure:
+                sector_exposure[sector] = {"value": 0.0, "pct": 0.0}
+            sector_exposure[sector]["value"] += sym_data["value"]
+        for sector, data in sector_exposure.items():
+            data["pct"] = data["value"] / starting_equity if starting_equity > 0 else 0.0
+
+        # Crowding map: symbol → [(agent_name, side)]
+        cursor.execute(
+            """
+            SELECT p.symbol, p.side, a.name AS agent_name
+            FROM positions p
+            JOIN agents a ON a.id = p.agent_id
+            """
+        )
+        crowding: dict[str, list[dict[str, str]]] = {}
+        for row in cursor.fetchall():
+            sym = row["symbol"]
+            if sym not in crowding:
+                crowding[sym] = []
+            crowding[sym].append({"agent": row["agent_name"], "side": row["side"]})
+
+        # Daily P&L
+        daily_pnl = total_equity - starting_equity if starting_equity > 0 else 0.0
+        daily_pnl_pct = daily_pnl / starting_equity if starting_equity > 0 else 0.0
+
+        # Current thresholds from env vars
+        thresholds = {
+            "max_symbol_pct": float(os.getenv("PORTFOLIO_MAX_SYMBOL_PCT", "0.35")),
+            "max_sector_pct": float(os.getenv("PORTFOLIO_MAX_SECTOR_PCT", "0.50")),
+            "max_unknown_pct": float(os.getenv("PORTFOLIO_MAX_UNKNOWN_PCT", "0.10")),
+            "max_crowding": int(os.getenv("PORTFOLIO_MAX_CROWDING", "3")),
+            "max_daily_loss_pct": float(os.getenv("PORTFOLIO_MAX_DAILY_LOSS_PCT", "0.05")),
+        }
+
+        conn.close()
+
+        return {
+            "total_equity": total_equity,
+            "starting_equity": starting_equity,
+            "symbol_exposure": symbol_exposure,
+            "sector_exposure": sector_exposure,
+            "crowding": crowding,
+            "daily_pnl": daily_pnl,
+            "daily_pnl_pct": daily_pnl_pct,
+            "halted": halted,
+            "halt_reason": halt_reason,
+            "thresholds": thresholds,
+        }
+
+    # ─── POST /api/arena/portfolio-risk/unhalt — Admin un-halt ───
+
+    @app.post("/api/arena/portfolio-risk/unhalt")
+    async def arena_portfolio_risk_unhalt(authorization: str = Header(None)):
+        require_admin(authorization)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        day_key = _utc_day_start()
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        cursor.execute(
+            """
+            UPDATE portfolio_risk_state
+            SET halted = 0, halt_reason = NULL, updated_at = ?
+            WHERE day_key = ?
+            """,
+            (now, day_key),
+        )
+        conn.commit()
+
+        # Return updated state
+        cursor.execute(
+            "SELECT day_key, starting_equity, halted, halt_reason FROM portfolio_risk_state WHERE day_key = ?",
+            (day_key,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="No portfolio risk state found for today")
+
+        return {
+            "day_key": row["day_key"],
+            "starting_equity": float(row["starting_equity"]),
+            "halted": int(row["halted"]),
+            "halt_reason": row["halt_reason"],
+            "unhalted": True,
+        }
+
+    # ─── POST /api/arena/reset-portfolio — Reset all trading data ──
+
+    @app.post("/api/arena/reset-portfolio")
+    async def arena_reset_portfolio(authorization: str = Header(None)):
+        require_admin(authorization)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        try:
+            # Tables to DELETE entirely (trading/position/signal/history data)
+            tables_to_clear = [
+                "positions",
+                "signal_replies",
+                "signal_predictions",
+                "signal_quality_scores",
+                "signals",
+                "profit_history",
+                "trading_risk_state",
+                "portfolio_risk_state",
+                "trading_decision_log",
+                "polymarket_settlements",
+                "agent_messages",
+                "agent_thoughts",
+                "agent_reward_ledger",
+                "experiment_events",
+                "network_edges",
+                "agent_metric_snapshots",
+                "challenge_submission_votes",
+                "challenge_trades",
+                "challenge_results",
+                "challenge_submissions",
+                "challenge_team_trades",
+                "challenge_team_submissions",
+                "team_messages",
+                "team_contributions",
+                "team_submissions",
+                "team_results",
+            ]
+
+            deleted_counts = {}
+            for table in tables_to_clear:
+                cursor.execute(f"DELETE FROM {table}")
+                deleted_counts[table] = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+
+            # Reset agent financial fields but keep identity, tokens, configs
+            cursor.execute(
+                "UPDATE agents SET cash = 10000.0, deposited = 0.0, points = 0"
+            )
+            agents_reset = cursor.rowcount if cursor.rowcount else 0
+
+            # Reset signal_sequence back to empty
+            cursor.execute("DELETE FROM signal_sequence")
+
+            conn.commit()
+
+            await broadcast_activity(
+                ctx,
+                {
+                    "type": "portfolio_reset",
+                    "message": "Portfolio has been reset — all positions, signals, and profit history cleared.",
+                    "timestamp": now,
+                },
+            )
+        except Exception as exc:
+            conn.rollback()
+            conn.close()
+            raise HTTPException(status_code=500, detail=f"Reset failed: {exc}")
+        finally:
+            conn.close()
+
+        return {
+            "success": True,
+            "agents_reset": agents_reset,
+            "deleted": deleted_counts,
+            "message": "Portfolio reset complete. All agents reset to $100,000 cash.",
+        }

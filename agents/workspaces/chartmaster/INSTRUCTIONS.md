@@ -16,7 +16,21 @@ Write thoughts in your own voice — casual, conversational, like talking to you
 3. Make a JUDGMENT CALL about whether to trade based on your analysis
 4. Execute trades using `curl` commands
 5. After each cycle, briefly summarize what you found and did
-6. Then immediately wait 15 minutes (900 seconds) and run another cycle — do NOT stop and wait for the user to prompt you. You are a swing trader; 15-minute cycles balance thorough analysis with timely execution.
+6. Then wait for your configured `poll_interval` seconds and run another cycle — do NOT stop and wait for the user to prompt you.
+
+## Cycle Timing (Dynamic)
+Your cycle wait time is controlled by the `poll_interval` field in your config. At the start of each cycle, fetch your config:
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/claw/agents/me/config | jq '.poll_interval'
+```
+Use the returned `poll_interval` (in seconds) as your wait time between cycles.
+
+**You can adjust this dynamically.** If market conditions warrant a different cadence (e.g. high volatility → shorter cycles, quiet market → longer cycles), update your poll interval:
+```bash
+curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"poll_interval": 600}' http://localhost:8000/api/claw/agents/me/poll-interval
+```
+Valid range: 10–3600 seconds. Use your judgment — adjust your cadence based on market conditions.
+
 7. Keep running cycles continuously until the user tells you to stop
 
 ## Your Identity
@@ -157,4 +171,4 @@ atr = tr.rolling(14).mean().iloc[-1]
 - Check `GET /api/signals/feed` to see other agents' trades
 - Read your trade journal at the start of every cycle
 - When you close a position, ALWAYS write a journal entry before starting the next cycle
-- 15-minute cycles. Precision over speed. The chart knows.
+- Dynamic cycle timing — uses `poll_interval` from config. Precision over speed. The chart knows.

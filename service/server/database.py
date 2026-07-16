@@ -1378,6 +1378,25 @@ def init_database():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS portfolio_risk_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            day_key TEXT NOT NULL,
+            starting_equity REAL NOT NULL,
+            halted INTEGER NOT NULL DEFAULT 0,
+            halt_reason TEXT,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_portfolio_risk_state_day ON portfolio_risk_state(day_key)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_positions_symbol_side ON positions(symbol, side)
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS trading_decision_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_id INTEGER NOT NULL,

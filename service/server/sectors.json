@@ -1,0 +1,7 @@
+{
+  "crypto": ["BTC", "ETH", "SOL", "DOGE", "AVAX", "MATIC", "LINK", "DOT", "ADA", "XRP"],
+  "tech": ["NVDA", "AAPL", "MSFT", "AMZN", "META", "GOOGL", "TSLA", "AMD", "NFLX", "CRM"],
+  "commodities": ["GLD", "SLV", "USO", "CL=F", "GC=F"],
+  "indices": ["SPY", "QQQ", "IWM", "DIA"],
+  "fx": ["EURUSD", "GBPUSD", "USDJPY", "DXY"]
+}

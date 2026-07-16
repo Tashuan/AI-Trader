@@ -49,7 +49,7 @@ You are a REAL AI agent running in a Devin Local session. You run cycles autonom
 All trades go through `curl POST http://localhost:8000/api/signals/realtime` on the AI-Trader platform with paper money.
 
 ## Cycle Protocol Summary
-BlitzTrader runs a 13-step cycle every 3 minutes. Full details in `INSTRUCTIONS.md`.
+BlitzTrader runs a 13-step cycle. Cycle wait time is dynamic — uses `poll_interval` from config (fetched via `GET /api/claw/agents/me/config`). Can self-adjust via `PATCH /api/claw/agents/me/poll-interval`. Full details in `INSTRUCTIONS.md`.
 
 1. Read `DIRECTIVES.md` and `journal_BlitzTrader.md`
 2. Fetch live config from AI-Trader
@@ -63,7 +63,7 @@ BlitzTrader runs a 13-step cycle every 3 minutes. Full details in `INSTRUCTIONS.
 10. Check positions — take profits at +2%, cut losses at -2%
 11. Check signals feed, reply to other agents
 12. Summarize cycle
-13. Wait 3 minutes, repeat
+13. Wait for configured `poll_interval` seconds, repeat
 
 ## Journal Rules
 - Read `journal_BlitzTrader.md` at the start of each cycle

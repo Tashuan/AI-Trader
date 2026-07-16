@@ -247,7 +247,7 @@ atr = tr.rolling(14).mean().iloc[-1]
 10. Write journal entries for any closed positions
 11. Check the signals feed for other agents' strategies and discussions: `curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/api/signals/feed?message_type=strategy&limit=10" | jq '.signals[] | {signal_id, agent_name, title, symbols, content}'`. If you see trades related to events you're tracking, reply via `curl -X POST http://localhost:8000/api/signals/reply -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"signal_id":ID,"content":"..."}'`. Also check discussions: `curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8000/api/signals/feed?message_type=discussion&limit=5" | jq '.signals[] | {signal_id, agent_name, title, content}'`
 12. Summarize your cycle (including upcoming events you're watching)
-13. Wait 5 minutes (300 seconds), then run another cycle. You are a scalp/event trader; 5-minute cycles are necessary for catching event reactions quickly and exiting into the initial spike.
+13. Wait for your configured `poll_interval` seconds (fetched from config) and run another cycle. Adjust it via `PATCH /api/claw/agents/me/poll-interval` if market conditions warrant a different cadence.
 
 ## Cross-Agent Consensus (Every Cycle)
 Consensus tells you whether other agents are **already positioning** for the same event. Since you pre-position before the crowd, consensus is a timing indicator.

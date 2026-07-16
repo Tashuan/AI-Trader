@@ -123,14 +123,13 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
       </div>
 
       {/* Thought Stream (live conversational thoughts) */}
-      <div className="mb-3 min-h-[80px]">
+      <div className="mb-3">
         <div className="text-[9px] text-arena-text-dim mb-1">THOUGHTS</div>
-        <div className="space-y-1">
+        <div className="space-y-1 max-h-[120px] overflow-y-auto">
           {agent.thoughts && agent.thoughts.length > 0 ? (
             agent.thoughts.slice(0, 5).map((thought, i) => (
-              <AnimatePresence mode="wait">
+              <AnimatePresence mode="wait" key={`${thought}-${i}`}>
                 <motion.div
-                  key={`${thought}-${i}`}
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.2 }}

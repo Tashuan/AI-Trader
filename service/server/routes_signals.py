@@ -47,6 +47,7 @@ from routes_shared import (
     validate_market,
 )
 from services import _add_agent_points, _get_agent_by_token, _reserve_signal_id, _update_position_from_signal
+from portfolio_risk_engine import evaluate_portfolio_risk
 from scalp_guardrails import GuardrailViolation, validate_entry
 from signal_quality import score_signal_quality
 from team_missions import TeamMissionError, record_team_message_from_signal, record_team_reply_from_parent_signal
@@ -272,6 +273,64 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 )
             except GuardrailViolation as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
+
+            # Portfolio-level risk check (only for new entries)
+            if action_lower in ('buy', 'short'):
+                pr_result = evaluate_portfolio_risk(
+                    cursor,
+                    agent_id=agent_id,
+                    market=market,
+                    symbol=symbol,
+                    side=action_lower,
+                    trade_value=trade_value + fee,
+                    now=now,
+                )
+                if not pr_result['approved']:
+                    # Log the rejection to trading_decision_log
+                    cursor.execute(
+                        """
+                        INSERT INTO trading_decision_log
+                        (agent_id, action, market, symbol, reason, metadata_json, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            agent_id,
+                            action_lower,
+                            market,
+                            symbol,
+                            pr_result['reason'][:1000],
+                            json.dumps({
+                                'portfolio_risk': pr_result.get('checks', {}),
+                                'trade_value': trade_value + fee,
+                                'rejected': True,
+                            }),
+                            now,
+                        ),
+                    )
+                    raise HTTPException(status_code=400, detail=pr_result['reason'])
+
+                # Log approved portfolio risk decision
+                if pr_result.get('checks') and not pr_result['checks'].get('disabled'):
+                    cursor.execute(
+                        """
+                        INSERT INTO trading_decision_log
+                        (agent_id, action, market, symbol, reason, metadata_json, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            agent_id,
+                            action_lower,
+                            market,
+                            symbol,
+                            f'Portfolio risk approved: {pr_result["reason"]}',
+                            json.dumps({
+                                'portfolio_risk': pr_result.get('checks', {}),
+                                'trade_value': trade_value + fee,
+                                'rejected': False,
+                            }),
+                            now,
+                        ),
+                    )
 
             if action_lower in ('sell', 'cover'):
                 pos = get_position_snapshot(cursor, agent_id, market, symbol, polymarket_token_id)

@@ -10,10 +10,11 @@ import { MarketsPage } from './pages/MarketsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { TimelinePage } from './pages/TimelinePage';
+import { PortfolioRiskPanel } from './components/PortfolioRiskPanel';
 import type { Agent } from './types';
 
 export default function App() {
-  const { data, loading, error, commentary, mentionedAgent } = useArenaData();
+  const { data, loading, error, commentary, mentionedAgent, portfolioRisk, portfolioRiskLastUpdated, userInfo, fetchPortfolioRisk } = useArenaData();
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [currentPage, setCurrentPage] = useState<PageId>('arena');
 
@@ -80,6 +81,30 @@ export default function App() {
               mentionedAgent={mentionedAgent}
               onAgentClick={(agent) => setSelectedAgent(agent)}
             />
+
+            {/* Right Sidebar: Portfolio Risk */}
+            <div className="w-72 shrink-0 border-l border-arena-border p-3 h-[calc(100vh-90px)] overflow-y-auto">
+              <PortfolioRiskPanel
+                data={portfolioRisk}
+                isAdmin={userInfo?.is_admin ?? false}
+                lastUpdated={portfolioRiskLastUpdated}
+                onUnhalt={async () => {
+                  try {
+                    const resp = await fetch('/api/arena/portfolio-risk/unhalt', {
+                      method: 'POST',
+                      headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}`,
+                      },
+                    });
+                    if (resp.ok) {
+                      fetchPortfolioRisk();
+                    }
+                  } catch {
+                    // silent fail
+                  }
+                }}
+              />
+            </div>
           </div>
         )}
 

@@ -88,8 +88,23 @@
 - **What was wrong:** Exit was forced by session end, not by TP hit. Position was only +0.28% vs +2% target. Would have held longer if session continued.
 - **Lesson:** Wider ranges (3.88%) DO produce better breakouts. Patience waiting for confirmation pays off. First win after 4 losses — circuit breaker lifted.
 
+### Trade 6 — ZEC Long (WIN)
+- **Entry:** 2026-07-12 12:01 ET | **Exit:** 2026-07-12 12:09 ET
+- **Hold time:** ~8 minutes (within 10-min limit ✓)
+- **Entry price:** $543.05 | **Exit price:** $545.42 | **PnL:** +$42.66 (+0.44%)
+- **Opening range:** $530-$540.23 (60-min consolidation, 1.92% width)
+- **Breakout direction:** Long above range high $540.23
+- **Volume surge:** 36.5x at breakout, sustained 2x+ across 4 cycles
+- **Entry thesis:** ZEC broke range high with explosive 36x volume, score 10/12. 24h +5.24% momentum alignment.
+- **Exit reason:** Momentum stalling — price peaked at $549.61 then pulled back to $545. Time stop approaching. Locked in profit rather than letting winner turn loser.
+- **Breakout score:** 10/12 (range tightness 2, volume surge 3, speed 3, gap alignment 2)
+- **Phase:** Opportunistic crypto (12:01 PM ET Sunday)
+- **What worked:** Patience waiting for breakout confirmation across 2 cycles. Volume was genuinely explosive (36x). Exit discipline — locked in profit when momentum stalled.
+- **What was wrong:** Didn't ride to TP $553.93. Price peaked at $549.61 then faded. Could have exited at the peak for +1.2% instead of +0.44%.
+- **Lesson:** When price peaks and starts pulling back after a strong run, consider exiting at the first sign of stall rather than waiting for time stop. Two wins in a row — momentum is building.
+
 ## Circuit Breaker Status
-- **LIFTED** — Trade 5 (MON long) was a win. Back to normal sizing and score thresholds.
+- **LIFTED** — Two consecutive wins (Trades 5 and 6). Full confidence restored.
 - Normal size: $10,000 notional max
 - Normal score threshold: 6+/12
 - Range width >1% still recommended based on Trade 3 lesson

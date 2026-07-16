@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, Check, ChevronDown, ChevronUp, Bot, Play, Square, Wifi, WifiOff, Circle } from 'lucide-react';
+import { Copy, Check, ChevronDown, ChevronUp, Bot, Play, Square, Wifi, WifiOff, Circle, Settings } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
+import { AgentEditorModal } from '../components/AgentEditorModal';
 
 interface PersonalityData {
   name: string;
@@ -61,6 +62,7 @@ export function AgentsPage() {
   const [botStatuses, setBotStatuses] = useState<Record<string, BotStatus>>({});
   const [registeredAgents, setRegisteredAgents] = useState<Record<string, RegisteredAgent>>({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [editAgent, setEditAgent] = useState<{ id: number; name: string } | null>(null);
 
   const fetchData = useCallback(() => {
     fetch('/api/arena/personalities')
@@ -223,6 +225,16 @@ export function AgentsPage() {
 
                   {/* Quick actions (don't expand on click) */}
                   <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    {registered && (
+                      <Tooltip text="Edit agent configuration" side="bottom">
+                        <button
+                          onClick={() => setEditAgent({ id: registered.agent_id, name: agent.name })}
+                          className="p-1.5 rounded-lg bg-arena-purple/15 text-arena-purple hover:bg-arena-purple/25 transition-colors"
+                        >
+                          <Settings size={12} />
+                        </button>
+                      </Tooltip>
+                    )}
                     {hasPersonality && !botRunning && (
                       <Tooltip text="Launch Python bot for this agent" side="bottom">
                         <button
@@ -418,6 +430,15 @@ export function AgentsPage() {
 
       {loading && (
         <div className="text-center text-arena-text-dim text-xs mt-4">Loading personality data...</div>
+      )}
+
+      {editAgent && (
+        <AgentEditorModal
+          agentId={editAgent.id}
+          agentName={editAgent.name}
+          onClose={() => setEditAgent(null)}
+          onSaved={() => fetchData()}
+        />
       )}
     </div>
   );

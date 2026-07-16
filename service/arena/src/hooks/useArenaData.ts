@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { ArenaFullResponse, WsActivityEvent, CommentaryEntry } from '../types';
+import type { ArenaFullResponse, WsActivityEvent, CommentaryEntry, PortfolioRiskData, UserInfo } from '../types';
 
 const API_BASE = '/api';
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/activity`;
 const FULL_REFRESH_INTERVAL = 30000;
 const COMMENTARY_REFRESH_INTERVAL = 45000;
+const PORTFOLIO_RISK_INTERVAL = 30000;
 
 export function useArenaData() {
   const [data, setData] = useState<ArenaFullResponse | null>(null);
@@ -12,6 +13,9 @@ export function useArenaData() {
   const [error, setError] = useState<string | null>(null);
   const [commentary, setCommentary] = useState<CommentaryEntry[]>([]);
   const [mentionedAgent, setMentionedAgent] = useState<string | null>(null);
+  const [portfolioRisk, setPortfolioRisk] = useState<PortfolioRiskData | null>(null);
+  const [portfolioRiskLastUpdated, setPortfolioRiskLastUpdated] = useState<number | null>(null);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const mentionedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -47,19 +51,50 @@ export function useArenaData() {
     }
   }, []);
 
+  const fetchPortfolioRisk = useCallback(async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/arena/portfolio-risk`);
+      if (!resp.ok) return;
+      const json = await resp.json();
+      setPortfolioRisk(json);
+      setPortfolioRiskLastUpdated(Date.now());
+    } catch {
+      // silent fail
+    }
+  }, []);
+
+  const fetchUserInfo = useCallback(async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/arena/me`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}`,
+        },
+      });
+      if (!resp.ok) return;
+      const json = await resp.json();
+      setUserInfo(json);
+    } catch {
+      // silent fail
+    }
+  }, []);
+
   // Initial load + periodic refresh
   useEffect(() => {
     fetchFull();
     fetchCommentary();
+    fetchPortfolioRisk();
+    fetchUserInfo();
 
     const fullInterval = setInterval(fetchFull, FULL_REFRESH_INTERVAL);
     const commentaryInterval = setInterval(fetchCommentary, COMMENTARY_REFRESH_INTERVAL);
+    const portfolioRiskInterval = setInterval(fetchPortfolioRisk, PORTFOLIO_RISK_INTERVAL);
 
     return () => {
       clearInterval(fullInterval);
       clearInterval(commentaryInterval);
+      clearInterval(portfolioRiskInterval);
     };
-  }, [fetchFull, fetchCommentary]);
+  }, [fetchFull, fetchCommentary, fetchPortfolioRisk]);
 
   // WebSocket for real-time events
   useEffect(() => {
@@ -186,7 +221,7 @@ export function useArenaData() {
     });
   }, []);
 
-  return { data, loading, error, commentary, mentionedAgent };
+  return { data, loading, error, commentary, mentionedAgent, portfolioRisk, portfolioRiskLastUpdated, userInfo, fetchPortfolioRisk };
 }
 
 function formatWsEvent(msg: WsActivityEvent): string {

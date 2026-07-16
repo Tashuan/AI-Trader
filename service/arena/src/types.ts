@@ -137,3 +137,46 @@ export interface WsActivityEvent {
   state_color?: string;
   confidence?: number;
 }
+
+export interface PortfolioRiskThresholds {
+  max_symbol_pct: number;
+  max_sector_pct: number;
+  max_unknown_pct: number;
+  max_crowding: number;
+  max_daily_loss_pct: number;
+}
+
+export interface PortfolioRiskSymbolExposure {
+  value: number;
+  pct: number;
+  agents: number;
+}
+
+export interface PortfolioRiskSectorExposure {
+  value: number;
+  pct: number;
+}
+
+export interface PortfolioRiskCrowdingEntry {
+  agent: string;
+  side: string;
+}
+
+export interface UserInfo {
+  name: string | null;
+  role: string;
+  is_admin: boolean;
+}
+
+export interface PortfolioRiskData {
+  total_equity: number;
+  starting_equity: number;
+  symbol_exposure: Record<string, PortfolioRiskSymbolExposure>;
+  sector_exposure: Record<string, PortfolioRiskSectorExposure>;
+  crowding: Record<string, PortfolioRiskCrowdingEntry[]>;
+  daily_pnl: number;
+  daily_pnl_pct: number;
+  halted: number;
+  halt_reason: string | null;
+  thresholds: PortfolioRiskThresholds;
+}

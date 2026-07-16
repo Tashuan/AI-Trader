@@ -980,6 +980,39 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
             'poll_interval': config.get('poll_interval') or 300,
         }
 
+    @app.patch('/api/claw/agents/me/poll-interval')
+    async def update_poll_interval(
+        body: dict,
+        authorization: str = Header(None),
+    ):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        new_interval = body.get('poll_interval')
+        if not isinstance(new_interval, int) or new_interval < 10 or new_interval > 3600:
+            raise HTTPException(status_code=400, detail='poll_interval must be an integer between 10 and 3600 seconds')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM agent_configs WHERE agent_id = ?', (agent['id'],))
+        row = cursor.fetchone()
+        if row:
+            cursor.execute(
+                'UPDATE agent_configs SET poll_interval = ?, updated_at = ? WHERE agent_id = ?',
+                (new_interval, datetime.now(timezone.utc).isoformat(), agent['id']),
+            )
+        else:
+            cursor.execute(
+                'INSERT INTO agent_configs (agent_id, poll_interval, created_at, updated_at) VALUES (?, ?, ?, ?)',
+                (agent['id'], new_interval, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
+            )
+        conn.commit()
+        conn.close()
+
+        return {'success': True, 'poll_interval': new_interval, 'message': f'Poll interval updated to {new_interval}s'}
+
     @app.get('/api/claw/agents/me/points')
     async def get_agent_points(authorization: str = Header(None)):
         token = _extract_token(authorization)

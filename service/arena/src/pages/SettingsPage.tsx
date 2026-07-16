@@ -1,4 +1,39 @@
+import { useState } from 'react';
+import { AlertTriangle, Loader2, X } from 'lucide-react';
+
 export function SettingsPage() {
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetResult, setResetResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleReset = async () => {
+    setResetting(true);
+    setResetResult(null);
+    try {
+      const resp = await fetch('/api/arena/reset-portfolio', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}`,
+        },
+      });
+      const json = await resp.json();
+      if (resp.ok) {
+        setResetResult({ success: true, message: json.message || 'Portfolio reset complete.' });
+      } else {
+        setResetResult({ success: false, message: json.detail || 'Reset failed.' });
+      }
+    } catch {
+      setResetResult({ success: false, message: 'Network error. Reset may have partially completed.' });
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const closeModal = () => {
+    setShowResetModal(false);
+    setResetResult(null);
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <h1 className="text-lg font-bold text-white mb-1">Settings</h1>
@@ -72,6 +107,86 @@ ARENA_LLM_API_KEY=sk-...`}
           </div>
         </div>
       </div>
+
+      {/* Danger Zone */}
+      <div className="card-base p-4 max-w-lg mt-4 border-red-500/30">
+        <h2 className="text-sm font-semibold text-red-400 mb-2 flex items-center gap-1.5">
+          <AlertTriangle size={14} />
+          Danger Zone
+        </h2>
+        <p className="text-[11px] text-arena-text-secondary mb-3">
+          Reset all trading data: closes all positions, clears signals & profit history, and resets every agent's cash to $10,000. Agent identities, configs, and workflows are preserved.
+        </p>
+        <button
+          onClick={() => setShowResetModal(true)}
+          className="px-3 py-1.5 text-xs font-semibold text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg hover:bg-red-500/20 transition-colors"
+        >
+          Reset Portfolio
+        </button>
+      </div>
+
+      {/* Confirmation Modal */}
+      {showResetModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={closeModal}
+        >
+          <div
+            className="bg-arena-card border border-arena-border rounded-lg p-5 max-w-sm w-full mx-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                <AlertTriangle size={14} className="text-red-400" />
+                Reset Portfolio
+              </h3>
+              <button onClick={closeModal} className="text-arena-text-dim hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+
+            {!resetResult && (
+              <>
+                <p className="text-xs text-arena-text-secondary mb-4">
+                  This will permanently delete all positions, trades, signals, and profit history. All agents will be reset to $100,000 cash. <strong className="text-red-400">This cannot be undone.</strong>
+                </p>
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={closeModal}
+                    className="px-3 py-1.5 text-xs text-arena-text-dim hover:text-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleReset}
+                    disabled={resetting}
+                    className="px-3 py-1.5 text-xs font-semibold text-white bg-red-500/80 hover:bg-red-500 rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                  >
+                    {resetting && <Loader2 size={12} className="animate-spin" />}
+                    {resetting ? 'Resetting...' : 'Yes, Reset Everything'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {resetResult && (
+              <>
+                <p className={`text-xs mb-4 ${resetResult.success ? 'text-arena-green' : 'text-red-400'}`}>
+                  {resetResult.message}
+                </p>
+                <div className="flex justify-end">
+                  <button
+                    onClick={closeModal}
+                    className="px-3 py-1.5 text-xs font-semibold text-white bg-arena-bg border border-arena-border rounded-lg hover:bg-arena-border transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
