@@ -569,7 +569,18 @@ def resolve_position_prices(rows: list[Any], now_str: str) -> dict[tuple[str, st
             continue
 
         current_price = row['current_price']
-        if current_price is None and get_price_from_market is not None:
+        normalized_market = normalize_market(row['market'])
+        # Always fetch fresh prices for real-time markets (crypto, us-stock)
+        # to avoid acting on stale DB values between background refresh cycles.
+        if normalized_market in {'crypto', 'us-stock'} and get_price_from_market is not None:
+            current_price = get_price_from_market(
+                row['symbol'],
+                now_str,
+                row['market'],
+                token_id=row['token_id'],
+                outcome=row['outcome'],
+            )
+        elif current_price is None and get_price_from_market is not None:
             current_price = get_price_from_market(
                 row['symbol'],
                 now_str,

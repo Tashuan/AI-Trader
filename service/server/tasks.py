@@ -466,7 +466,7 @@ def _maybe_schedule_profit_history_prune() -> None:
 
 
 async def update_position_prices():
-    """Background task to update position prices every 5 minutes."""
+    """Background task to update position prices every 2 minutes."""
     from database import get_db_connection
     from price_fetcher import get_price_from_market, price_fetch_logging
 
@@ -644,8 +644,8 @@ async def update_position_prices():
         except Exception as e:
             print(f"[Price Update Error] {e}")
 
-        # Wait interval from environment variable (default: 5 minutes = 300 seconds)
-        refresh_interval = _env_int("POSITION_REFRESH_INTERVAL", 900, minimum=60)
+        # Wait interval from environment variable (default: 2 minutes = 120 seconds)
+        refresh_interval = _env_int("POSITION_REFRESH_INTERVAL", 120, minimum=60)
         print(f"[Price Update] Next update in {refresh_interval} seconds")
         await asyncio.sleep(refresh_interval)
 
@@ -656,9 +656,17 @@ async def auto_close_positions_loop():
     Runs after each price update cycle. Checks all open positions that have
     stop_loss_price or take_profit_price set, and closes them if the current
     price has crossed the threshold.
+
+    For real-time markets (crypto, us-stock), fetches fresh prices on each
+    check instead of relying on potentially stale DB values from the
+    background price updater.
     """
     from database import get_db_connection
     from services import _update_position_from_signal
+    from price_fetcher import get_price_from_market
+    from routes_shared import normalize_market
+
+    _realtime_markets = {"crypto", "us-stock"}
 
     await asyncio.sleep(_env_int("AUTO_CLOSE_STARTUP_DELAY_SECONDS", 30, minimum=0))
 
@@ -686,15 +694,37 @@ async def auto_close_positions_loop():
 
             closed_count = 0
             for row in rows:
-                current_price = row["current_price"]
+                symbol = row["symbol"]
+                market = row["market"]
+                normalized_market = normalize_market(market)
+
+                # Fetch fresh price for real-time markets to avoid acting on
+                # stale DB values between background refresh cycles.
+                if normalized_market in _realtime_markets:
+                    now_utc = datetime.now(timezone.utc)
+                    executed_at_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    try:
+                        fetched_price = await asyncio.to_thread(
+                            get_price_from_market,
+                            symbol,
+                            executed_at_str,
+                            market,
+                            row["token_id"],
+                            row["outcome"],
+                        )
+                        current_price = fetched_price if fetched_price is not None else row["current_price"]
+                    except Exception as fetch_err:
+                        print(f"[Auto-Close] Fresh price fetch failed for {symbol}: {fetch_err}, using DB price")
+                        current_price = row["current_price"]
+                else:
+                    current_price = row["current_price"]
+
                 if current_price is None:
                     continue
 
                 side = row["side"]
                 stop_loss = row["stop_loss_price"]
                 take_profit = row["take_profit_price"]
-                symbol = row["symbol"]
-                market = row["market"]
                 quantity = abs(row["quantity"])
                 agent_name = row["agent_name"] or "unknown"
 
