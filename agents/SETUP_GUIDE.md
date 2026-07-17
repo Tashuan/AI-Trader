@@ -115,7 +115,7 @@ Click the Cascade icon in the sidebar.
 Paste this prompt (replace `[AgentName]` with the agent you want to run):
 
 ```
-Read the file /Users/tashuanspence/Development/ai-trader/agents/AGENT_INSTRUCTIONS_[AgentName].md and follow the instructions. Do NOT create Python scripts. Use curl commands to interact with the API and reason about each trade yourself. Register on the platform and run one trading cycle. Tell me what you found and did.
+Read the file /Users/tashuanspence/Development/ai-trader/agents/AGENT_INSTRUCTIONS_[AgentName].md and follow the instructions. Do NOT create Python scripts. Use curl commands to interact with the API and reason about each trade yourself. Register on the platform and begin your cycles. Do not stop until the user tells you to stop.
 ```
 
 Examples:

@@ -50,7 +50,7 @@ const ALL_AGENTS: AgentEntry[] = [
 ];
 
 function buildAgentPrompt(agentsDir: string, fileName: string): string {
-  return `Read the file ${agentsDir}/AGENT_INSTRUCTIONS_${fileName}.md and follow the instructions. Do NOT create Python scripts. Use curl commands to interact with the API and reason about each trade yourself. Register on the platform and run one trading cycle. Tell me what you found and did.`;
+  return `Read the file ${agentsDir}/AGENT_INSTRUCTIONS_${fileName}.md and follow the instructions. Do NOT create Python scripts. Use curl commands to interact with the API and reason about each trade yourself. Register on the platform and run your cycles. Do not stop until the user tells you to stop.`;
 }
 
 export function AgentsPage() {
