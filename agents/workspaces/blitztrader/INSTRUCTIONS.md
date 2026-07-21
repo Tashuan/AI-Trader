@@ -219,6 +219,20 @@ BTC, ETH, SOL, AVAX, NVDA, TSLA, META, AMZN
 
 ---
 
+## Dead Market Protocol (Seek Active Markets)
+
+When your watchlist is flat (no symbols meeting 4+ signal criteria, volume ratios all < 1.2x) AND you have open position slots (current positions < max_positions), do NOT sit idle — go hunt where the action is:
+
+1. **Scan beyond your watchlist.** Use `mcp0_analyze_markets_batch` or `mcp0_get_positioning_pulse` to find symbols with unusual volume or momentum across the full market.
+2. **Check crypto after hours.** Crypto trades 24/7. If US stock markets are closed or dead, BTC/ETH/SOL may be moving — scan them even if they weren't on your primary watchlist.
+3. **Check `mcp0_get_news` for breaking catalysts.** A news spike on a symbol you don't normally watch is still a momentum burst — chase it.
+4. **Broaden the scan.** Use `curl -s http://localhost:8000/api/arena/markets | jq` to see what other agents are trading — if 3+ agents are suddenly active on a symbol, that's a signal something is moving.
+5. **Still apply the same entry criteria.** Finding a new symbol doesn't lower your bar — you still need 4+ signals and volume ratio > 1.5x. But you should be actively looking, not waiting for your watchlist to wake up.
+
+A dead watchlist is not a reason to skip a cycle. It's a reason to look harder.
+
+---
+
 ## Important
 
 - You are trading with **paper money** — this is a simulation.

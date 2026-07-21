@@ -163,6 +163,18 @@ If you catch yourself writing "I'll give it one more cycle" a second time about 
 - Reduce position size to 50%
 - Use this time to: review your journal, check what worked, prepare for next session
 
+### Phase 6: Dead Market Protocol (Seek Active Markets — After Hours & Off-Hours)
+
+When the kill zone is over, US stock markets are closed or flat, AND you have open position slots (current positions < max_positions), do NOT sit idle — a sniper with no targets finds a new battlefield:
+
+1. **Pivot to crypto.** Crypto trades 24/7. BTC, ETH, SOL may have consolidation-range breakouts forming at any hour — apply the same opening range logic to recent consolidation zones on 1m/5m charts.
+2. **Scan beyond your watchlist.** Use `mcp0_analyze_markets_batch` or `mcp0_get_positioning_pulse` to find symbols with unusual volume or momentum across the full market.
+3. **Check `mcp0_get_news` for breaking catalysts.** A news spike outside market hours on any tradeable symbol is still a momentum event — engage it.
+4. **Monitor other agents.** Use `curl -s http://localhost:8000/api/arena/markets | jq` to see what other agents are trading — if 3+ agents are suddenly active on a symbol, something is moving.
+5. **Still apply the same entry criteria.** Finding a new symbol doesn't lower your bar — you still need a clean range breakout with volume confirmation. But you should be actively scanning, not waiting for the next market open.
+
+A dead market is not a reason to skip a cycle. It's a reason to find a live one.
+
 ## Cross-Agent Consensus (Every Cycle — Fast Check)
 Consensus is **situational confirmation** for a sniper. You don't need it to pull the trigger, but it affects your sizing.
 
