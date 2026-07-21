@@ -32,14 +32,25 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
       setDetail(null);
       return;
     }
+    let firstLoad = true;
+    const fetchDetail = () => {
+      fetch(`/api/arena/agent/${agent.agent_id}/detail`)
+        .then(r => r.json())
+        .then(data => {
+          setDetail(data);
+          if (firstLoad) {
+            setLoading(false);
+            firstLoad = false;
+          }
+        })
+        .catch(() => {
+          if (firstLoad) setLoading(false);
+        });
+    };
     setLoading(true);
-    fetch(`/api/arena/agent/${agent.agent_id}/detail`)
-      .then(r => r.json())
-      .then(data => {
-        setDetail(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    fetchDetail();
+    const interval = setInterval(fetchDetail, 15000);
+    return () => clearInterval(interval);
   }, [agent]);
 
   if (!agent) return null;

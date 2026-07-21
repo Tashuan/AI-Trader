@@ -4,7 +4,7 @@ import { PositionTracker } from '../components/PositionTracker';
 import type { AgentPosition } from '../types';
 
 const API_BASE = '/api';
-const REFRESH_INTERVAL = 15000;
+const REFRESH_INTERVAL = 5000;
 
 interface PositionsResponse {
   positions: AgentPosition[];
