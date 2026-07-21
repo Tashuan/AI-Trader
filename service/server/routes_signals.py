@@ -244,10 +244,110 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         if not math.isfinite(trade_value_guard) or trade_value_guard > 1_000_000_000:
             raise HTTPException(status_code=400, detail='Trade value too large')
 
-        from fees import TRADE_FEE_RATE, apply_slippage
+        # ── Limit order handling ──────────────────────────────────────
+        order_type = (data.order_type or "market").lower()
+        if order_type == "limit":
+            if not data.limit_price or data.limit_price <= 0:
+                raise HTTPException(status_code=400, detail='limit_price is required for limit orders')
+
+            tif = (data.time_in_force or "gtc").lower()
+            limit_price = float(data.limit_price)
+
+            # IOC: fill immediately if price crosses, else reject
+            if tif == "ioc":
+                would_fill = False
+                if action_lower in ("buy",):
+                    would_fill = price <= limit_price
+                elif action_lower in ("short",):
+                    would_fill = price >= limit_price
+                if not would_fill:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f'IOC limit order not fillable: {action_lower} limit {limit_price} vs current {price}',
+                    )
+                # Falls through to market order execution below at the limit price
+                price = limit_price
+            else:
+                # GTC: store as resting order
+                from datetime import timedelta as _timedelta
+                expires_at = None
+                if data.expires_after_minutes:
+                    expires_at = (datetime.now(timezone.utc) + _timedelta(minutes=data.expires_after_minutes)).isoformat()
+
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                try:
+                    begin_write_transaction(cursor)
+                    # Check cash for buy/short entries
+                    if action_lower in ("buy", "short"):
+                        order_cost = limit_price * qty
+                        cursor.execute("SELECT cash FROM agents WHERE id = ?", (agent_id,))
+                        row = cursor.fetchone()
+                        if row and row["cash"] < order_cost:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f'Insufficient cash for limit order. Required: ${order_cost:.2f}, Available: ${row["cash"]:.2f}',
+                            )
+
+                    cursor.execute(
+                        """
+                        INSERT INTO limit_orders
+                            (agent_id, symbol, market, token_id, outcome, side, quantity,
+                             limit_price, stop_loss_price, take_profit_price, time_in_force,
+                             expires_at, status, content)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+                        """,
+                        (agent_id, symbol, market, polymarket_token_id, polymarket_outcome,
+                         action_lower, qty, limit_price, data.stop_loss_price,
+                         data.take_profit_price, tif, expires_at, data.content),
+                    )
+                    order_id = cursor.lastrowid
+                    conn.commit()
+                except HTTPException:
+                    conn.rollback()
+                    conn.close()
+                    raise
+                except Exception as exc:
+                    conn.rollback()
+                    conn.close()
+                    raise HTTPException(status_code=500, detail=f'Failed to place limit order: {exc}')
+                conn.close()
+
+                return {
+                    "status": "resting",
+                    "order_id": order_id,
+                    "message": f"Limit {action_lower} order for {qty} {symbol} at {limit_price} is resting",
+                    "time_in_force": tif,
+                    "expires_at": expires_at,
+                }
+
+        from fees import (
+            TRADE_FEE_RATE, compute_fill_price, compute_fill_quantity,
+            compute_borrow_fee,
+        )
 
         signal_id = None
-        fill_price = price if server_priced else apply_slippage(price, action_lower)
+        order_value = price * qty
+        fill_price = compute_fill_price(
+            mid_price=price,
+            action=action_lower,
+            market=market,
+            symbol=symbol,
+            order_value=order_value,
+        )
+
+        # Liquidity check — partial fills or rejection for oversized orders
+        fill_qty = compute_fill_quantity(qty, fill_price * qty, symbol)
+        if fill_qty <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Insufficient liquidity for {symbol}: order value ${fill_price * qty:,.2f} exceeds available liquidity. Reduce quantity and try again.',
+            )
+        if fill_qty < qty:
+            # Partial fill — adjust qty and log the unfilled portion
+            print(f'[Partial Fill] {symbol}: requested {qty}, filled {fill_qty} (liquidity limit)')
+        qty = fill_qty
+
         trade_value = fill_price * qty
         fee = trade_value * TRADE_FEE_RATE
         position_entry_price = None
@@ -434,7 +534,21 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 if position_entry_price is None:
                     raise HTTPException(status_code=400, detail='Short position entry price is missing')
                 cover_credit = ((2 * position_entry_price) - fill_price) * qty - fee
-                cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (cover_credit, agent_id))
+                # Borrow fee for short positions
+                pos_snapshot = get_position_snapshot(cursor, agent_id, market, symbol, polymarket_token_id)
+                borrow_fee = 0.0
+                if pos_snapshot and pos_snapshot.get('opened_at'):
+                    try:
+                        opened_dt = datetime.fromisoformat(pos_snapshot['opened_at'].replace('Z', '+00:00'))
+                        now_dt = datetime.now(timezone.utc)
+                        days_held = max(0.0, (now_dt - opened_dt).total_seconds() / 86400.0)
+                        position_value = abs(pos_snapshot['quantity']) * position_entry_price
+                        borrow_fee = compute_borrow_fee(symbol, position_value, days_held)
+                    except Exception:
+                        pass
+                cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (cover_credit - borrow_fee, agent_id))
+                if borrow_fee > 0:
+                    print(f'[Borrow Fee] {symbol}: ${borrow_fee:.4f} charged for short position')
 
             if action_lower in ("sell", "cover"):
                 cursor.execute(
@@ -2057,3 +2171,87 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
             )
 
         return {'success': True, 'reply_id': reply_id, 'points_earned': points_earned}
+
+    @app.get('/api/orders/open')
+    async def get_open_orders(authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, symbol, market, token_id, outcome, side, quantity, limit_price,
+                   stop_loss_price, take_profit_price, time_in_force, expires_at, status,
+                   created_at, content
+            FROM limit_orders
+            WHERE agent_id = ? AND status = 'open'
+            ORDER BY created_at DESC
+            """,
+            (agent['id'],),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+
+        orders = []
+        for row in rows:
+            orders.append({
+                'id': row['id'],
+                'symbol': row['symbol'],
+                'market': row['market'],
+                'token_id': row['token_id'],
+                'outcome': row['outcome'],
+                'side': row['side'],
+                'quantity': row['quantity'],
+                'limit_price': row['limit_price'],
+                'stop_loss_price': row['stop_loss_price'],
+                'take_profit_price': row['take_profit_price'],
+                'time_in_force': row['time_in_force'],
+                'expires_at': row['expires_at'],
+                'status': row['status'],
+                'created_at': row['created_at'],
+                'content': row['content'],
+            })
+        return {'orders': orders, 'count': len(orders)}
+
+    @app.delete('/api/orders/{order_id}')
+    async def cancel_limit_order(order_id: int, authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            begin_write_transaction(cursor)
+            cursor.execute(
+                "SELECT id, agent_id, status FROM limit_orders WHERE id = ?",
+                (order_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail='Order not found')
+            if row['agent_id'] != agent['id']:
+                raise HTTPException(status_code=403, detail='Cannot cancel another agent\'s order')
+            if row['status'] != 'open':
+                raise HTTPException(status_code=400, detail=f'Order is already {row["status"]}')
+
+            cursor.execute(
+                "UPDATE limit_orders SET status = 'cancelled', updated_at = datetime('now') WHERE id = ?",
+                (order_id,),
+            )
+            conn.commit()
+        except HTTPException:
+            conn.rollback()
+            conn.close()
+            raise
+        except Exception as exc:
+            conn.rollback()
+            conn.close()
+            raise HTTPException(status_code=500, detail=f'Failed to cancel order: {exc}')
+        conn.close()
+
+        return {'success': True, 'order_id': order_id, 'status': 'cancelled'}

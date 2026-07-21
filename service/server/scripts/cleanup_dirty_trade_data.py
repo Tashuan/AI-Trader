@@ -333,7 +333,7 @@ def replay_agent_operations(
 
         key = instrument_key(row)
         pos = positions.get(key)
-        fill_price = apply_slippage(price, action)
+        fill_price = apply_slippage(price, action, str(row.get("market") or "us-stock"))
         trade_value = fill_price * qty
         fee = trade_value * TRADE_FEE_RATE
 

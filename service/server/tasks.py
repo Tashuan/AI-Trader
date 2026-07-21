@@ -689,7 +689,7 @@ async def auto_close_positions_loop():
                 conn.close()
 
             if not rows:
-                await asyncio.sleep(_env_int("AUTO_CLOSE_CHECK_INTERVAL", 60, minimum=10))
+                await asyncio.sleep(_env_int("AUTO_CLOSE_CHECK_INTERVAL", 15, minimum=5))
                 continue
 
             closed_count = 0
@@ -778,10 +778,23 @@ async def auto_close_positions_loop():
                     else:
                         entry_price = row["entry_price"]
                         cover_credit = ((2 * entry_price) - current_price) * quantity
+                        # Borrow fee for short positions
+                        borrow_fee = 0.0
+                        try:
+                            from fees import compute_borrow_fee
+                            opened_dt = datetime.fromisoformat(row["opened_at"].replace('Z', '+00:00'))
+                            now_dt = datetime.now(timezone.utc)
+                            days_held = max(0.0, (now_dt - opened_dt).total_seconds() / 86400.0)
+                            position_value = abs(row["quantity"]) * entry_price
+                            borrow_fee = compute_borrow_fee(symbol, position_value, days_held)
+                        except Exception:
+                            pass
                         cursor.execute(
                             "UPDATE agents SET cash = cash + ? WHERE id = ?",
-                            (cover_credit, row["agent_id"]),
+                            (cover_credit - borrow_fee, row["agent_id"]),
                         )
+                        if borrow_fee > 0:
+                            print(f"[Auto-Close] Borrow fee {symbol}: ${borrow_fee:.4f}")
 
                     try:
                         import uuid
@@ -865,7 +878,7 @@ async def auto_close_positions_loop():
         except Exception as e:
             print(f"[Auto-Close Error] {e}")
 
-        check_interval = _env_int("AUTO_CLOSE_CHECK_INTERVAL", 60, minimum=10)
+        check_interval = _env_int("AUTO_CLOSE_CHECK_INTERVAL", 15, minimum=5)
         await asyncio.sleep(check_interval)
 
 
@@ -1442,9 +1455,174 @@ async def build_network_edges_loop():
         await asyncio.sleep(interval_s)
 
 
+async def limit_order_processor_loop():
+    """Background task to check open limit orders against current prices and fill if conditions are met."""
+    from database import get_db_connection
+    from services import _update_position_from_signal
+    from price_fetcher import get_price_from_market
+    from routes_shared import normalize_market
+    from fees import compute_fill_price, TRADE_FEE_RATE
+
+    await asyncio.sleep(_env_int("LIMIT_ORDER_STARTUP_DELAY_SECONDS", 30, minimum=0))
+
+    while True:
+        try:
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, agent_id, symbol, market, token_id, outcome, side, quantity,
+                           limit_price, stop_loss_price, take_profit_price, time_in_force,
+                           expires_at, content, created_at
+                    FROM limit_orders
+                    WHERE status = 'open'
+                      AND (expires_at IS NULL OR expires_at > datetime('now'))
+                """)
+                orders = cursor.fetchall()
+            finally:
+                conn.close()
+
+            if not orders:
+                await asyncio.sleep(_env_int("LIMIT_ORDER_CHECK_INTERVAL", 15, minimum=5))
+                continue
+
+            filled_count = 0
+            for order in orders:
+                symbol = order["symbol"]
+                market = order["market"]
+                normalized_market = normalize_market(market)
+                side = order["side"]
+                limit_price = order["limit_price"]
+                qty = order["quantity"]
+
+                # Fetch current price
+                now_utc = datetime.now(timezone.utc)
+                executed_at_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                try:
+                    current_price = await asyncio.to_thread(
+                        get_price_from_market,
+                        symbol,
+                        executed_at_str,
+                        market,
+                        order["token_id"],
+                        order["outcome"],
+                    )
+                except Exception:
+                    current_price = None
+
+                if current_price is None:
+                    continue
+
+                # Check if limit order would fill
+                would_fill = False
+                if side in ("buy",):
+                    would_fill = current_price <= limit_price
+                elif side in ("short",):
+                    would_fill = current_price >= limit_price
+
+                if not would_fill:
+                    continue
+
+                # Compute realistic fill price
+                order_value = current_price * qty
+                fill_price = compute_fill_price(
+                    mid_price=current_price,
+                    action=side,
+                    market=market,
+                    symbol=symbol,
+                    order_value=order_value,
+                )
+                trade_value = fill_price * qty
+                fee = trade_value * TRADE_FEE_RATE
+
+                # Execute the fill
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    begin_write_transaction(cursor)
+
+                    # Check cash for buy/short
+                    if side in ("buy", "short"):
+                        cursor.execute("SELECT cash FROM agents WHERE id = ?", (order["agent_id"],))
+                        row = cursor.fetchone()
+                        if row and row["cash"] < trade_value + fee:
+                            print(f"[Limit Order] Insufficient cash for {symbol} order {order['id']}, skipping")
+                            conn.rollback()
+                            continue
+
+                    _update_position_from_signal(
+                        agent_id=order["agent_id"],
+                        symbol=symbol,
+                        market=market,
+                        action=side,
+                        quantity=qty,
+                        price=fill_price,
+                        executed_at=executed_at_str,
+                        cursor=cursor,
+                        token_id=order["token_id"],
+                        outcome=order["outcome"],
+                        stop_loss_price=order["stop_loss_price"],
+                        take_profit_price=order["take_profit_price"],
+                    )
+
+                    # Update cash
+                    if side in ("buy", "short"):
+                        cursor.execute(
+                            "UPDATE agents SET cash = cash - ? WHERE id = ?",
+                            (trade_value + fee, order["agent_id"]),
+                        )
+                    elif side == "sell":
+                        cursor.execute(
+                            "UPDATE agents SET cash = cash + ? WHERE id = ?",
+                            (trade_value - fee, order["agent_id"]),
+                        )
+
+                    # Mark order as filled
+                    cursor.execute(
+                        """UPDATE limit_orders
+                           SET status = 'filled', filled_quantity = ?, filled_price = ?,
+                               updated_at = datetime('now')
+                           WHERE id = ?""",
+                        (qty, fill_price, order["id"]),
+                    )
+
+                    # Log signal
+                    import uuid as _uuid
+                    signal_id = str(_uuid.uuid4())
+                    cursor.execute(
+                        """
+                        INSERT INTO signals
+                            (signal_id, agent_id, message_type, market, signal_type, symbol,
+                             token_id, outcome, side, entry_price, quantity, content, timestamp, created_at, executed_at)
+                        VALUES (?, ?, 'operation', ?, 'limit_fill', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (signal_id, order["agent_id"], market, symbol, order["token_id"],
+                         order["outcome"], side, fill_price, qty, order["content"],
+                         int(now_utc.timestamp()), now_utc.isoformat(), executed_at_str),
+                    )
+
+                    conn.commit()
+                    filled_count += 1
+                    print(f"[Limit Order] Filled {symbol} {side} {qty} @ {fill_price} (limit {limit_price})")
+                except Exception as exc:
+                    conn.rollback()
+                    print(f"[Limit Order] Fill failed for {symbol} order {order['id']}: {exc}")
+                finally:
+                    conn.close()
+
+            if filled_count:
+                print(f"[Limit Order] Processed {filled_count} fill(s) this cycle")
+
+        except Exception as e:
+            print(f"[Limit Order Processor Error] {e}")
+
+        await asyncio.sleep(_env_int("LIMIT_ORDER_CHECK_INTERVAL", 15, minimum=5))
+
+
 BACKGROUND_TASK_REGISTRY = {
     "prices": update_position_prices,
     "auto_close": auto_close_positions_loop,
+    "limit_orders": limit_order_processor_loop,
     "profit_history": record_profit_history,
     "polymarket_settlement": settle_polymarket_positions,
     "challenge_settlement": settle_challenges_loop,

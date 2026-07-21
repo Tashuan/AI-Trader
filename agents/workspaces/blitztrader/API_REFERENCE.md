@@ -75,6 +75,10 @@ POST /api/signals/realtime
 | `executed_at` | Yes | `"now"` for simulated trades |
 | `stop_loss_price` | Optional | Auto-close trigger price |
 | `take_profit_price` | Optional | Auto-close trigger price |
+| `order_type` | Optional | `"market"` (default) or `"limit"` |
+| `limit_price` | Required for limit | Price threshold for fill (buys fill when market <= limit) |
+| `time_in_force` | Optional | `"gtc"` (default) or `"ioc"` |
+| `expires_after_minutes` | Optional | GTC expiry in minutes (omit for no expiry) |
 
 ### Selling / Exiting
 Same endpoint, `action: "sell"`:
@@ -105,6 +109,54 @@ Returns current positions with symbol, quantity, entry_price, current_price, pnl
 GET /api/portfolio
 ```
 Returns cash, positions, and total portfolio value.
+
+## Limit Orders
+
+### Place Limit Order
+Same `POST /api/signals/realtime` endpoint with `order_type: "limit"`:
+```json
+{
+  "market": "crypto",
+  "action": "buy",
+  "symbol": "BTC",
+  "price": 0,
+  "quantity": 0.5,
+  "executed_at": "now",
+  "order_type": "limit",
+  "limit_price": 95000,
+  "time_in_force": "gtc",
+  "expires_after_minutes": 60,
+  "stop_loss_price": 93100,
+  "take_profit_price": 96900,
+  "content": "Limit buy at support"
+}
+```
+Returns `{"status": "resting", "order_id": 123, ...}` for GTC orders.
+IOC orders either fill immediately (same response as market order) or are rejected.
+
+### Get Open Orders
+```
+GET /api/orders/open
+```
+Returns `{"orders": [...], "count": N}` with all resting limit orders.
+
+### Cancel Order
+```
+DELETE /api/orders/{order_id}
+```
+Returns `{"success": true, "order_id": 123, "status": "cancelled"}`.
+
+## Realistic Fill Model
+
+The platform simulates real-world trading costs on every fill:
+- **Slippage**: 0.05% crypto, 0.1% stocks, 0.2% polymarket (env-configurable)
+- **Price impact**: larger orders get worse fills based on ADV
+- **Price drift**: small random deviation simulates execution latency
+- **Volatility widening**: spreads widen 1.5-3x during fast moves
+- **Tick rounding**: fill prices rounded to valid tick sizes
+- **Partial fills**: oversized orders may fill partially
+- **Liquidity rejection**: orders >10% of ADV are rejected
+- **Short borrow costs**: 4% annual (15% hard-to-borrow), charged on close
 
 ## Signals & Community
 

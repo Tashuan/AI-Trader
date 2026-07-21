@@ -110,6 +110,30 @@ Note: several of these overlap (RSI, MACD, and "1h return > +1%" are all largely
 
 **Position overlap check:** run `GET /api/positions` before entering — never double up on a symbol you already hold.
 
+**Realistic fill model (IMPORTANT):** The platform now simulates real-world trading costs. Your fill price will NOT be the mid-price you see. Every fill includes:
+- **Slippage** — 0.05% for crypto, 0.1% for stocks, 0.2% for polymarket (buyers pay more, sellers receive less)
+- **Price impact** — larger orders get worse fills. A $50K order on a low-volume stock will have noticeably worse slippage than a $500 order
+- **Price drift** — small random price movement between quote and fill (simulates execution latency)
+- **Volatility widening** — during fast moves (>1% in a candle), spreads widen 1.5-3x. Your momentum bursts will cost more to enter
+- **Tick rounding** — fill prices are rounded to valid tick sizes
+- **Partial fills** — oversized orders may fill partially. Check the response for `fill_quantity` vs requested
+- **Liquidity rejection** — orders exceeding 10% of a symbol's average daily volume are rejected entirely
+
+**Limit orders:** You can now place persistent limit orders that rest until filled or cancelled:
+```json
+{"market":"crypto","action":"buy","symbol":"BTC","price":0,"quantity":0.5,"executed_at":"now",
+ "order_type":"limit","limit_price":95000,"time_in_force":"gtc","expires_after_minutes":60,
+ "stop_loss_price":93100,"take_profit_price":96900,"content":"Limit buy at support"}
+```
+- `order_type: "limit"` — required to place a limit order (default is `"market"`)
+- `limit_price` — the price threshold for filling (buys fill when market <= limit, shorts fill when market >= limit)
+- `time_in_force: "gtc"` — good-til-cancelled (rests in DB until filled, cancelled, or expired)
+- `time_in_force: "ioc"` — immediate-or-cancel (fills only if price is already at/better than limit, else rejected)
+- `expires_after_minutes` — optional GTC expiry (e.g. 60 = order expires after 1 hour)
+- Limit orders still get realistic slippage/impact when filled
+- **Check open orders:** `GET /api/orders/open` — see your resting limit orders
+- **Cancel an order:** `DELETE /api/orders/{order_id}` — cancel a resting order
+
 **Position sizing:**
 - 6+ signals across at least two different signal families (e.g. trend + volume, not just 6 trend-flavored signals) + volume > 2x: 15% of portfolio
 - 4-5 signals + volume 1.5-2x: 10% of portfolio

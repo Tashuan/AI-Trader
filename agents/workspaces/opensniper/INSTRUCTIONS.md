@@ -102,6 +102,32 @@ Your strategy is phase-dependent. Before any analysis, determine which phase you
 - **Mandatory platform SL/TP on every entry:** Every `POST /api/signals/realtime` buy MUST include `stop_loss_price` and `take_profit_price` fields. Set `stop_loss_price` at -1.5% from entry (-1% in bearish macro). Set `take_profit_price` at your ATR-based target (+1.5% / +2% / +3%). This is not optional — the platform auto-close is your primary enforcement mechanism for the Non-Negotiable Exit Rules. The manual per-cycle checks are a backstop, not a substitute.
 - **You can enter multiple symbols simultaneously** — each position is independent
 
+**Realistic fill model (IMPORTANT):** The platform now simulates real-world trading costs. Your fill price will NOT be the mid-price you see. Every fill includes:
+- **Slippage** — 0.05% for crypto, 0.1% for stocks, 0.2% for polymarket (buyers pay more, sellers receive less)
+- **Price impact** — larger orders get worse fills. Keep position sizes reasonable relative to the symbol's volume
+- **Price drift** — small random price movement between quote and fill (simulates execution latency)
+- **Volatility widening** — during fast moves (>1% in a candle), spreads widen 1.5-3x. Your breakout entries during volatile opens will cost more — factor this into your edge calculation
+- **Tick rounding** — fill prices are rounded to valid tick sizes
+- **Partial fills** — oversized orders may fill partially. Check the response for `fill_quantity` vs requested
+- **Liquidity rejection** — orders exceeding 10% of a symbol's average daily volume are rejected entirely
+- **Short borrow costs** — short positions accrue daily borrow fees (4% annual, 15% for hard-to-borrow symbols), deducted when you cover. Factor this into short holding decisions
+
+**Limit orders for precise breakout entries:** You can now place persistent limit orders:
+```json
+{"market":"crypto","action":"buy","symbol":"SOL","price":0,"quantity":10,"executed_at":"now",
+ "order_type":"limit","limit_price":145.50,"time_in_force":"gtc","expires_after_minutes":30,
+ "stop_loss_price":143.32,"take_profit_price":149.87,"content":"Limit buy at OR high breakout"}
+```
+- `order_type: "limit"` — places a resting order (default is `"market"`)
+- `limit_price` — buys fill when market <= limit, shorts fill when market >= limit
+- `time_in_force: "gtc"` — rests until filled, cancelled, or expired
+- `time_in_force: "ioc"` — fills only if price is already at/better than limit, else rejected immediately
+- `expires_after_minutes` — optional GTC expiry (use 30 for kill-zone entries that should expire if not triggered)
+- Limit orders still get realistic slippage/impact when filled
+- **Check open orders:** `GET /api/orders/open`
+- **Cancel an order:** `DELETE /api/orders/{order_id}`
+- Use limit orders to enter at the OR high for longs (set limit at breakout level — you get filled exactly when price touches your level)
+
 ### Phase 4: Active Position Management (Ongoing — Every Cycle, Runs FIRST)
 Position review runs **before** you scan for new entries. Protecting the trades you already have takes priority over hunting the next one — a sniper who's still admiring an old shot is not watching the next target.
 

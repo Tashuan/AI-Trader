@@ -1279,6 +1279,39 @@ def init_database():
     except Exception:
         pass
 
+    # Limit orders table — persistent resting orders
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS limit_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            symbol TEXT NOT NULL,
+            market TEXT NOT NULL,
+            token_id TEXT,
+            outcome TEXT,
+            side TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            limit_price REAL NOT NULL,
+            stop_loss_price REAL,
+            take_profit_price REAL,
+            time_in_force TEXT DEFAULT 'gtc',
+            expires_at TEXT,
+            status TEXT DEFAULT 'open',
+            filled_quantity REAL DEFAULT 0,
+            filled_price REAL,
+            content TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_limit_orders_agent ON limit_orders(agent_id)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_limit_orders_status ON limit_orders(status, symbol, market)
+    """)
+
     # Add cash column if it doesn't exist (for existing databases)
     try:
         cursor.execute("ALTER TABLE agents ADD COLUMN cash REAL DEFAULT 100000.0")
