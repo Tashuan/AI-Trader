@@ -116,6 +116,16 @@ STRATEGY_TEMPLATES = {
         "default_hold": "swing",
         "default_confidence": 0.60,
     },
+    "futures_swing": {
+        "label": "Futures Swing Trading",
+        "description": "Swing trades futures contracts — index (ES, NQ) and commodity (CL, GC, NG) — using multi-day technical setups with trend and momentum confirmation",
+        "strategy_file": None,
+        "default_watchlist": ["ES", "NQ", "CL", "GC", "SI", "NG", "BZ", "HG"],
+        "default_voice": "confident, chart-focused, references support/resistance levels and trend structure",
+        "default_risk": "aggressive",
+        "default_hold": "swing",
+        "default_confidence": 0.65,
+    },
     "custom": {
         "label": "Custom",
         "description": "Define your own strategy — no preset template",
