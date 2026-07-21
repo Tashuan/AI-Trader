@@ -10,6 +10,7 @@ import { MarketsPage } from './pages/MarketsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { TimelinePage } from './pages/TimelinePage';
+import { PositionsPage } from './pages/PositionsPage';
 import { PortfolioRiskPanel } from './components/PortfolioRiskPanel';
 import type { Agent } from './types';
 
@@ -110,6 +111,10 @@ export default function App() {
 
         {currentPage === 'markets' && (
           <MarketsPage markets={markets} />
+        )}
+
+        {currentPage === 'positions' && (
+          <PositionsPage />
         )}
 
         {currentPage === 'agents' && (

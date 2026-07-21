@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { X, TrendingUp, TrendingDown, Brain, Users, Target } from 'lucide-react';
 import type { Agent } from '../types';
 import { GrowthChart } from './GrowthChart';
+import { PositionTracker } from './PositionTracker';
 
 interface AgentDrawerProps {
   agent: Agent | null;
@@ -11,7 +12,7 @@ interface AgentDrawerProps {
 interface AgentDetail {
   agent: { id: number; name: string; identity_status: string };
   personality: { tagline: string; bio: string; goal: string; voice: string; quirks: string[]; watchlist: string[] };
-  positions: { symbol: string; side: string; quantity: number; entry_price: number; current_price: number; opened_at: string }[];
+  positions: { symbol: string; side: string; quantity: number; entry_price: number; current_price: number; opened_at: string; stop_loss_price: number | null; take_profit_price: number | null; market: string }[];
   trades: { symbol: string; side: string; signal_type: string; pnl: number; content: string; created_at: string }[];
   reasoning: { title: string; content: string; created_at: string }[];
   profit_history: { total_value: number; profit: number; recorded_at: string }[];
@@ -113,26 +114,33 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                 {/* Positions */}
                 {detail.positions && detail.positions.length > 0 && (
                   <Section title="Open Positions" icon={<TrendingUp size={12} />}>
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       {detail.positions.map((pos, i) => {
                         const pnl = pos.current_price && pos.entry_price
                           ? (pos.side === 'long'
                             ? (pos.current_price - pos.entry_price) * Math.abs(pos.quantity)
                             : (pos.entry_price - pos.current_price) * Math.abs(pos.quantity))
                           : 0;
+                        const pnl_pct = pos.entry_price && pos.entry_price > 0 && pos.quantity
+                          ? (pnl / (pos.entry_price * Math.abs(pos.quantity))) * 100
+                          : 0;
                         return (
-                          <div key={i} className="flex items-center justify-between text-[11px]">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-mono font-bold ${pos.side === 'long' ? 'text-arena-green' : 'text-arena-red'}`}>
-                                {pos.side.toUpperCase()}
-                              </span>
-                              <span className="font-mono text-white">{pos.symbol}</span>
-                              <span className="text-arena-text-dim">{pos.quantity}</span>
-                            </div>
-                            <span className={`font-mono ${pnl >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
-                              {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
-                            </span>
-                          </div>
+                          <PositionTracker
+                            key={i}
+                            position={{
+                              side: pos.side,
+                              symbol: pos.symbol,
+                              pnl,
+                              pnl_pct,
+                              entry_price: pos.entry_price,
+                              current_price: pos.current_price,
+                              stop_loss_price: pos.stop_loss_price,
+                              take_profit_price: pos.take_profit_price,
+                              quantity: pos.quantity,
+                              opened_at: pos.opened_at,
+                              market: pos.market,
+                            }}
+                          />
                         );
                       })}
                     </div>

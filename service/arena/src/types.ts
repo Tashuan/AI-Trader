@@ -7,6 +7,15 @@ export interface AgentPosition {
   symbol: string;
   pnl: number;
   pnl_pct: number;
+  entry_price?: number | null;
+  current_price?: number | null;
+  stop_loss_price?: number | null;
+  take_profit_price?: number | null;
+  quantity?: number | null;
+  opened_at?: string | null;
+  agent_id?: number;
+  agent_name?: string;
+  market?: string;
 }
 
 export interface AgentLastTrade {
