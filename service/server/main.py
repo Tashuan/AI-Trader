@@ -53,8 +53,9 @@ if not api_access_log_enabled():
     logging.getLogger("uvicorn.access").disabled = True
     logging.getLogger("uvicorn.access").propagate = False
 
-# Initialize database
-init_database()
+# Initialize database (skip for existing Supabase schema)
+if not os.getenv("DATABASE_URL"):
+    init_database()
 
 # Create app
 app = create_app()

@@ -19,6 +19,7 @@ from typing import Any, Optional
 import re
 
 import requests
+import yfinance as yf
 try:
     from openrouter import OpenRouter
 except ImportError:  # pragma: no cover - optional dependency in some environments
@@ -698,29 +699,23 @@ def _fetch_news_feed(category: str, definition: dict[str, str]) -> list[dict[str
 
 
 def _fetch_daily_adjusted_series(symbol: str) -> list[dict[str, Any]]:
-    payload = _alpha_vantage_get({
-        "function": "TIME_SERIES_DAILY_ADJUSTED",
-        "symbol": symbol,
-        "outputsize": "compact",
-    })
-    series = payload.get("Time Series (Daily)") if isinstance(payload, dict) else None
-    if not isinstance(series, dict):
+    ticker = yf.Ticker(symbol)
+    df = ticker.history(period="3mo", auto_adjust=True)
+    if df is None or df.empty:
         raise RuntimeError(f"Missing daily series for {symbol}")
 
     rows: list[dict[str, Any]] = []
-    for date_str, values in series.items():
-        if not isinstance(values, dict):
-            continue
+    for date_ts, row in df.iterrows():
         try:
-            close_value = float(values.get("5. adjusted close") or values.get("4. close"))
+            close_value = float(row["Close"])
         except (TypeError, ValueError):
             continue
         try:
-            volume_value = float(values.get("6. volume") or 0)
+            volume_value = float(row.get("Volume", 0) or 0)
         except (TypeError, ValueError):
             volume_value = 0.0
         rows.append({
-            "date": date_str,
+            "date": date_ts.strftime("%Y-%m-%d"),
             "close": close_value,
             "volume": volume_value,
         })
@@ -729,41 +724,7 @@ def _fetch_daily_adjusted_series(symbol: str) -> list[dict[str, Any]]:
 
 
 def _fetch_btc_daily_series() -> list[dict[str, Any]]:
-    payload = _alpha_vantage_get({
-        "function": "DIGITAL_CURRENCY_DAILY",
-        "symbol": "BTC",
-        "market": "USD",
-    })
-    series = payload.get("Time Series (Digital Currency Daily)") if isinstance(payload, dict) else None
-    if not isinstance(series, dict):
-        raise RuntimeError("Missing BTC daily series")
-
-    rows: list[dict[str, Any]] = []
-    for date_str, values in series.items():
-        if not isinstance(values, dict):
-            continue
-        close_value = None
-        for key in (
-            "4b. close (USD)",
-            "4a. close (USD)",
-            "4. close",
-        ):
-            try:
-                candidate = values.get(key)
-                if candidate is None:
-                    continue
-                close_value = float(candidate)
-                break
-            except (TypeError, ValueError):
-                continue
-        if close_value is None:
-            continue
-        rows.append({
-            "date": date_str,
-            "close": close_value,
-        })
-    rows.sort(key=lambda row: row["date"], reverse=True)
-    return rows
+    return _fetch_daily_adjusted_series("BTC-USD")
 
 
 def _calc_return_pct(series: list[dict[str, Any]], lookback_days: int) -> Optional[float]:
@@ -1135,7 +1096,7 @@ def _build_macro_signals() -> tuple[list[dict[str, Any]], dict[str, Any]]:
             "lookback_days": BTC_MACRO_LOOKBACK_DAYS,
             "explanation": explanation,
             "explanation_zh": explanation_zh,
-            "source": "DIGITAL_CURRENCY_DAILY",
+            "source": "yfinance",
             "as_of": btc_series[0]["date"],
         })
 
@@ -1162,7 +1123,7 @@ def _build_macro_signals() -> tuple[list[dict[str, Any]], dict[str, Any]]:
             "lookback_days": MACRO_SIGNAL_LOOKBACK_DAYS,
             "explanation": explanation,
             "explanation_zh": explanation_zh,
-            "source": "TIME_SERIES_DAILY_ADJUSTED",
+            "source": "yfinance",
             "as_of": qqq_series[0]["date"],
         })
 
@@ -1190,7 +1151,7 @@ def _build_macro_signals() -> tuple[list[dict[str, Any]], dict[str, Any]]:
             "lookback_days": MACRO_SIGNAL_LOOKBACK_DAYS,
             "explanation": explanation,
             "explanation_zh": explanation_zh,
-            "source": "TIME_SERIES_DAILY_ADJUSTED",
+            "source": "yfinance",
             "as_of": qqq_series[0]["date"],
         })
 
@@ -1218,7 +1179,7 @@ def _build_macro_signals() -> tuple[list[dict[str, Any]], dict[str, Any]]:
             "lookback_days": MACRO_SIGNAL_LOOKBACK_DAYS,
             "explanation": explanation,
             "explanation_zh": explanation_zh,
-            "source": "TIME_SERIES_DAILY_ADJUSTED",
+            "source": "yfinance",
             "as_of": gld_series[0]["date"],
         })
 
@@ -1255,9 +1216,12 @@ def _build_macro_signals() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     }
 
     source = {
-        "alpha_vantage_functions": [
-            "TIME_SERIES_DAILY_ADJUSTED",
-            "DIGITAL_CURRENCY_DAILY",
+        "yfinance_tickers": [
+            "QQQ",
+            "XLP",
+            "GLD",
+            "UUP",
+            "BTC-USD",
         ],
         "news_dependency": "market_news_snapshots.macro",
     }
