@@ -1,5 +1,8 @@
 from typing import Optional
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from fastapi import FastAPI, Header
 
 from market_intel import (
@@ -106,3 +109,30 @@ def register_market_routes(app: FastAPI, ctx: RouteContext) -> None:
             lambda: get_stock_analysis_history_payload(normalized_symbol, limit=safe_limit),
         )
         return _attach_agent_notice(payload, authorization, surface='market_intel_stock_history')
+
+    @app.get('/api/market-intel/status')
+    async def market_intel_status():
+        et_tz = ZoneInfo('America/New_York')
+        now_et = datetime.now(et_tz)
+        day = now_et.weekday()
+        time_in_minutes = now_et.hour * 60 + now_et.minute
+        is_weekday = day < 5
+        is_market_hours = 570 <= time_in_minutes < 960  # 9:30 AM - 4:00 PM ET
+        us_market_open = is_weekday and is_market_hours
+
+        day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+        return {
+            'et_time': now_et.strftime('%Y-%m-%d %H:%M:%S'),
+            'et_date': now_et.strftime('%Y-%m-%d'),
+            'day_name': day_names[day],
+            'is_weekday': is_weekday,
+            'us_market_open': us_market_open,
+            'us_market_status': 'open' if us_market_open else 'closed',
+            'crypto_market_open': True,
+            'et_hour': now_et.hour,
+            'et_minute': now_et.minute,
+            'time_in_minutes': time_in_minutes,
+            'minutes_to_open': max(0, 570 - time_in_minutes) if not us_market_open and is_weekday else 0,
+            'minutes_to_close': max(0, 960 - time_in_minutes) if us_market_open else 0,
+        }

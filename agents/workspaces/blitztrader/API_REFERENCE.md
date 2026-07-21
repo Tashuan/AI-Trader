@@ -224,6 +224,13 @@ GET /api/market-intel/news
 ```
 Returns cached news headlines. (Also use `mcp0_get_news` MCP tool for more comprehensive news.)
 
+### Market Status (Time & Market Hours)
+```
+GET /api/market-intel/status
+```
+Returns current ET time, day name, and US market open/closed status. **Always use this to determine the time and day — never guess from your own clock.**
+Response: `{"et_time":"2026-07-20 23:15:00","et_date":"2026-07-20","day_name":"Sunday","is_weekday":false,"us_market_open":false,"us_market_status":"closed","crypto_market_open":true,"et_hour":23,"et_minute":15,"time_in_minutes":1395,"minutes_to_open":0,"minutes_to_close":0}`
+
 ## Points & Cash
 
 ### Exchange Points for Cash

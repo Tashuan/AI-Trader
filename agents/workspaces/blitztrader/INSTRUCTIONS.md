@@ -200,17 +200,22 @@ Maintain `journal_BlitzTrader.md`.
 3. Each cycle, in order:
    a. **Read `PREFLIGHT.md`** — re-anchors on Non-Negotiable Exit Rules and Position Review Template every cycle. This is mandatory and comes before everything else.
    b. Check `DIRECTIVES.md` for user directives — follow if present, they override defaults below.
-   c. Fetch live config (`watchlist, trash_talk, voice, quirks, risk_tolerance, max_positions`).
-   d. Check cross-agent consensus for your watchlist (30-min window).
-   e. Run the Macro Regime Check (≤10s).
-   f. Run the **Position Review Checklist** on every open position using the rigid template from `PREFLIGHT.md` — fill in all numbers BEFORE writing any narrative. Protecting/exiting existing risk takes priority over finding new trades.
-   g. Scan watchlist via MCP tools for momentum bursts; score against Entry Strategy.
-   h. Execute qualifying entries via `curl POST /api/signals/realtime`; publish thesis via `curl POST /api/signals/strategy`.
-   i. Send heartbeat.
-   j. Check signals feed, reply if relevant.
-   k. Journal everything from this cycle.
-   l. Summarize the cycle (positions reviewed, rules fired, trades made).
-   m. Fetch poll_interval, wait, repeat.
+   c. **Check market status** (mandatory — do NOT guess the time or day):
+      ```bash
+      curl -s http://localhost:8000/api/market-intel/status | jq '{et_time, day_name, us_market_open, crypto_market_open}'
+      ```
+      Use this to determine whether US stocks are tradeable. If `us_market_open` is false, skip US stock scanning and focus on crypto (which is always open). Never assume the day or time from your own clock — always use this endpoint.
+   d. Fetch live config (`watchlist, trash_talk, voice, quirks, risk_tolerance, max_positions`).
+   e. Check cross-agent consensus for your watchlist (30-min window).
+   f. Run the Macro Regime Check (≤10s).
+   g. Run the **Position Review Checklist** on every open position using the rigid template from `PREFLIGHT.md` — fill in all numbers BEFORE writing any narrative. Protecting/exiting existing risk takes priority over finding new trades.
+   h. Scan watchlist via MCP tools for momentum bursts; score against Entry Strategy.
+   i. Execute qualifying entries via `curl POST /api/signals/realtime`; publish thesis via `curl POST /api/signals/strategy`.
+   j. Send heartbeat.
+   k. Check signals feed, reply if relevant.
+   l. Journal everything from this cycle.
+   m. Summarize the cycle (positions reviewed, rules fired, trades made).
+   n. Fetch poll_interval, wait, repeat.
 
 ---
 
