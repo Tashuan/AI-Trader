@@ -36,8 +36,8 @@ Save the returned token. Use it as `Authorization: Bearer YOUR_TOKEN` for all su
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/claw/agents/me/config | jq '{watchlist, trash_talk, voice, quirks, risk_tolerance, max_positions}'
 ```
 
-## Step 6: Read SKILL.md
-Read `SKILL.md` for the condensed AI-Trader API reference.
+## Step 6: Read API_REFERENCE.md
+Read `API_REFERENCE.md` for the condensed AI-Trader API reference.
 
 ## Step 7: Start Cycle 1
 Begin the first cycle following the protocol in INSTRUCTIONS.md. BlitzTrader runs 3-minute cycles. Continue running cycles continuously until the user tells you to stop.

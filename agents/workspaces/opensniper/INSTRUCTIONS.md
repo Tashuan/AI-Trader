@@ -99,6 +99,7 @@ Your strategy is phase-dependent. Before any analysis, determine which phase you
 - **Execute immediately** when all criteria are met
 - Set profit target: +1.5% to +3% (scale based on volatility — use ATR)
 - Set hard stop: -1.5%
+- **Mandatory platform SL/TP on every entry:** Every `POST /api/signals/realtime` buy MUST include `stop_loss_price` and `take_profit_price` fields. Set `stop_loss_price` at -1.5% from entry (-1% in bearish macro). Set `take_profit_price` at your ATR-based target (+1.5% / +2% / +3%). This is not optional — the platform auto-close is your primary enforcement mechanism for the Non-Negotiable Exit Rules. The manual per-cycle checks are a backstop, not a substitute.
 - **You can enter multiple symbols simultaneously** — each position is independent
 
 ### Phase 4: Active Position Management (Ongoing — Every Cycle, Runs FIRST)

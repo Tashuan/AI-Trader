@@ -1,13 +1,13 @@
 # Active Directives
 
-<!-- Edit this file anytime to steer Prophet. It checks this at the start of each cycle. -->
+<!-- Edit this file anytime to steer Blitz Trader. It checks this at the start of each cycle. -->
 
 ## Trade Journal Management
-Your journal file (`journal_Prophet.md`) must stay compact. Follow these rules:
+Your journal file (`journal_BlitzTrader.md`) must stay compact. Follow these rules:
 
 **Structure:**
 ```
-# Prophet Trade Journal
+# Blitz Trader Trade Journal
 
 ## Lessons Learned
 <!-- 5-10 bullet points, max 1 line each. Updated when you compact. -->
@@ -28,20 +28,20 @@ Your journal file (`journal_Prophet.md`) must stay compact. Follow these rules:
 **Token budget:** Your journal should never exceed ~2000 tokens. If it does, compact immediately.
 
 ## Focus Symbols
-<!-- List symbols here to make Prophet prioritize them. Leave empty for normal watchlist. -->
+<!-- List symbols here to make Blitz Trader prioritize them. Leave empty for normal watchlist. -->
 <!-- Example: BTC, ETH, Fed Rate Decision -->
 
 (none)
 
 ## Instructions
-<!-- Add specific instructions for Prophet. Leave empty for normal operation. -->
+<!-- Add specific instructions for Blitz Trader. Leave empty for normal operation. -->
 <!-- Example: "Reduce position sizes to 50% — high volatility expected today" -->
 <!-- Example: "Focus on crypto prediction markets this cycle" -->
 
 (none)
 
 ## Risk Override
-<!-- Override risk settings for Prophet. Leave empty for normal risk. -->
+<!-- Override risk settings for Blitz Trader. Leave empty for normal risk. -->
 <!-- Example: "Max 3 positions" -->
 <!-- Example: "No new trades today — hold existing positions only" -->
 
