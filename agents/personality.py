@@ -6,6 +6,7 @@ for AI trading agents. Each personality influences how the agent trades,
 communicates, and makes decisions.
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 import random
@@ -48,6 +49,10 @@ class Personality:
     # Arena
     goal: str = ""  # narrative goal for the Arena UI
 
+    # Trading budget cap — overrides portfolio_value for position sizing
+    # If None, falls back to AGENT_TRADE_BUDGET env var, then full portfolio_value
+    trade_budget: Optional[float] = None
+
     def position_size_pct(self) -> float:
         """Return what % of portfolio to allocate per trade."""
         sizing_map = {"small": 0.05, "medium": 0.10, "large": 0.20, "yolo": 0.40}
@@ -60,12 +65,29 @@ class Personality:
         """Determine if confidence is high enough to trade."""
         return confidence >= self.confidence_threshold
 
+    def effective_capital(self, portfolio_value: float) -> float:
+        """Return the capital amount used for position sizing.
+
+        Priority: per-personality trade_budget > AGENT_TRADE_BUDGET env var > full portfolio_value.
+        This lets agents trade with a smaller notional without changing the backend cash balance.
+        """
+        if self.trade_budget is not None:
+            return min(portfolio_value, self.trade_budget)
+        env_budget = os.getenv("AGENT_TRADE_BUDGET")
+        if env_budget:
+            try:
+                return min(portfolio_value, float(env_budget))
+            except ValueError:
+                pass
+        return portfolio_value
+
     def size_position(self, confidence: float, portfolio_value: float, price: float) -> float:
         """Calculate position quantity based on confidence and personality."""
+        effective_value = self.effective_capital(portfolio_value)
         base_pct = self.position_size_pct()
         conviction = 1.0 + (confidence - self.confidence_threshold) * self.conviction_multiplier
         conviction = max(0.5, min(conviction, 2.0))
-        allocation = portfolio_value * base_pct * conviction
+        allocation = effective_value * base_pct * conviction
         if price <= 0:
             return 0.0
         return round(allocation / price, 6)
