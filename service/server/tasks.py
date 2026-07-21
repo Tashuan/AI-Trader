@@ -1476,7 +1476,7 @@ async def limit_order_processor_loop():
                            expires_at, content, created_at
                     FROM limit_orders
                     WHERE status = 'open'
-                      AND (expires_at IS NULL OR expires_at > datetime('now'))
+                      AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
                 """)
                 orders = cursor.fetchall()
             finally:

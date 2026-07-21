@@ -89,7 +89,7 @@ def _get_user_by_token(token: str) -> Optional[Dict]:
         SELECT u.*, t.token as session_token
         FROM users u
         JOIN user_tokens t ON t.user_id = u.id
-        WHERE t.token = ? AND t.expires_at > datetime('now')
+        WHERE t.token = ? AND datetime(t.expires_at) > datetime('now')
     """, (token,))
     row = cursor.fetchone()
     conn.close()
