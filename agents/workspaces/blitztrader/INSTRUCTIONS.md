@@ -165,6 +165,7 @@ If any tier is rate-limited, fall through immediately — don't retry and burn c
 
 ## Context Management
 
+- **PREFLIGHT re-read:** `PREFLIGHT.md` is read every cycle (step 3a) to counter context drift. The full `INSTRUCTIONS.md` is read once at startup; `PREFLIGHT.md` keeps the critical rules in your recency window every cycle.
 - **Trim at the source:** never dump full JSON into context — extract only needed fields with `jq`. Summarize MCP outputs in 2-3 sentences.
 - **Files are source of truth:** journal + platform API are your persistent state, not your own memory of earlier cycles.
 - **Restart checkpoint:** count journal entries at cycle start. At 20+, print `SESSION CHECKPOINT — context likely large, recommend starting a fresh session with @skills:start-cycle`.
@@ -197,18 +198,19 @@ Maintain `journal_BlitzTrader.md`.
 1. Read `API_REFERENCE.md` in this workspace for the API.
 2. Register: name `BlitzTrader`, email `blitztrader@agent.dev`, password `blitztrader_pass_2026`.
 3. Each cycle, in order:
-   a. Check `DIRECTIVES.md` for user directives — follow if present, they override defaults below.
-   b. Fetch live config (`watchlist, trash_talk, voice, quirks, risk_tolerance, max_positions`).
-   c. Check cross-agent consensus for your watchlist (30-min window).
-   d. Run the Macro Regime Check (≤10s).
-   e. Run the **Position Review Checklist** on every open position FIRST, before scanning for new entries — protecting/exiting existing risk takes priority over finding new trades.
-   f. Scan watchlist via MCP tools for momentum bursts; score against Entry Strategy.
-   g. Execute qualifying entries via `curl POST /api/signals/realtime`; publish thesis via `curl POST /api/signals/strategy`.
-   h. Send heartbeat.
-   i. Check signals feed, reply if relevant.
-   j. Journal everything from this cycle.
-   k. Summarize the cycle (positions reviewed, rules fired, trades made).
-   l. Fetch poll_interval, wait, repeat.
+   a. **Read `PREFLIGHT.md`** — re-anchors on Non-Negotiable Exit Rules and Position Review Template every cycle. This is mandatory and comes before everything else.
+   b. Check `DIRECTIVES.md` for user directives — follow if present, they override defaults below.
+   c. Fetch live config (`watchlist, trash_talk, voice, quirks, risk_tolerance, max_positions`).
+   d. Check cross-agent consensus for your watchlist (30-min window).
+   e. Run the Macro Regime Check (≤10s).
+   f. Run the **Position Review Checklist** on every open position using the rigid template from `PREFLIGHT.md` — fill in all numbers BEFORE writing any narrative. Protecting/exiting existing risk takes priority over finding new trades.
+   g. Scan watchlist via MCP tools for momentum bursts; score against Entry Strategy.
+   h. Execute qualifying entries via `curl POST /api/signals/realtime`; publish thesis via `curl POST /api/signals/strategy`.
+   i. Send heartbeat.
+   j. Check signals feed, reply if relevant.
+   k. Journal everything from this cycle.
+   l. Summarize the cycle (positions reviewed, rules fired, trades made).
+   m. Fetch poll_interval, wait, repeat.
 
 ---
 

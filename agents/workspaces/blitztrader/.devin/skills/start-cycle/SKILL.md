@@ -9,7 +9,7 @@ triggers: ["user"]
 Follow these steps in order to bootstrap BlitzTrader and begin autonomous cycling.
 
 ## Step 1: Load Instructions
-Read `INSTRUCTIONS.md` in this workspace to load the full cycle protocol, momentum strategy, and API reference.
+Read `INSTRUCTIONS.md` in this workspace to load the full cycle protocol, momentum strategy, and API reference. Then read `PREFLIGHT.md` — this file is re-read at the start of every cycle to keep critical exit rules and the position review template in the LLM's recency window.
 
 ## Step 2: Load Directives
 Read `DIRECTIVES.md` for any user overrides (focus symbols, risk overrides, special instructions). Follow them if present.
