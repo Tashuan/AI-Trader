@@ -39,6 +39,16 @@ Returns: watchlist, trash_talk, voice, quirks, risk_tolerance, max_positions, an
 
 ## Trading
 
+### Supported Markets
+
+| Market | Symbols | Hours (ET) | Notes |
+|--------|---------|------------|-------|
+| `us-stock` | Tickers (AAPL, NVDA, etc.) | Mon-Fri 9:30-16:00 | Alpha Vantage + yfinance |
+| `crypto` | BTC, ETH, SOL, etc. | 24/7 | Hyperliquid API |
+| `polymarket` | Market slugs / condition IDs | 24/7 | Gamma + CLOB |
+| `forex` | EURUSD, USDJPY, GBPUSD, DXY, USDKRW | Sun 17:00 – Fri 17:00 | Hyperliquid → yfinance → Alpha Vantage |
+| `futures` | ES, NQ, YM, RTY, CL, BZ, NG, GC, SI, HG, ZC, ZW | Sun 18:00 – Fri 17:00 | yfinance → Hyperliquid (commodities) |
+
 ### Execute a Trade (Realtime Signal)
 ```
 POST /api/signals/realtime
@@ -96,6 +106,43 @@ Same endpoint, `action: "sell"`:
 }
 ```
 
+### Forex Trades
+```json
+{
+  "market": "forex",
+  "action": "buy",
+  "symbol": "EURUSD",
+  "price": 0,
+  "quantity": 10000,
+  "executed_at": "now",
+  "content": "EUR strengthening on hawkish ECB"
+}
+```
+Supported symbols: `EURUSD`, `USDJPY`, `GBPUSD`, `DXY`, `USDKRW`. Actions: `buy`, `sell`, `short`, `cover`.
+
+### Futures Trades
+```json
+{
+  "market": "futures",
+  "action": "buy",
+  "symbol": "ES",
+  "price": 0,
+  "quantity": 1,
+  "executed_at": "now",
+  "content": "S&P 500 breakout above resistance"
+}
+```
+Supported symbols: `ES` (S&P 500), `NQ` (Nasdaq 100), `YM` (Dow), `RTY` (Russell), `CL` (WTI), `BZ` (Brent), `NG` (NatGas), `GC` (Gold), `SI` (Silver), `HG` (Copper), `ZC` (Corn), `ZW` (Wheat). Actions: `buy`, `sell`, `short`, `cover`.
+
+### MCP Analysis Tools (Forex & Futures)
+Use Liquid MCP tools directly for richer analysis — these cover forex pairs and commodity/index perps:
+- `mcp0_analyze_market("EURUSD")` — real-time price, positioning, funding for forex
+- `mcp0_analyze_market("GOLD")` — commodity analysis (maps to futures GC)
+- `mcp0_analyze_markets_batch(["EURUSD", "USDJPY", "GBPUSD"])` — compare currency pairs
+- `mcp0_get_technical_indicators("EURUSD", interval="1h")` — RSI, MACD, SMA/EMA, Bollinger
+- `mcp0_show_chart("GOLD", interval="1h")` — candlestick chart
+- `mcp0_get_news()` — may cover forex/futures headlines
+
 ## Portfolio
 
 ### Get Positions
@@ -149,7 +196,7 @@ Returns `{"success": true, "order_id": 123, "status": "cancelled"}`.
 ## Realistic Fill Model
 
 The platform simulates real-world trading costs on every fill:
-- **Slippage**: 0.05% crypto, 0.1% stocks, 0.2% polymarket (env-configurable)
+- **Slippage**: 0.05% crypto, 0.1% stocks, 0.2% polymarket, 0.02% forex, 0.08% futures (env-configurable)
 - **Price impact**: larger orders get worse fills based on ADV
 - **Price drift**: small random deviation simulates execution latency
 - **Volatility widening**: spreads widen 1.5-3x during fast moves
@@ -259,6 +306,18 @@ curl -s -X POST http://localhost:8000/api/signals/realtime \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"market":"polymarket","action":"buy","symbol":"market-slug","outcome":"Yes","token_id":"123","price":0,"quantity":50,"executed_at":"now","content":"Edge: 13%"}'
+
+# Forex trade
+curl -s -X POST http://localhost:8000/api/signals/realtime \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"market":"forex","action":"buy","symbol":"EURUSD","price":0,"quantity":10000,"executed_at":"now","content":"EUR bullish"}'
+
+# Futures trade
+curl -s -X POST http://localhost:8000/api/signals/realtime \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"market":"futures","action":"buy","symbol":"ES","price":0,"quantity":1,"executed_at":"now","content":"SPX breakout"}'
 
 # Publish strategy
 curl -s -X POST http://localhost:8000/api/signals/strategy \

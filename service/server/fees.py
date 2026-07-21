@@ -14,6 +14,8 @@ _MARKET_SLIPPAGE = {
     "crypto": float(os.getenv("CRYPTO_SLIPPAGE_RATE", "0.0005")),
     "us-stock": float(os.getenv("STOCK_SLIPPAGE_RATE", "0.001")),
     "polymarket": float(os.getenv("POLYMARKET_SLIPPAGE_RATE", "0.002")),
+    "forex": float(os.getenv("FOREX_SLIPPAGE_RATE", "0.0002")),
+    "futures": float(os.getenv("FUTURES_SLIPPAGE_RATE", "0.0008")),
 }
 
 # Default fallback slippage for unknown markets
@@ -68,6 +70,25 @@ _SYMBOL_ADV = {
     "V": 5_000_000_000,
     "SPY": 30_000_000_000,
     "QQQ": 20_000_000_000,
+    # Forex ADV estimates (daily volume in USD)
+    "EURUSD": 50_000_000_000,
+    "USDJPY": 30_000_000_000,
+    "GBPUSD": 15_000_000_000,
+    "DXY": 5_000_000_000,
+    "USDKRW": 2_000_000_000,
+    # Futures ADV estimates (daily volume in USD)
+    "ES": 200_000_000_000,
+    "NQ": 100_000_000_000,
+    "YM": 30_000_000_000,
+    "RTY": 15_000_000_000,
+    "CL": 80_000_000_000,
+    "BZ": 60_000_000_000,
+    "NG": 20_000_000_000,
+    "GC": 40_000_000_000,
+    "SI": 20_000_000_000,
+    "HG": 10_000_000_000,
+    "ZC": 5_000_000_000,
+    "ZW": 5_000_000_000,
 }
 
 
@@ -83,6 +104,13 @@ def round_to_tick(price: float, market: str) -> float:
         tick = 0.001
     elif normalized == "crypto":
         tick = 0.01 if price >= 1.0 else 0.0001
+    elif normalized == "forex":
+        # JPY pairs use 0.001, other pairs use 0.00001 (1 pip)
+        tick = 0.001 if price >= 50.0 else 0.00001
+    elif normalized == "futures":
+        # Index futures: 0.25 tick, Energy: 0.01, Metals: 0.10, Ag: 0.25
+        # Simplified: use 0.01 for most, 0.25 for high-priced contracts
+        tick = 0.25 if price >= 1000.0 else 0.01
     else:
         tick = 0.01 if price >= 1.0 else 0.0001
     return round(price / tick) * tick

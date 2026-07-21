@@ -220,7 +220,20 @@ def _get_agent_by_token(token: str) -> Optional[dict]:
 # Market bar symbols
 # ============================================================
 
-MARKET_BAR_SYMBOLS = ["SPY", "QQQ", "BTC", "ETH", "NVDA", "AAPL", "TSLA", "GOLD"]
+MARKET_BAR_SYMBOLS = [
+    "SPY", "QQQ", "BTC", "ETH", "NVDA", "AAPL", "TSLA", "GOLD",
+    # Forex
+    "EURUSD", "USDJPY", "GBPUSD",
+    # Futures / Commodities
+    "WTIOIL", "SILVER", "NATGAS",
+]
+
+# Maps arena bar symbols to their market type for price fetching
+_ARENA_SYMBOL_MARKET_MAP: dict[str, str] = {
+    "BTC": "crypto", "ETH": "crypto",
+    "EURUSD": "forex", "USDJPY": "forex", "GBPUSD": "forex",
+    "GOLD": "futures", "WTIOIL": "futures", "SILVER": "futures", "NATGAS": "futures",
+}
 
 
 def _fetch_price(symbol: str) -> dict[str, Any]:
@@ -228,7 +241,8 @@ def _fetch_price(symbol: str) -> dict[str, Any]:
     try:
         from price_fetcher import get_price_from_market
 
-        price = get_price_from_market(symbol, datetime.now(timezone.utc).isoformat(), "crypto" if symbol in ("BTC", "ETH") else "us-stock")
+        market = _ARENA_SYMBOL_MARKET_MAP.get(symbol, "us-stock")
+        price = get_price_from_market(symbol, datetime.now(timezone.utc).isoformat(), market)
         if price and price > 0:
             return {"price": price, "change_pct": 0.0, "sparkline": []}
     except Exception:

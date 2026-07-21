@@ -674,6 +674,228 @@ def _get_hyperliquid_candle_close(symbol: str, executed_at: str) -> Optional[flo
     return float(f"{closest:.6f}")
 
 
+# ── Forex symbol mapping ──────────────────────────────────────────────
+# canonical → {hyperliquid, yfinance, alphavantage}
+FOREX_SYMBOL_MAP: Dict[str, Dict[str, Optional[str]]] = {
+    "EURUSD": {"hyperliquid": "EURUSD", "yfinance": "EURUSD=X", "alphavantage": "EUR/USD"},
+    "USDJPY": {"hyperliquid": "USDJPY", "yfinance": "USDJPY=X", "alphavantage": "USD/JPY"},
+    "GBPUSD": {"hyperliquid": "GBPUSD", "yfinance": "GBPUSD=X", "alphavantage": "GBP/USD"},
+    "DXY":    {"hyperliquid": "DXY",    "yfinance": "DX-Y.NYB", "alphavantage": None},
+    "USDKRW": {"hyperliquid": "USDKRW", "yfinance": "USDKRW=X", "alphavantage": "USD/KRW"},
+}
+
+# ── Futures symbol mapping ────────────────────────────────────────────
+# canonical → {yfinance, hyperliquid}
+FUTURES_SYMBOL_MAP: Dict[str, Dict[str, Optional[str]]] = {
+    "ES":  {"yfinance": "ES=F",  "hyperliquid": "SP500"},      # S&P 500
+    "NQ":  {"yfinance": "NQ=F",  "hyperliquid": "NASDAQ100"},   # Nasdaq 100
+    "YM":  {"yfinance": "YM=F",  "hyperliquid": None},          # Dow
+    "RTY": {"yfinance": "RTY=F", "hyperliquid": None},          # Russell 2000
+    "CL":  {"yfinance": "CL=F",  "hyperliquid": "WTIOIL"},      # WTI Crude
+    "BZ":  {"yfinance": "BZ=F",  "hyperliquid": "BRENTOIL"},    # Brent
+    "NG":  {"yfinance": "NG=F",  "hyperliquid": "NATGAS"},      # Natural Gas
+    "GC":  {"yfinance": "GC=F",  "hyperliquid": "GOLD"},        # Gold
+    "SI":  {"yfinance": "SI=F",  "hyperliquid": "SILVER"},      # Silver
+    "HG":  {"yfinance": "HG=F",  "hyperliquid": "COPPER"},      # Copper
+    "ZC":  {"yfinance": "ZC=F",  "hyperliquid": "CORN"},        # Corn
+    "ZW":  {"yfinance": "ZW=F",  "hyperliquid": "WHEAT"},       # Wheat
+    # Hyperliquid-style aliases (used by arena market bar)
+    "GOLD":    {"yfinance": "GC=F",  "hyperliquid": "GOLD"},
+    "SILVER":  {"yfinance": "SI=F",  "hyperliquid": "SILVER"},
+    "WTIOIL":  {"yfinance": "CL=F",  "hyperliquid": "WTIOIL"},
+    "BRENTOIL": {"yfinance": "BZ=F", "hyperliquid": "BRENTOIL"},
+    "NATGAS":  {"yfinance": "NG=F",  "hyperliquid": "NATGAS"},
+    "COPPER":  {"yfinance": "HG=F",  "hyperliquid": "COPPER"},
+    "CORN":    {"yfinance": "ZC=F",  "hyperliquid": "CORN"},
+    "WHEAT":   {"yfinance": "ZW=F",  "hyperliquid": "WHEAT"},
+    "SP500":   {"yfinance": "ES=F",  "hyperliquid": "SP500"},
+    "NASDAQ100": {"yfinance": "NQ=F", "hyperliquid": "NASDAQ100"},
+}
+
+
+def _get_forex_price(symbol: str, executed_at: str) -> Optional[float]:
+    """Fetch forex price: Hyperliquid → yfinance → Alpha Vantage."""
+    sym = symbol.strip().upper()
+    mapping = FOREX_SYMBOL_MAP.get(sym)
+    if not mapping:
+        _price_log(f"[Price API] Unknown forex symbol: {sym}")
+        return None
+
+    # 1. Try Hyperliquid (same L2 book / candle functions as crypto)
+    hl_symbol = mapping.get("hyperliquid")
+    if hl_symbol:
+        price = _get_hyperliquid_candle_close(hl_symbol, executed_at) or _get_hyperliquid_mid_price(hl_symbol)
+        if price is not None and price > 0:
+            return price
+
+    # 2. Fallback to yfinance
+    yf_symbol = mapping.get("yfinance")
+    if yf_symbol:
+        price = _get_yfinance_forex_price(yf_symbol, executed_at)
+        if price is not None and price > 0:
+            return price
+
+    # 3. Fallback to Alpha Vantage FX endpoint
+    av_pair = mapping.get("alphavantage")
+    if av_pair and ALPHA_VANTAGE_API_KEY and ALPHA_VANTAGE_API_KEY != "demo":
+        price = _get_alphavantage_fx_price(av_pair, executed_at)
+        if price is not None and price > 0:
+            return price
+
+    return None
+
+
+def _get_futures_price(symbol: str, executed_at: str) -> Optional[float]:
+    """Fetch futures price: yfinance → Hyperliquid (for commodity/index perps)."""
+    sym = symbol.strip().upper()
+    mapping = FUTURES_SYMBOL_MAP.get(sym)
+    if not mapping:
+        _price_log(f"[Price API] Unknown futures symbol: {sym}")
+        return None
+
+    # 1. Try yfinance (primary for futures)
+    yf_symbol = mapping.get("yfinance")
+    if yf_symbol:
+        price = _get_yfinance_futures_price(yf_symbol, executed_at)
+        if price is not None and price > 0:
+            return price
+
+    # 2. Fallback to Hyperliquid (commodity/index perps)
+    hl_symbol = mapping.get("hyperliquid")
+    if hl_symbol:
+        price = _get_hyperliquid_candle_close(hl_symbol, executed_at) or _get_hyperliquid_mid_price(hl_symbol)
+        if price is not None and price > 0:
+            return price
+
+    return None
+
+
+def _get_yfinance_forex_price(yf_symbol: str, executed_at: str) -> Optional[float]:
+    """Fetch forex price via yfinance using pair format (e.g. EURUSD=X)."""
+    target_utc = _parse_executed_at_to_utc(executed_at)
+    if not target_utc:
+        return None
+
+    try:
+        intraday_start = (target_utc - timedelta(days=1)).date().isoformat()
+        intraday_end = (target_utc + timedelta(days=1)).date().isoformat()
+        frame = _download_yfinance_history(yf_symbol, intraday_start, intraday_end, "1m")
+        price = _extract_yfinance_close_price(frame, yf_symbol, target_utc)
+        if price is not None:
+            _price_log(f"[Price API] yfinance forex fetched {yf_symbol}: ${price}")
+            return price
+
+        daily_start = (target_utc - timedelta(days=10)).date().isoformat()
+        daily_end = (target_utc + timedelta(days=1)).date().isoformat()
+        frame = _download_yfinance_history(yf_symbol, daily_start, daily_end, "1d")
+        price = _extract_yfinance_close_price(frame, yf_symbol, target_utc)
+        if price is not None:
+            _price_log(f"[Price API] yfinance forex daily fetched {yf_symbol}: ${price}")
+        return price
+    except ImportError as exc:
+        _price_log(f"[Price API] yfinance forex unavailable: {exc}")
+        return None
+    except Exception as exc:
+        _price_log(f"[Price API] yfinance forex failed for {yf_symbol}: {exc}")
+        return None
+
+
+def _get_yfinance_futures_price(yf_symbol: str, executed_at: str) -> Optional[float]:
+    """Fetch futures price via yfinance using continuous contract format (e.g. ES=F)."""
+    target_utc = _parse_executed_at_to_utc(executed_at)
+    if not target_utc:
+        return None
+
+    try:
+        intraday_start = (target_utc - timedelta(days=1)).date().isoformat()
+        intraday_end = (target_utc + timedelta(days=1)).date().isoformat()
+        frame = _download_yfinance_history(yf_symbol, intraday_start, intraday_end, "1m")
+        price = _extract_yfinance_close_price(frame, yf_symbol, target_utc)
+        if price is not None:
+            _price_log(f"[Price API] yfinance futures fetched {yf_symbol}: ${price}")
+            return price
+
+        daily_start = (target_utc - timedelta(days=10)).date().isoformat()
+        daily_end = (target_utc + timedelta(days=1)).date().isoformat()
+        frame = _download_yfinance_history(yf_symbol, daily_start, daily_end, "1d")
+        price = _extract_yfinance_close_price(frame, yf_symbol, target_utc)
+        if price is not None:
+            _price_log(f"[Price API] yfinance futures daily fetched {yf_symbol}: ${price}")
+        return price
+    except ImportError as exc:
+        _price_log(f"[Price API] yfinance futures unavailable: {exc}")
+        return None
+    except Exception as exc:
+        _price_log(f"[Price API] yfinance futures failed for {yf_symbol}: {exc}")
+        return None
+
+
+def _get_alphavantage_fx_price(pair: str, executed_at: str) -> Optional[float]:
+    """Fetch forex price via Alpha Vantage CURRENCY_EXCHANGE_RATE / FX_DAILY."""
+    target_utc = _parse_executed_at_to_utc(executed_at)
+    if not target_utc:
+        return None
+
+    from_currency, to_currency = pair.split("/")
+
+    # Try real-time exchange rate first
+    try:
+        params = {
+            "function": "CURRENCY_EXCHANGE_RATE",
+            "from_currency": from_currency,
+            "to_currency": to_currency,
+            "apikey": ALPHA_VANTAGE_API_KEY,
+        }
+        data = _request_json_with_retry("alphavantage", "GET", BASE_URL, params=params)
+        if isinstance(data, dict):
+            rate = data.get("Realtime Currency Exchange Rate", {})
+            if isinstance(rate, dict):
+                price_str = rate.get("5. Exchange Rate")
+                if price_str:
+                    price = float(price_str)
+                    if price > 0:
+                        return price
+    except Exception as exc:
+        _price_log(f"[Price API] Alpha Vantage FX real-time failed for {pair}: {exc}")
+
+    # Fallback to daily FX
+    try:
+        params = {
+            "function": "FX_DAILY",
+            "from_symbol": from_currency,
+            "to_symbol": to_currency,
+            "outputsize": "compact",
+            "apikey": ALPHA_VANTAGE_API_KEY,
+        }
+        data = _request_json_with_retry("alphavantage", "GET", BASE_URL, params=params)
+        if isinstance(data, dict):
+            time_series = data.get("Time Series FX (Daily)", {})
+            if time_series:
+                target_date = target_utc.strftime("%Y-%m-%d")
+                if target_date in time_series:
+                    return float(time_series[target_date].get("4. close", 0))
+                # Find closest date
+                target_dt = target_utc.date()
+                closest_date = None
+                closest_diff = None
+                for date_str in time_series:
+                    try:
+                        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        if date_obj <= target_dt:
+                            diff = (target_dt - date_obj).days
+                            if closest_diff is None or diff < closest_diff:
+                                closest_diff = diff
+                                closest_date = date_str
+                    except ValueError:
+                        continue
+                if closest_date:
+                    return float(time_series[closest_date].get("4. close", 0))
+    except Exception as exc:
+        _price_log(f"[Price API] Alpha Vantage FX daily failed for {pair}: {exc}")
+
+    return None
+
+
 def get_price_from_market(
     symbol: str,
     executed_at: str,
@@ -717,6 +939,10 @@ def get_price_from_market(
             if price is None:
                 _price_log(f"[Price API] Alpha Vantage unavailable for {symbol}; trying yfinance fallback")
                 price = _get_yfinance_us_stock_price(symbol, executed_at)
+        elif market == "forex":
+            price = _get_forex_price(symbol, executed_at)
+        elif market == "futures":
+            price = _get_futures_price(symbol, executed_at)
         else:
             _price_log(f"[Price API] Unsupported market for server price fetch: {market}")
             return None

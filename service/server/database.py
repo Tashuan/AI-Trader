@@ -33,7 +33,7 @@ _SQLITE_INTERVAL_PATTERN = re.compile(
 )
 _SQLITE_NOW_PATTERN = re.compile(r"datetime\s*\(\s*'now'\s*\)", flags=re.IGNORECASE)
 _SQLITE_COLUMN_DATETIME_PATTERN = re.compile(
-    r"datetime\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)",
+    r"datetime\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\)",
     flags=re.IGNORECASE,
 )
 _SQLITE_AUTOINCREMENT_PATTERN = re.compile(

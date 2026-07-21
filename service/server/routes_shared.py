@@ -60,7 +60,7 @@ POSITIONS_CACHE_TTL_SECONDS = 10
 
 MENTION_PATTERN = re.compile(r'@([A-Za-z0-9_\-]{2,64})')
 _EXPERIMENT_NOTICE_EXPOSURE_EVENT_CACHE: dict[tuple[int, str, str], float] = {}
-SUPPORTED_MARKETS = {'us-stock', 'crypto', 'polymarket'}
+SUPPORTED_MARKETS = {'us-stock', 'crypto', 'polymarket', 'forex', 'futures'}
 VERIFIED_AGENT_IDENTITY_STATUS = 'verified'
 MARKET_ALIASES = {
     'binance': 'crypto',
@@ -89,6 +89,19 @@ MARKET_ALIASES = {
     'etf': 'us-stock',
     'equity': 'us-stock',
     'equities': 'us-stock',
+    # Forex aliases
+    'fx': 'forex',
+    'currency': 'forex',
+    'currencies': 'forex',
+    'foreign-exchange': 'forex',
+    'foreign_exchange': 'forex',
+    # Futures aliases
+    'commodity-futures': 'futures',
+    'commodity_futures': 'futures',
+    'index-futures': 'futures',
+    'index_futures': 'futures',
+    'futures-contract': 'futures',
+    'futures_contract': 'futures',
 }
 
 
@@ -137,7 +150,7 @@ def api_access_log_enabled() -> bool:
 
 def should_fetch_server_trade_price(market: str) -> bool:
     normalized_market = normalize_market(market)
-    if normalized_market in {'crypto', 'polymarket', 'us-stock'}:
+    if normalized_market in {'crypto', 'polymarket', 'us-stock', 'forex', 'futures'}:
         return True
     return allow_sync_price_fetch_in_api()
 
@@ -658,12 +671,44 @@ def is_us_market_open() -> bool:
     return day < 5 and 570 <= time_in_minutes < 960
 
 
+def is_forex_market_open() -> bool:
+    et_tz = ZoneInfo('America/New_York')
+    now_et = datetime.now(et_tz)
+    day = now_et.weekday()
+    time_in_minutes = now_et.hour * 60 + now_et.minute
+    # Forex: Sunday 17:00 ET – Friday 17:00 ET
+    if day == 6 and time_in_minutes >= 1020:
+        return True
+    if 0 <= day <= 4 and time_in_minutes < 1020:
+        return True
+    return False
+
+
+def is_futures_market_open() -> bool:
+    et_tz = ZoneInfo('America/New_York')
+    now_et = datetime.now(et_tz)
+    day = now_et.weekday()
+    # Equity index futures trade nearly 24h on weekdays (18:00 Sun – 17:00 Fri ET)
+    # Commodity futures vary but most trade ~23h on weekdays.
+    # Simplified: open Sunday 18:00 ET through Friday 17:00 ET.
+    time_in_minutes = now_et.hour * 60 + now_et.minute
+    if day == 6 and time_in_minutes >= 1080:
+        return True
+    if 0 <= day <= 4 and time_in_minutes < 1020:
+        return True
+    return False
+
+
 def is_market_open(market: str) -> bool:
     normalized_market = normalize_market(market)
     if normalized_market in ('crypto', 'polymarket'):
         return True
     if normalized_market == 'us-stock':
         return is_us_market_open()
+    if normalized_market == 'forex':
+        return is_forex_market_open()
+    if normalized_market == 'futures':
+        return is_futures_market_open()
     return True
 
 
@@ -711,6 +756,24 @@ def validate_executed_at(executed_at: str, market: str) -> tuple[bool, str]:
                     False,
                     f"US market is closed on {day_names[day]} at {dt_et.strftime('%H:%M')} ET. "
                     'Trading hours: Mon-Fri 9:30-16:00 ET',
+                )
+        elif normalized_market == 'forex':
+            # Forex: Sunday 17:00 ET – Friday 17:00 ET
+            is_open = (day == 6 and time_in_minutes >= 1020) or (0 <= day <= 4 and time_in_minutes < 1020)
+            if not is_open:
+                return (
+                    False,
+                    f'Forex market is closed at {dt_et.strftime("%Y-%m-%d %H:%M")} ET. '
+                    'Trading hours: Sun 17:00 – Fri 17:00 ET',
+                )
+        elif normalized_market == 'futures':
+            # Futures: Sunday 18:00 ET – Friday 17:00 ET (simplified)
+            is_open = (day == 6 and time_in_minutes >= 1080) or (0 <= day <= 4 and time_in_minutes < 1020)
+            if not is_open:
+                return (
+                    False,
+                    f'Futures market is closed at {dt_et.strftime("%Y-%m-%d %H:%M")} ET. '
+                    'Trading hours: Sun 18:00 – Fri 17:00 ET',
                 )
 
         return True, ''

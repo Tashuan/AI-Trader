@@ -27,9 +27,9 @@ class ChallengeNotFound(ChallengeError):
 
 DEFAULT_CHALLENGE_REWARDS = {'1': 100, '2': 50, '3': 25}
 SUPPORTED_SCORING_METHODS = {'return-only', 'risk-adjusted'}
-SUPPORTED_CHALLENGE_TRACKS = {'crypto', 'us-stock', 'polymarket'}
+SUPPORTED_CHALLENGE_TRACKS = {'crypto', 'us-stock', 'polymarket', 'forex', 'futures'}
 SUPPORTED_CHALLENGE_MODES = {'individual', 'team', 'hybrid'}
-AUTHORITATIVE_CHALLENGE_PRICE_MARKETS = {'crypto', 'us-stock', 'polymarket'}
+AUTHORITATIVE_CHALLENGE_PRICE_MARKETS = {'crypto', 'us-stock', 'polymarket', 'forex', 'futures'}
 POLYMARKET_CHALLENGE_CLOCK_SKEW_SECONDS = 300
 
 
