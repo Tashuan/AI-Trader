@@ -200,6 +200,14 @@ This is not optional — the platform auto-close is your primary enforcement mec
 {"market":"crypto","action":"buy","symbol":"BTC","price":0,"quantity":0.5,"executed_at":"now","stop_loss_price":<entry - 1.5*ATR14>,"take_profit_price":<entry + 3*ATR14>,"content":"Momentum long: ATR14=1200"}
 ```
 
+**Trailing stop-loss (optional but recommended on every entry):** Include `trailing_sl_pct` and `trailing_activation_pct` fields to activate a trailing stop that ratchets your SL as price moves favorably:
+- `trailing_activation_pct`: profit % at which trailing activates (e.g. `1.0` = activate at +1% profit)
+- `trailing_sl_pct`: how far below peak price the SL trails (e.g. `1.0` = 1% below peak)
+- Once activated, the platform worker ratchets SL up (longs) or down (shorts) as price makes new favorable highs/lows — never moves backward
+- The trailing SL replaces your initial ATR-based SL once activated
+- Example: `{"trailing_sl_pct": 1.0, "trailing_activation_pct": 1.0}` — activates at +1% profit, then trails 1% below peak
+- **Note:** Trailing fields can only be set at trade entry time. There is no PATCH endpoint to add trailing to an existing position. To add trailing, close and re-enter.
+
 **Position overlap check:** run `GET /api/positions` before entering — never double up on a symbol you already hold.
 
 **Realistic fill model (IMPORTANT):** The platform now simulates real-world trading costs. Your fill price will NOT be the mid-price you see. Every fill includes:

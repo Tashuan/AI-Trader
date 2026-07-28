@@ -288,10 +288,18 @@ class DatabaseConnection:
 
     def close(self):
         if self._pool is not None:
-            # Return connection to pool instead of closing it
-            self._pool.putconn(self._connection)
+            try:
+                self._pool.putconn(self._connection)
+            except Exception:
+                try:
+                    self._connection.close()
+                except Exception:
+                    pass
         else:
-            self._connection.close()
+            try:
+                self._connection.close()
+            except Exception:
+                pass
 
     def __enter__(self):
         return self
@@ -316,6 +324,14 @@ _pg_pool: Any = None
 _pg_pool_lock = threading.Lock()
 
 
+def _pg_pool_check(conn):
+    """Health check for pooled connections — discards dead connections."""
+    try:
+        conn.execute("SELECT 1")
+    except Exception:
+        conn.close()
+        raise
+
 def _get_pg_pool():
     """Lazily create a psycopg connection pool for reuse across requests."""
     global _pg_pool
@@ -335,6 +351,7 @@ def _get_pg_pool():
             max_size=10,
             timeout=30,
             kwargs={"row_factory": dict_row},
+            check=_pg_pool_check,
         )
         return _pg_pool
 
@@ -1292,6 +1309,27 @@ def init_database():
 
     try:
         cursor.execute("ALTER TABLE positions ADD COLUMN take_profit_price REAL")
+    except Exception:
+        pass
+
+    # Trailing stop-loss columns
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN trailing_sl_pct REAL")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN trailing_activation_pct REAL")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN peak_favorable_price REAL")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN trailing_activated INTEGER DEFAULT 0")
     except Exception:
         pass
 

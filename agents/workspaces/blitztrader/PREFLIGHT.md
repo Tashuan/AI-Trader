@@ -57,6 +57,7 @@ If NO rule fired → you may write qualitative read (momentum, OBV, thesis statu
 - **Single position model:** max 1 open position at a time
 - Never double up on a symbol you already hold — check `GET /api/positions` first
 - Every entry MUST include `stop_loss_price` and `take_profit_price` (platform auto-close is primary enforcement)
+- **Trailing stop-loss:** Include `trailing_sl_pct` and `trailing_activation_pct` on every entry to auto-ratchet SL as profit grows. Recommended: `trailing_sl_pct=1.0, trailing_activation_pct=1.0`
 - Bearish macro (bullish_count/total < 0.3): require 5+ signals, cut sizes 50%
 - **Goal-aware sizing:** Normal phase (0-80% progress) 25-40%, Approaching goal (80-100%) 15-25%
 - No setup = no trade. A fired exit rule = no debate.

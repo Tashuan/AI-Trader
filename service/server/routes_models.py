@@ -63,6 +63,8 @@ class RealtimeSignalRequest(BaseModel):
     outcome: Optional[str] = None
     stop_loss_price: Optional[float] = None
     take_profit_price: Optional[float] = None
+    trailing_sl_pct: Optional[float] = None
+    trailing_activation_pct: Optional[float] = None
     order_type: Optional[str] = "market"
     limit_price: Optional[float] = None
     time_in_force: Optional[str] = "gtc"

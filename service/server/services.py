@@ -201,6 +201,8 @@ def _update_position_from_signal(
     outcome: Optional[str] = None,
     stop_loss_price: Optional[float] = None,
     take_profit_price: Optional[float] = None,
+    trailing_sl_pct: Optional[float] = None,
+    trailing_activation_pct: Optional[float] = None,
 ):
     """
     Update position based on trading signal.
@@ -258,23 +260,25 @@ def _update_position_from_signal(
             cursor.execute("""
                 UPDATE positions SET quantity = ?, entry_price = ?, opened_at = ?,
                     stop_loss_price = COALESCE(?, stop_loss_price),
-                    take_profit_price = COALESCE(?, take_profit_price)
+                    take_profit_price = COALESCE(?, take_profit_price),
+                    trailing_sl_pct = COALESCE(?, trailing_sl_pct),
+                    trailing_activation_pct = COALESCE(?, trailing_activation_pct)
                 WHERE id = ?
-            """, (new_qty, new_entry_price, executed_at, stop_loss_price, take_profit_price, position_id))
+            """, (new_qty, new_entry_price, executed_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct, position_id))
             print(f"[Position] {symbol}: increased long position to {new_qty}")
         else:
             # Create new long position
             if leader_id:
                 cursor.execute("""
-                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, leader_id, stop_loss_price, take_profit_price)
-                    VALUES (?, ?, ?, ?, ?, 'long', ?, ?, ?, ?, ?, ?)
-                """, (agent_id, symbol, market, token_id, outcome, quantity, price, executed_at, leader_id, stop_loss_price, take_profit_price))
+                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, leader_id, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct)
+                    VALUES (?, ?, ?, ?, ?, 'long', ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent_id, symbol, market, token_id, outcome, quantity, price, executed_at, leader_id, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct))
                 print(f"[Position] {symbol}: created copied long position {quantity} from leader {leader_id}")
             else:
                 cursor.execute("""
-                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, stop_loss_price, take_profit_price)
-                    VALUES (?, ?, ?, ?, ?, 'long', ?, ?, ?, ?, ?)
-                """, (agent_id, symbol, market, token_id, outcome, quantity, price, executed_at, stop_loss_price, take_profit_price))
+                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct)
+                    VALUES (?, ?, ?, ?, ?, 'long', ?, ?, ?, ?, ?, ?, ?)
+                """, (agent_id, symbol, market, token_id, outcome, quantity, price, executed_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct))
                 print(f"[Position] {symbol}: created long position {quantity}")
 
     elif action_lower == "sell":
@@ -307,23 +311,25 @@ def _update_position_from_signal(
             cursor.execute("""
                 UPDATE positions SET quantity = ?, entry_price = ?, opened_at = ?,
                     stop_loss_price = COALESCE(?, stop_loss_price),
-                    take_profit_price = COALESCE(?, take_profit_price)
+                    take_profit_price = COALESCE(?, take_profit_price),
+                    trailing_sl_pct = COALESCE(?, trailing_sl_pct),
+                    trailing_activation_pct = COALESCE(?, trailing_activation_pct)
                 WHERE id = ?
-            """, (new_qty, new_entry_price, executed_at, stop_loss_price, take_profit_price, position_id))
+            """, (new_qty, new_entry_price, executed_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct, position_id))
             print(f"[Position] {symbol}: increased short position to {new_qty}")
         else:
             # Create new short position (negative quantity for short)
             if leader_id:
                 cursor.execute("""
-                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, leader_id, stop_loss_price, take_profit_price)
-                    VALUES (?, ?, ?, ?, ?, 'short', ?, ?, ?, ?, ?, ?)
-                """, (agent_id, symbol, market, token_id, outcome, -quantity, price, executed_at, leader_id, stop_loss_price, take_profit_price))
+                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, leader_id, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct)
+                    VALUES (?, ?, ?, ?, ?, 'short', ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent_id, symbol, market, token_id, outcome, -quantity, price, executed_at, leader_id, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct))
                 print(f"[Position] {symbol}: created copied short position {quantity} from leader {leader_id}")
             else:
                 cursor.execute("""
-                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, stop_loss_price, take_profit_price)
-                    VALUES (?, ?, ?, ?, ?, 'short', ?, ?, ?, ?, ?)
-                """, (agent_id, symbol, market, token_id, outcome, -quantity, price, executed_at, stop_loss_price, take_profit_price))
+                    INSERT INTO positions (agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, opened_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct)
+                    VALUES (?, ?, ?, ?, ?, 'short', ?, ?, ?, ?, ?, ?, ?)
+                """, (agent_id, symbol, market, token_id, outcome, -quantity, price, executed_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct))
                 print(f"[Position] {symbol}: created short position {quantity}")
 
     elif action_lower == "cover":

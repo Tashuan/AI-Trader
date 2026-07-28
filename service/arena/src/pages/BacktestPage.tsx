@@ -1,0 +1,988 @@
+import { useState, useEffect, useCallback } from 'react';
+import {
+  AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, BarChart, Bar, Cell,
+} from 'recharts';
+import { Play, Loader2, TrendingUp, TrendingDown, FlaskConical, Zap, Calendar, Stethoscope, AlertTriangle, CheckCircle, XCircle, Lightbulb, Copy, Check, Sparkles } from 'lucide-react';
+
+interface Strategy {
+  key: string;
+  name: string;
+  tagline: string;
+  strategy_type: string;
+  watchlist: string[];
+  risk_tolerance: string;
+  hold_period: string;
+}
+
+interface TradeRecord {
+  symbol: string;
+  side: string;
+  entry_date: string;
+  exit_date: string;
+  entry_price: number;
+  exit_price: number;
+  quantity: number;
+  pnl: number;
+  pnl_pct: number;
+  hold_days: number;
+  reason: string;
+}
+
+interface BacktestReport {
+  agent_name: string;
+  symbols: string[];
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+  final_equity: number;
+  total_return_pct: number;
+  sharpe_ratio: number;
+  max_drawdown_pct: number;
+  win_rate: number;
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  avg_hold_days: number;
+  profit_factor: number;
+  equity_curve: { date: string; equity: number }[];
+  trades: TradeRecord[];
+  per_symbol_stats: Record<string, {
+    trades: number;
+    wins: number;
+    win_rate: number;
+    total_pnl: number;
+    avg_pnl_pct: number;
+  }>;
+}
+
+export function BacktestPage() {
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [selectedKey, setSelectedKey] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [symbolsInput, setSymbolsInput] = useState('');
+  const [capital, setCapital] = useState('100000');
+  const [running, setRunning] = useState(false);
+  const [report, setReport] = useState<BacktestReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [strategiesLoading, setStrategiesLoading] = useState(true);
+  const [activePreset, setActivePreset] = useState<string>('');
+  const [copied, setCopied] = useState(false);
+  const [llmDiagnosis, setLlmDiagnosis] = useState<string | null>(null);
+  const [llmLoading, setLlmLoading] = useState(false);
+  const [llmAvailable, setLlmAvailable] = useState<boolean | null>(null);
+
+  const applyPreset = (preset: string) => {
+    setActivePreset(preset);
+    const now = new Date();
+    const start = new Date();
+    switch (preset) {
+      case '1M': start.setMonth(now.getMonth() - 1); break;
+      case '3M': start.setMonth(now.getMonth() - 3); break;
+      case '6M': start.setMonth(now.getMonth() - 6); break;
+      case '1Y': start.setFullYear(now.getFullYear() - 1); break;
+      case '2Y': start.setFullYear(now.getFullYear() - 2); break;
+      case 'YTD': start.setMonth(0); start.setDate(1); break;
+      default: return;
+    }
+    setStartDate(start.toISOString().split('T')[0]);
+    setEndDate('');
+  };
+
+  const fetchStrategies = useCallback(async () => {
+    try {
+      const resp = await fetch('/api/backtest/strategies');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      let list = data.strategies || [];
+      // Sort: blitztrader first, then alphabetical
+      list = list.sort((a: Strategy, b: Strategy) => {
+        if (a.key === 'blitztrader') return -1;
+        if (b.key === 'blitztrader') return 1;
+        return a.name.localeCompare(b.name);
+      });
+      setStrategies(list);
+      if (list.length > 0 && !selectedKey) {
+        setSelectedKey('blitztrader');
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load strategies');
+    } finally {
+      setStrategiesLoading(false);
+    }
+  }, [selectedKey]);
+
+  useEffect(() => {
+    fetchStrategies();
+  }, [fetchStrategies]);
+
+  const selectedStrategy = strategies.find(s => s.key === selectedKey);
+
+  const handleRun = async () => {
+    if (!selectedKey) return;
+    setRunning(true);
+    setError(null);
+    setReport(null);
+
+    try {
+      const body: Record<string, unknown> = {
+        agent_key: selectedKey,
+        start_date: startDate,
+        end_date: endDate,
+        initial_capital: parseFloat(capital) || 100000,
+      };
+      if (symbolsInput.trim()) {
+        body.symbols = symbolsInput.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      }
+
+      const resp = await fetch('/api/backtest/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw Error(errData.detail || `HTTP ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      setReport(data.report);
+      setLlmDiagnosis(null);
+      setLlmAvailable(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Backtest failed');
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const fmtCurrency = (v: number) =>
+    `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const fmtPct = (v: number, withSign = false) =>
+    `${v > 0 && withSign ? '+' : ''}${v.toFixed(2)}%`;
+
+  const equityData = report?.equity_curve.map((p, i) => ({
+    idx: i,
+    date: p.date,
+    equity: p.equity,
+  })) || [];
+
+  const symbolStatsData = report
+    ? Object.entries(report.per_symbol_stats).map(([sym, s]) => ({
+        symbol: sym,
+        ...s,
+      }))
+    : [];
+
+  type DiagnosisLevel = 'good' | 'warning' | 'critical';
+  interface DiagnosisItem {
+    level: DiagnosisLevel;
+    title: string;
+    detail: string;
+    recommendation: string;
+    param?: string;
+  }
+
+  const generateDiagnosis = (r: BacktestReport): DiagnosisItem[] => {
+    const findings: DiagnosisItem[] = [];
+    const winRatePct = r.win_rate * 100;
+    const days = r.equity_curve.length;
+    const tradesPerDay = days > 0 ? r.total_trades / days : 0;
+    const avgWinPnl = r.winning_trades > 0
+      ? r.trades.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0) / r.winning_trades : 0;
+    const avgLossPnl = r.losing_trades > 0
+      ? Math.abs(r.trades.filter(t => t.pnl < 0).reduce((s, t) => s + t.pnl, 0) / r.losing_trades) : 0;
+    const bestSymbol = symbolStatsData.length > 0
+      ? symbolStatsData.reduce((a, b) => a.total_pnl > b.total_pnl ? a : b) : null;
+    const worstSymbol = symbolStatsData.length > 0
+      ? symbolStatsData.reduce((a, b) => a.total_pnl < b.total_pnl ? a : b) : null;
+
+    // --- OVERALL PROFITABILITY ---
+    if (r.total_return_pct > 10) {
+      findings.push({
+        level: 'good', title: 'Strong overall returns',
+        detail: `Strategy returned ${fmtPct(r.total_return_pct, true)} over ${days} days.`,
+        recommendation: 'Current parameters are working well. Consider running a longer backtest to confirm stability.',
+      });
+    } else if (r.total_return_pct > 0) {
+      findings.push({
+        level: 'warning', title: 'Marginally profitable',
+        detail: `Strategy returned only ${fmtPct(r.total_return_pct, true)}. Barely beating cash.`,
+        recommendation: 'Look at individual metrics below to find what to tune. Small improvements to TP/SL or sizing can compound significantly.',
+      });
+    } else {
+      findings.push({
+        level: 'critical', title: 'Strategy is losing money',
+        detail: `Strategy returned ${fmtPct(r.total_return_pct, true)} over ${days} days. Capital is being eroded.`,
+        recommendation: 'Do not deploy live without changes. Focus on the critical findings below before running this strategy.',
+      });
+    }
+
+    // --- WIN RATE ---
+    if (winRatePct >= 60 && r.total_trades >= 10) {
+      findings.push({
+        level: 'good', title: 'High win rate',
+        detail: `${winRatePct.toFixed(1)}% of trades are winners (${r.winning_trades}W / ${r.losing_trades}L).`,
+        recommendation: 'Good entry selection. If returns are still low, your TP may be too tight — you\'re cutting winners early. Try increasing PROFIT_TARGET_PCT.',
+        param: 'PROFIT_TARGET_PCT',
+      });
+    } else if (winRatePct >= 45 && r.total_trades >= 10) {
+      findings.push({
+        level: 'warning', title: 'Moderate win rate',
+        detail: `${winRatePct.toFixed(1)}% win rate. Near break-even on trade selection.`,
+        recommendation: 'Entry signals are decent but not great. Consider tightening the momentum signal threshold (require 5 instead of 4 signals) to be more selective.',
+        param: 'Signal threshold in _is_moving_fast()',
+      });
+    } else if (r.total_trades >= 10) {
+      findings.push({
+        level: 'critical', title: 'Low win rate',
+        detail: `Only ${winRatePct.toFixed(1)}% of trades win. Most entries are wrong.`,
+        recommendation: 'Entry logic is too loose. Either raise confidence_threshold to be more selective, or increase the momentum signal threshold. Fewer, higher-quality trades will perform better.',
+        param: 'confidence_threshold / signal threshold',
+      });
+    }
+
+    // --- PROFIT FACTOR ---
+    if (r.profit_factor >= 1.5 && r.total_trades >= 10) {
+      findings.push({
+        level: 'good', title: 'Healthy profit factor',
+        detail: `Profit factor ${r.profit_factor.toFixed(2)} — winners generate ${r.profit_factor.toFixed(1)}× more than losers lose.`,
+        recommendation: 'Risk/reward is solid. Maintain current TP/SL levels.',
+      });
+    } else if (r.profit_factor >= 1.0 && r.total_trades >= 10) {
+      findings.push({
+        level: 'warning', title: 'Marginal profit factor',
+        detail: `Profit factor ${r.profit_factor.toFixed(2)} — barely profitable. Winners barely exceed losers.`,
+        recommendation: avgWinPnl < avgLossPnl
+          ? `Average win ($${avgWinPnl.toFixed(0)}) is smaller than average loss ($${avgLossPnl.toFixed(0)}). Widen PROFIT_TARGET_PCT to let winners run, or tighten STOP_LOSS_PCT to cut losers faster.`
+          : `Win/loss sizes are balanced but edge is thin. Consider being more selective with entries to improve win rate.`,
+        param: 'PROFIT_TARGET_PCT / STOP_LOSS_PCT',
+      });
+    } else if (r.total_trades >= 10) {
+      findings.push({
+        level: 'critical', title: 'Profit factor below 1.0',
+        detail: `Profit factor ${r.profit_factor.toFixed(2)} — losers outweigh winners. Strategy loses money per trade on average.`,
+        recommendation: avgWinPnl < avgLossPnl
+          ? `Average loss ($${avgLossPnl.toFixed(0)}) exceeds average win ($${avgWinPnl.toFixed(0)}). Tighten STOP_LOSS_PCT immediately and widen PROFIT_TARGET_PCT to improve risk/reward.`
+          : `Both win rate and sizing need work. Start by reducing position_sizing to limit damage while you fix entry logic.`,
+        param: 'STOP_LOSS_PCT / PROFIT_TARGET_PCT / position_sizing',
+      });
+    }
+
+    // --- MAX DRAWDOWN ---
+    if (r.max_drawdown_pct > 20) {
+      findings.push({
+        level: 'critical', title: 'Severe drawdown',
+        detail: `Max drawdown of ${fmtPct(r.max_drawdown_pct)}. This means the strategy at one point lost over 20% of peak equity.`,
+        recommendation: 'Position sizing is too aggressive. Reduce position_sizing (e.g., from "yolo" to "large") or lower conviction_multiplier. A 20%+ drawdown is hard to recover from psychologically.',
+        param: 'position_sizing / conviction_multiplier',
+      });
+    } else if (r.max_drawdown_pct > 10) {
+      findings.push({
+        level: 'warning', title: 'Notable drawdown',
+        detail: `Max drawdown of ${fmtPct(r.max_drawdown_pct)}. Significant equity swings.`,
+        recommendation: 'Consider reducing position_sizing slightly or adding more symbols to the watchlist for diversification. Fewer concentrated bets will smooth the curve.',
+        param: 'position_sizing / watchlist',
+      });
+    } else if (r.total_trades >= 10) {
+      findings.push({
+        level: 'good', title: 'Controlled drawdown',
+        detail: `Max drawdown only ${fmtPct(r.max_drawdown_pct)}. Equity curve is relatively smooth.`,
+        recommendation: 'Risk management is working. You could potentially increase position_sizing slightly if returns are low.',
+      });
+    }
+
+    // --- SHARPE RATIO ---
+    if (r.sharpe_ratio >= 1.5 && r.total_trades >= 10) {
+      findings.push({
+        level: 'good', title: 'Excellent risk-adjusted returns',
+        detail: `Sharpe ratio ${r.sharpe_ratio.toFixed(2)} — strong, consistent returns relative to volatility.`,
+        recommendation: 'This is institutional-grade risk-adjusted performance. Maintain current parameters.',
+      });
+    } else if (r.sharpe_ratio >= 0.5 && r.total_trades >= 10) {
+      findings.push({
+        level: 'warning', title: 'Mediocre Sharpe ratio',
+        detail: `Sharpe ratio ${r.sharpe_ratio.toFixed(2)} — returns are volatile relative to the payoff.`,
+        recommendation: 'Returns are inconsistent. Focus on reducing volatility — either diversify the watchlist or reduce position sizing to smooth returns.',
+        param: 'watchlist / position_sizing',
+      });
+    } else if (r.total_trades >= 10) {
+      findings.push({
+        level: 'critical', title: 'Poor risk-adjusted returns',
+        detail: `Sharpe ratio ${r.sharpe_ratio.toFixed(2)} — high volatility for minimal payoff.`,
+        recommendation: 'The strategy is taking too much risk for too little return. Reduce position_sizing and focus on improving entry selectivity.',
+        param: 'position_sizing / confidence_threshold',
+      });
+    }
+
+    // --- TRADE FREQUENCY ---
+    if (r.total_trades === 0) {
+      findings.push({
+        level: 'critical', title: 'No trades generated',
+        detail: 'The strategy never triggered any entries in this period.',
+        recommendation: 'Entry conditions are too strict. Lower confidence_threshold, reduce the momentum signal threshold, or widen the date range. The strategy needs to actually trade to be evaluated.',
+        param: 'confidence_threshold / signal threshold',
+      });
+    } else if (tradesPerDay > 3) {
+      findings.push({
+        level: 'warning', title: 'Overtrading',
+        detail: `${r.total_trades} trades over ${days} days (${tradesPerDay.toFixed(1)}/day). High frequency can rack up slippage and fees.`,
+        recommendation: 'Strategy is firing too often. Raise confidence_threshold or increase the momentum signal threshold to be more selective. Quality over quantity.',
+        param: 'confidence_threshold / signal threshold',
+      });
+    } else if (tradesPerDay < 0.05 && days > 30) {
+      findings.push({
+        level: 'warning', title: 'Very low trade frequency',
+        detail: `${r.total_trades} trades over ${days} days (${tradesPerDay.toFixed(2)}/day). Rarely trades.`,
+        recommendation: 'Strategy is too conservative. Lower confidence_threshold or add more symbols to the watchlist to increase opportunities.',
+        param: 'confidence_threshold / watchlist',
+      });
+    } else if (r.total_trades >= 5) {
+      findings.push({
+        level: 'good', title: 'Healthy trade frequency',
+        detail: `${r.total_trades} trades over ${days} days (${tradesPerDay.toFixed(1)}/day).`,
+        recommendation: 'Trade frequency is reasonable — enough samples to be statistically meaningful but not overtrading.',
+      });
+    }
+
+    // --- HOLD TIME ---
+    if (r.total_trades >= 10) {
+      if (r.avg_hold_days < 0.5) {
+        findings.push({
+          level: 'warning', title: 'Very short hold time',
+          detail: `Average hold ${r.avg_hold_days.toFixed(1)} days — essentially day-trading.`,
+          recommendation: 'TP/SL are very tight. Consider widening both to capture larger moves and reduce whipsaw losses from noise.',
+          param: 'PROFIT_TARGET_PCT / STOP_LOSS_PCT',
+        });
+      } else if (r.avg_hold_days > 10) {
+        findings.push({
+          level: 'warning', title: 'Long hold time for a scalper',
+          detail: `Average hold ${r.avg_hold_days.toFixed(1)} days — holding longer than expected for this strategy type.`,
+          recommendation: 'TP may be too wide, or the strategy is holding through drawdowns. Check if STOP_LOSS_PCT is too loose.',
+          param: 'PROFIT_TARGET_PCT / STOP_LOSS_PCT',
+        });
+      } else {
+        findings.push({
+          level: 'good', title: 'Reasonable hold time',
+          detail: `Average hold ${r.avg_hold_days.toFixed(1)} days.`,
+          recommendation: 'Hold period aligns with the strategy\'s intended time horizon.',
+        });
+      }
+    }
+
+    // --- PER-SYMBOL ANALYSIS ---
+    if (bestSymbol && bestSymbol.total_pnl > 0 && r.total_trades >= 10) {
+      findings.push({
+        level: 'good', title: `Best performer: ${bestSymbol.symbol}`,
+        detail: `${bestSymbol.symbol} generated $${bestSymbol.total_pnl.toFixed(0)} P&L with ${(bestSymbol.win_rate * 100).toFixed(0)}% win rate across ${bestSymbol.trades} trades.`,
+        recommendation: 'This symbol suits the strategy well. Consider weighting it higher or adding correlated symbols to the watchlist.',
+      });
+    }
+    if (worstSymbol && worstSymbol.total_pnl < -100 && r.total_trades >= 10) {
+      findings.push({
+        level: 'critical', title: `Worst performer: ${worstSymbol.symbol}`,
+        detail: `${worstSymbol.symbol} lost $${Math.abs(worstSymbol.total_pnl).toFixed(0)} with ${(worstSymbol.win_rate * 100).toFixed(0)}% win rate across ${worstSymbol.trades} trades.`,
+        recommendation: `This symbol is dragging down performance. Consider removing ${worstSymbol.symbol} from the watchlist or investigating why the strategy fails on it.`,
+        param: 'watchlist',
+      });
+    }
+
+    // --- WIN/LOSS SIZE ASYMMETRY ---
+    if (r.total_trades >= 10 && avgWinPnl > 0 && avgLossPnl > 0) {
+      const ratio = avgWinPnl / avgLossPnl;
+      if (ratio < 0.8) {
+        findings.push({
+          level: 'critical', title: 'Losers bigger than winners',
+          detail: `Average win $${avgWinPnl.toFixed(0)} vs average loss $${avgLossPnl.toFixed(0)} (ratio ${ratio.toFixed(2)}).`,
+          recommendation: 'Risk/reward is inverted. Tighten STOP_LOSS_PCT to limit downside, and widen PROFIT_TARGET_PCT to capture more upside. This is the #1 thing to fix.',
+          param: 'STOP_LOSS_PCT / PROFIT_TARGET_PCT',
+        });
+      } else if (ratio > 2.0) {
+        findings.push({
+          level: 'good', title: 'Winners much bigger than losers',
+          detail: `Average win $${avgWinPnl.toFixed(0)} vs average loss $${avgLossPnl.toFixed(0)} (ratio ${ratio.toFixed(2)}).`,
+          recommendation: 'Excellent risk/reward. Even with a modest win rate, this asymmetry drives profitability. Maintain current TP/SL levels.',
+        });
+      }
+    }
+
+    return findings;
+  };
+
+  const diagnosis = report ? generateDiagnosis(report) : [];
+
+  const handleFetchLlmDiagnosis = async () => {
+    if (!report) return;
+    setLlmLoading(true);
+    try {
+      const resp = await fetch('/api/backtest/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(report),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setLlmAvailable(data.available);
+      if (data.diagnosis) {
+        setLlmDiagnosis(data.diagnosis);
+      }
+    } catch {
+      setLlmAvailable(false);
+    } finally {
+      setLlmLoading(false);
+    }
+  };
+
+  const handleCopyReport = () => {
+    if (!report || !selectedStrategy) return;
+    const lines: string[] = [];
+    lines.push('========================================');
+    lines.push('  BACKTEST REPORT');
+    lines.push('========================================');
+    lines.push('');
+    lines.push(`Strategy: ${report.agent_name} (${selectedKey})`);
+    lines.push(`Tagline: ${selectedStrategy.tagline}`);
+    lines.push(`Type: ${selectedStrategy.strategy_type}`);
+    lines.push(`Risk Tolerance: ${selectedStrategy.risk_tolerance}`);
+    lines.push(`Hold Period: ${selectedStrategy.hold_period}`);
+    lines.push(`Watchlist: ${selectedStrategy.watchlist.join(', ')}`);
+    lines.push('');
+    lines.push('--- Test Parameters ---');
+    lines.push(`Start Date: ${report.start_date}`);
+    lines.push(`End Date: ${report.end_date}`);
+    lines.push(`Initial Capital: $${report.initial_capital.toLocaleString()}`);
+    lines.push(`Symbols Tested: ${report.symbols.join(', ')}`);
+    if (symbolsInput.trim()) {
+      lines.push(`Symbols Override: ${symbolsInput}`);
+    }
+    lines.push('');
+    lines.push('--- Results Summary ---');
+    lines.push(`Total Return: ${fmtPct(report.total_return_pct, true)}`);
+    lines.push(`Net P&L: ${report.final_equity - report.initial_capital >= 0 ? '+' : ''}${fmtCurrency(report.final_equity - report.initial_capital)}`);
+    lines.push(`Final Equity: ${fmtCurrency(report.final_equity)}`);
+    lines.push(`Sharpe Ratio: ${report.sharpe_ratio.toFixed(3)}`);
+    lines.push(`Max Drawdown: ${fmtPct(report.max_drawdown_pct)}`);
+    lines.push(`Win Rate: ${(report.win_rate * 100).toFixed(1)}% (${report.winning_trades}W / ${report.losing_trades}L)`);
+    lines.push(`Profit Factor: ${report.profit_factor.toFixed(3)}`);
+    lines.push(`Total Trades: ${report.total_trades}`);
+    lines.push(`Avg Hold Days: ${report.avg_hold_days.toFixed(1)}`);
+    lines.push('');
+    lines.push('--- Per-Symbol Breakdown ---');
+    const symStats = Object.entries(report.per_symbol_stats).sort((a, b) => b[1].total_pnl - a[1].total_pnl);
+    for (const [sym, s] of symStats) {
+      lines.push(`  ${sym}: ${s.trades} trades, ${(s.win_rate * 100).toFixed(0)}% win, P&L $${s.total_pnl.toFixed(2)}, avg ${s.avg_pnl_pct.toFixed(2)}%`);
+    }
+    lines.push('');
+    if (diagnosis.length > 0) {
+      lines.push('--- Strategy Diagnosis ---');
+      for (const d of diagnosis) {
+        const tag = d.level === 'good' ? '[OK]' : d.level === 'warning' ? '[WARN]' : '[CRIT]';
+        lines.push(`  ${tag} ${d.title}`);
+        lines.push(`       ${d.detail}`);
+        lines.push(`       → ${d.recommendation}${d.param ? ` (${d.param})` : ''}`);
+      }
+      lines.push('');
+    }
+    if (report.trades.length > 0) {
+      lines.push('--- Trade Log ---');
+      lines.push('  Symbol  Side  Entry Date  Exit Date   Entry Price  Exit Price  Qty       P&L         P&L%    Hold  Reason');
+      for (const t of report.trades) {
+        lines.push(
+          `  ${t.symbol.padEnd(7)} ${t.side.padEnd(5)} ${t.entry_date.padEnd(11)} ${t.exit_date.padEnd(11)} ` +
+          `${t.entry_price.toFixed(2).padStart(11)} ${t.exit_price.toFixed(2).padStart(10)} ` +
+          `${t.quantity.toFixed(6).padStart(9)} ${t.pnl.toFixed(2).padStart(10)} ${t.pnl_pct.toFixed(2).padStart(6)}% ` +
+          `${t.hold_days.toFixed(1).padStart(4)}d  ${t.reason.substring(0, 60)}`
+        );
+      }
+    }
+    lines.push('');
+    lines.push(`Generated: ${new Date().toISOString()}`);
+    lines.push('========================================');
+    const text = lines.join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex items-center gap-2 mb-1">
+        <FlaskConical size={18} className="text-arena-purple" />
+        <h1 className="text-lg font-bold text-white">Strategy Backtesting</h1>
+      </div>
+      <p className="text-xs text-arena-text-dim mb-6">
+        Replay historical data through any agent's strategy and visualize performance
+      </p>
+
+      {/* Config Panel */}
+      <div className="card-base p-4 mb-6">
+        {/* Quick Date Presets */}
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <span className="text-[10px] text-arena-text-dim uppercase tracking-wider flex items-center gap-1">
+            <Calendar size={11} /> Quick Range
+          </span>
+          {['1M', '3M', '6M', '1Y', '2Y', 'YTD'].map(p => (
+            <button
+              key={p}
+              onClick={() => applyPreset(p)}
+              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-colors border ${
+                activePreset === p
+                  ? 'bg-arena-purple/20 border-arena-purple/40 text-arena-purple'
+                  : 'bg-white/5 border-white/6 text-arena-text-secondary hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Strategy Selector */}
+          <div>
+            <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">Strategy</label>
+            {strategiesLoading ? (
+              <div className="form-input flex items-center gap-2">
+                <Loader2 size={12} className="animate-spin" />
+                <span className="text-arena-text-dim">Loading...</span>
+              </div>
+            ) : (
+              <select
+                className="form-input"
+                value={selectedKey}
+                onChange={e => setSelectedKey(e.target.value)}
+              >
+                {strategies.map(s => (
+                  <option key={s.key} value={s.key}>{s.name}</option>
+                ))}
+              </select>
+            )}
+            {selectedStrategy && (
+              <div className="mt-1.5 text-[10px] text-arena-text-dim">
+                {selectedStrategy.tagline}
+              </div>
+            )}
+          </div>
+
+          {/* Start Date */}
+          <div>
+            <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">Start Date</label>
+            <input
+              type="date"
+              className="form-input date-picker-dark"
+              value={startDate}
+              onChange={e => { setStartDate(e.target.value); setActivePreset(''); }}
+            />
+          </div>
+
+          {/* End Date */}
+          <div>
+            <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">End Date</label>
+            <input
+              type="date"
+              className="form-input date-picker-dark"
+              value={endDate}
+              onChange={e => { setEndDate(e.target.value); setActivePreset(''); }}
+            />
+          </div>
+
+          {/* Initial Capital */}
+          <div>
+            <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">Initial Capital</label>
+            <input
+              type="number"
+              className="form-input"
+              value={capital}
+              onChange={e => setCapital(e.target.value)}
+              min="1000"
+              step="1000"
+            />
+          </div>
+        </div>
+
+        {/* Symbols Override */}
+        <div className="mt-4">
+          <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">
+            Symbols Override <span className="text-arena-text-dim normal-case">(comma-separated, leave empty for agent watchlist)</span>
+          </label>
+          <input
+            type="text"
+            className="form-input"
+            value={symbolsInput}
+            onChange={e => setSymbolsInput(e.target.value)}
+            placeholder={selectedStrategy ? `Default: ${selectedStrategy.watchlist.join(', ')}` : 'e.g. BTC,ETH,SOL'}
+          />
+        </div>
+
+        {/* Run Button */}
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={handleRun}
+            disabled={running || !selectedKey}
+            className="flex items-center gap-2 px-4 py-2 bg-arena-purple/20 border border-arena-purple/40 rounded-lg text-arena-purple text-xs font-semibold hover:bg-arena-purple/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+            {running ? 'Running...' : 'Run Backtest'}
+          </button>
+          {error && (
+            <span className="text-xs text-arena-red">{error}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Results */}
+      {report && (
+        <div className="space-y-6">
+          {/* P&L Hero */}
+          <div className="card-base p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <div className="text-sm font-bold text-white">{report.agent_name}</div>
+                <div className="text-[10px] text-arena-text-dim">
+                  {report.start_date} → {report.end_date} | {report.total_trades} trades
+                </div>
+              </div>
+              <button
+                onClick={handleCopyReport}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-[10px] font-semibold text-arena-text-secondary hover:bg-white/10 hover:text-white transition-colors"
+              >
+                {copied ? <Check size={12} className="text-arena-green" /> : <Copy size={12} />}
+                {copied ? 'Copied!' : 'Copy Report'}
+              </button>
+            </div>
+
+            {/* Big P&L Numbers */}
+            <div className="flex items-end gap-8 mb-6">
+              {/* Total Return % */}
+              <div>
+                <div className="text-[10px] text-arena-text-dim uppercase tracking-wider mb-1">Total Return</div>
+                <div className={`flex items-center gap-2 text-4xl font-bold ${report.total_return_pct >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+                  {report.total_return_pct >= 0 ? <TrendingUp size={32} /> : <TrendingDown size={32} />}
+                  {fmtPct(report.total_return_pct, true)}
+                </div>
+              </div>
+
+              {/* Dollar P&L */}
+              <div>
+                <div className="text-[10px] text-arena-text-dim uppercase tracking-wider mb-1">Net P&L</div>
+                <div className={`text-3xl font-bold font-mono ${report.total_return_pct >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+                  {report.final_equity - report.initial_capital >= 0 ? '+' : ''}{fmtCurrency(report.final_equity - report.initial_capital)}
+                </div>
+              </div>
+
+              {/* Final Equity */}
+              <div>
+                <div className="text-[10px] text-arena-text-dim uppercase tracking-wider mb-1">Final Equity</div>
+                <div className="text-3xl font-bold font-mono text-white">
+                  {fmtCurrency(report.final_equity)}
+                </div>
+              </div>
+            </div>
+
+            {/* Metric Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <MetricCard label="Sharpe Ratio" value={report.sharpe_ratio.toFixed(3)} />
+              <MetricCard label="Max Drawdown" value={fmtPct(report.max_drawdown_pct)} valueClass="text-arena-red" />
+              <MetricCard label="Win Rate" value={`${(report.win_rate * 100).toFixed(1)}%`} subValue={`${report.winning_trades}W / ${report.losing_trades}L`} />
+              <MetricCard label="Profit Factor" value={report.profit_factor.toFixed(3)} />
+              <MetricCard label="Avg Hold" value={`${report.avg_hold_days.toFixed(1)}d`} />
+              <MetricCard label="Total Trades" value={String(report.total_trades)} />
+            </div>
+          </div>
+
+          {/* Strategy Diagnosis */}
+          {diagnosis.length > 0 && (
+            <div className="card-base p-4">
+              <h2 className="text-xs font-bold text-white mb-3 flex items-center gap-1.5">
+                <Stethoscope size={12} className="text-arena-purple" />
+                Strategy Diagnosis
+              </h2>
+              <div className="space-y-2">
+                {diagnosis.map((item, i) => {
+                  const icon = item.level === 'good'
+                    ? <CheckCircle size={14} className="text-arena-green shrink-0 mt-0.5" />
+                    : item.level === 'warning'
+                    ? <AlertTriangle size={14} className="text-arena-yellow shrink-0 mt-0.5" />
+                    : <XCircle size={14} className="text-arena-red shrink-0 mt-0.5" />;
+                  const bgClass = item.level === 'good'
+                    ? 'border-arena-green/20 bg-arena-green/5'
+                    : item.level === 'warning'
+                    ? 'border-arena-yellow/20 bg-arena-yellow/5'
+                    : 'border-arena-red/20 bg-arena-red/5';
+                  return (
+                    <div key={i} className={`rounded-lg border p-3 ${bgClass}`}>
+                      <div className="flex items-start gap-2">
+                        {icon}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-white">{item.title}</div>
+                          <div className="text-[11px] text-arena-text-dim mt-0.5">{item.detail}</div>
+                          <div className="flex items-start gap-1 mt-1.5">
+                            <Lightbulb size={11} className="text-arena-purple shrink-0 mt-0.5" />
+                            <div className="text-[11px] text-arena-text-secondary">
+                              {item.recommendation}
+                              {item.param && (
+                                <span className="text-arena-purple font-mono ml-1">→ {item.param}</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* LLM-Powered Analysis */}
+          <div className="card-base p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Sparkles size={12} className="text-arena-purple" />
+                AI Analysis
+              </h2>
+              {report && (
+                <button
+                  onClick={handleFetchLlmDiagnosis}
+                  disabled={llmLoading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-arena-purple/20 border border-arena-purple/40 rounded-lg text-[10px] font-semibold text-arena-purple hover:bg-arena-purple/30 transition-colors disabled:opacity-50"
+                >
+                  {llmLoading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  {llmLoading ? 'Analyzing...' : 'Get AI Analysis'}
+                </button>
+              )}
+            </div>
+            {llmAvailable === false && !llmLoading && (
+              <div className="text-[11px] text-arena-text-dim py-2">
+                LLM not available. Start Ollama (<code className="text-arena-purple">ollama serve</code>) to enable AI-powered analysis. The templated diagnosis above is still available.
+              </div>
+            )}
+            {llmAvailable === true && llmDiagnosis && (
+              <div className="bg-arena-bg rounded-lg p-3 border border-arena-border/50">
+                <pre className="text-[11px] text-arena-text-secondary whitespace-pre-wrap font-mono leading-relaxed">{llmDiagnosis}</pre>
+              </div>
+            )}
+            {llmAvailable === null && !llmLoading && report && (
+              <div className="text-[11px] text-arena-text-dim py-2">
+                Click <span className="text-arena-purple">Get AI Analysis</span> to send the report to the LLM for a deeper, context-aware diagnosis. Falls back to the templated diagnosis above if unavailable.
+              </div>
+            )}
+          </div>
+
+          {/* Equity Curve */}
+          {equityData.length > 0 && (
+            <div className="card-base p-4">
+              <h2 className="text-xs font-bold text-white mb-3 flex items-center gap-1.5">
+                <Zap size={12} className="text-arena-purple" />
+                Equity Curve
+              </h2>
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart data={equityData}>
+                  <defs>
+                    <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#8B5CF6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fill: '#5A6275', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={false}
+                    minTickGap={40}
+                  />
+                  <YAxis
+                    tick={{ fill: '#5A6275', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#10141B',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '8px',
+                      fontSize: '11px',
+                    }}
+                    labelStyle={{ color: '#8B92A5' }}
+                    formatter={(v: number) => [fmtCurrency(v), 'Equity']}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="equity"
+                    stroke="#8B5CF6"
+                    strokeWidth={2}
+                    fill="url(#equityGrad)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Per-Symbol Stats */}
+          {symbolStatsData.length > 0 && (
+            <div className="card-base p-4">
+              <h2 className="text-xs font-bold text-white mb-3">Per-Symbol Breakdown</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-arena-text-dim border-b border-arena-border">
+                      <th className="text-left py-2 px-2 font-medium">Symbol</th>
+                      <th className="text-right py-2 px-2 font-medium">Trades</th>
+                      <th className="text-right py-2 px-2 font-medium">Wins</th>
+                      <th className="text-right py-2 px-2 font-medium">Win Rate</th>
+                      <th className="text-right py-2 px-2 font-medium">Total PnL</th>
+                      <th className="text-right py-2 px-2 font-medium">Avg PnL %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {symbolStatsData.map(s => (
+                      <tr key={s.symbol} className="border-b border-arena-border/50 hover:bg-white/2">
+                        <td className="py-2 px-2 text-white font-medium">{s.symbol}</td>
+                        <td className="py-2 px-2 text-right text-arena-text-secondary">{s.trades}</td>
+                        <td className="py-2 px-2 text-right text-arena-green">{s.wins}</td>
+                        <td className="py-2 px-2 text-right text-arena-text-secondary">{(s.win_rate * 100).toFixed(1)}%</td>
+                        <td className={`py-2 px-2 text-right font-mono ${s.total_pnl >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+                          {s.total_pnl >= 0 ? '+' : ''}{fmtCurrency(s.total_pnl)}
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${s.avg_pnl_pct >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+                          {s.avg_pnl_pct >= 0 ? '+' : ''}{s.avg_pnl_pct.toFixed(2)}%
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* PnL Bar Chart by Symbol */}
+          {symbolStatsData.length > 0 && (
+            <div className="card-base p-4">
+              <h2 className="text-xs font-bold text-white mb-3">PnL by Symbol</h2>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={symbolStatsData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                  <XAxis
+                    dataKey="symbol"
+                    tick={{ fill: '#5A6275', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: '#5A6275', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#10141B',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: '8px',
+                      fontSize: '11px',
+                    }}
+                    formatter={(v: number) => [fmtCurrency(v), 'PnL']}
+                  />
+                  <Bar dataKey="total_pnl" radius={[4, 4, 0, 0]}>
+                    {symbolStatsData.map((entry, i) => (
+                      <Cell key={i} fill={entry.total_pnl >= 0 ? '#10B981' : '#EF4444'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Trade Log */}
+          {report.trades.length > 0 && (
+            <div className="card-base p-4">
+              <h2 className="text-xs font-bold text-white mb-3">
+                Trade Log <span className="text-arena-text-dim font-normal">({report.trades.length} trades)</span>
+              </h2>
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="w-full text-[10px]">
+                  <thead className="sticky top-0 bg-arena-card z-10">
+                    <tr className="text-arena-text-dim border-b border-arena-border">
+                      <th className="text-left py-2 px-2 font-medium">Symbol</th>
+                      <th className="text-left py-2 px-2 font-medium">Side</th>
+                      <th className="text-left py-2 px-2 font-medium">Entry</th>
+                      <th className="text-left py-2 px-2 font-medium">Exit</th>
+                      <th className="text-right py-2 px-2 font-medium">Entry $</th>
+                      <th className="text-right py-2 px-2 font-medium">Exit $</th>
+                      <th className="text-right py-2 px-2 font-medium">Qty</th>
+                      <th className="text-right py-2 px-2 font-medium">PnL</th>
+                      <th className="text-right py-2 px-2 font-medium">PnL %</th>
+                      <th className="text-right py-2 px-2 font-medium">Hold</th>
+                      <th className="text-left py-2 px-2 font-medium">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.trades.map((t, i) => (
+                      <tr key={i} className="border-b border-arena-border/30 hover:bg-white/2">
+                        <td className="py-1.5 px-2 text-white font-medium">{t.symbol}</td>
+                        <td className="py-1.5 px-2">
+                          <span className={t.side === 'long' ? 'text-arena-green' : 'text-arena-red'}>
+                            {t.side.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="py-1.5 px-2 text-arena-text-secondary">{t.entry_date}</td>
+                        <td className="py-1.5 px-2 text-arena-text-secondary">{t.exit_date}</td>
+                        <td className="py-1.5 px-2 text-right font-mono text-arena-text-secondary">${t.entry_price.toFixed(2)}</td>
+                        <td className="py-1.5 px-2 text-right font-mono text-arena-text-secondary">${t.exit_price.toFixed(2)}</td>
+                        <td className="py-1.5 px-2 text-right font-mono text-arena-text-secondary">{t.quantity.toFixed(4)}</td>
+                        <td className={`py-1.5 px-2 text-right font-mono font-medium ${t.pnl >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+                          {t.pnl >= 0 ? '+' : ''}{fmtCurrency(t.pnl)}
+                        </td>
+                        <td className={`py-1.5 px-2 text-right font-mono ${t.pnl_pct >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+                          {t.pnl_pct >= 0 ? '+' : ''}{t.pnl_pct.toFixed(2)}%
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-arena-text-secondary">{t.hold_days}d</td>
+                        <td className="py-1.5 px-2 text-arena-text-dim max-w-xs truncate" title={t.reason}>{t.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!report && !running && !error && (
+        <div className="card-base p-12 flex flex-col items-center justify-center text-center">
+          <FlaskConical size={32} className="text-arena-text-dim mb-3" />
+          <div className="text-sm text-arena-text-dim mb-1">No backtest results yet</div>
+          <div className="text-[10px] text-arena-text-dim">
+            Select a strategy and click <span className="text-arena-purple">Run Backtest</span> to see performance metrics
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({
+  label,
+  value,
+  subValue,
+  valueClass,
+}: {
+  label: string;
+  value: string;
+  subValue?: string;
+  valueClass?: string;
+}) {
+  return (
+    <div className="bg-arena-bg rounded-lg p-3 border border-arena-border/50">
+      <div className="text-[9px] text-arena-text-dim uppercase tracking-wider mb-1">{label}</div>
+      <div className={`text-sm font-bold font-mono ${valueClass || 'text-white'}`}>{value}</div>
+      {subValue && <div className="text-[9px] text-arena-text-dim mt-0.5">{subValue}</div>}
+    </div>
+  );
+}

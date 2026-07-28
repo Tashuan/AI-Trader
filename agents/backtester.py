@@ -206,7 +206,10 @@ class Backtester:
             if period:
                 df = ticker.history(period="2y", interval="1d", auto_adjust=False, raise_errors=False)
             else:
-                start = self.start_date
+                # Fetch from 1 year before start_date so indicators have enough
+                # history to compute (SMA20, Bollinger Bands, RSI all need 20+ bars).
+                fetch_start_dt = datetime.fromisoformat(self.start_date) - timedelta(days=365)
+                start = fetch_start_dt.strftime("%Y-%m-%d")
                 end_dt = datetime.fromisoformat(self.end_date) + timedelta(days=1) if self.end_date else datetime.now()
                 end = end_dt.strftime("%Y-%m-%d")
                 df = ticker.history(start=start, end=end, interval="1d", auto_adjust=False, raise_errors=False)
@@ -266,8 +269,16 @@ class Backtester:
                 trades=[],
             )
 
-        # Create mock agent
-        agent = BacktestAgent(self.personality, self.initial_capital)
+        # Create a dynamic class that inherits from the real strategy class
+        # and BacktestAgent, so the strategy's analyze() runs with backtest I/O overrides.
+        # BacktestAgent must come first in MRO so its I/O methods take precedence,
+        # but the strategy class provides analyze() and other strategy logic.
+        BacktestStrategy = type(
+            'BacktestStrategy',
+            (BacktestAgent, self.agent_class),
+            {},
+        )
+        agent = BacktestStrategy(self.personality, self.initial_capital)
         agent.on_start()
 
         equity_curve: list[dict] = []

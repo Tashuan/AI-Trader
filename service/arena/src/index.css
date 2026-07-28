@@ -137,4 +137,23 @@
     cursor: pointer;
     border: none;
   }
+
+  .date-picker-dark {
+    color-scheme: dark;
+    min-height: 32px;
+    padding-right: 8px;
+  }
+  .date-picker-dark::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.9;
+    width: 16px;
+    height: 16px;
+  }
+  .date-picker-dark::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+  .date-picker-dark::-moz-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.9;
+  }
 }

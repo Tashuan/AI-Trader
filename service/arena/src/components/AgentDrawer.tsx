@@ -140,13 +140,6 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                   </Section>
                 )}
 
-                {/* Growth Chart */}
-                {detail.profit_history && detail.profit_history.length > 1 && (
-                  <Section title="Growth" icon={<TrendingUp size={12} />}>
-                    <GrowthChart data={detail.profit_history} height={240} />
-                  </Section>
-                )}
-
                 {/* Positions */}
                 {detail.positions && detail.positions.length > 0 && (
                   <Section title="Open Positions" icon={<TrendingUp size={12} />}>
@@ -180,6 +173,13 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                         );
                       })}
                     </div>
+                  </Section>
+                )}
+
+                {/* Growth Chart */}
+                {detail.profit_history && detail.profit_history.length > 1 && (
+                  <Section title="Growth" icon={<TrendingUp size={12} />}>
+                    <GrowthChart data={detail.profit_history} height={240} />
                   </Section>
                 )}
 

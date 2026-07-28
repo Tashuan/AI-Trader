@@ -27,7 +27,14 @@ from pydantic import BaseModel
 from database import get_db_connection
 from permissions import agent_role, require_admin, require_agent
 from portfolio_risk_engine import _load_sector_map, _total_portfolio_equity, _utc_day_start
-from routes_shared import RouteContext, agent_identity_status, agent_is_verified, broadcast_activity
+from routes_shared import (
+    RouteContext,
+    agent_identity_status,
+    agent_is_verified,
+    broadcast_activity,
+    resolve_position_prices,
+    position_price_cache_key,
+)
 from arena_state import report_agent_state, get_agent_states, infer_state, confidence_label, STATE_META
 from arena_relationships import (
     compute_all_relationships,
@@ -666,7 +673,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         # Positions
         cursor.execute(
-            "SELECT symbol, market, side, quantity, entry_price, current_price, opened_at, stop_loss_price, take_profit_price FROM positions WHERE agent_id = ?",
+            "SELECT symbol, market, side, quantity, entry_price, current_price, opened_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct, peak_favorable_price, trailing_activated FROM positions WHERE agent_id = ?",
             (agent_id,),
         )
         positions = [dict(row) for row in cursor.fetchall()]
@@ -765,9 +772,10 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         if agent_id is not None:
             cursor.execute(
                 """
-                SELECT p.agent_id, a.name as agent_name, p.symbol, p.market, p.side,
+                SELECT p.agent_id, a.name as agent_name, p.symbol, p.market, p.token_id, p.outcome, p.side,
                        p.quantity, p.entry_price, p.current_price, p.opened_at,
-                       p.stop_loss_price, p.take_profit_price
+                       p.stop_loss_price, p.take_profit_price,
+                       p.trailing_sl_pct, p.trailing_activation_pct, p.peak_favorable_price, p.trailing_activated
                 FROM positions p
                 JOIN agents a ON a.id = p.agent_id
                 WHERE p.agent_id = ?
@@ -778,9 +786,10 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         else:
             cursor.execute(
                 """
-                SELECT p.agent_id, a.name as agent_name, p.symbol, p.market, p.side,
+                SELECT p.agent_id, a.name as agent_name, p.symbol, p.market, p.token_id, p.outcome, p.side,
                        p.quantity, p.entry_price, p.current_price, p.opened_at,
-                       p.stop_loss_price, p.take_profit_price
+                       p.stop_loss_price, p.take_profit_price,
+                       p.trailing_sl_pct, p.trailing_activation_pct, p.peak_favorable_price, p.trailing_activated
                 FROM positions p
                 JOIN agents a ON a.id = p.agent_id
                 ORDER BY p.opened_at DESC
@@ -790,10 +799,13 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         rows = cursor.fetchall()
         conn.close()
 
+        now_str = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        resolved_prices = resolve_position_prices(rows, now_str)
+
         positions = []
         for row in rows:
             entry_price = row["entry_price"]
-            current_price = row["current_price"]
+            current_price = resolved_prices.get(position_price_cache_key(row), row["current_price"])
             quantity = abs(row["quantity"]) if row["quantity"] else 0
             pnl = 0
             pnl_pct = 0
@@ -816,6 +828,10 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 "current_price": current_price,
                 "stop_loss_price": row["stop_loss_price"],
                 "take_profit_price": row["take_profit_price"],
+                "trailing_sl_pct": row["trailing_sl_pct"],
+                "trailing_activation_pct": row["trailing_activation_pct"],
+                "peak_favorable_price": row["peak_favorable_price"],
+                "trailing_activated": bool(row["trailing_activated"]),
                 "opened_at": row["opened_at"],
                 "pnl": round(pnl, 2),
                 "pnl_pct": round(pnl_pct, 1),
@@ -856,13 +872,21 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             placeholders = ",".join("?" for _ in agent_ids)
             cursor.execute(
                 f"""
-                SELECT agent_id, symbol, market, side, quantity, entry_price, current_price, opened_at, stop_loss_price, take_profit_price
+                SELECT agent_id, symbol, market, token_id, outcome, side, quantity, entry_price, current_price, opened_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct, peak_favorable_price, trailing_activated
                 FROM positions WHERE agent_id IN ({placeholders})
                 """,
                 agent_ids,
             )
-            for pos_row in cursor.fetchall():
+            all_pos_rows = cursor.fetchall()
+            for pos_row in all_pos_rows:
                 positions_by_agent.setdefault(pos_row["agent_id"], []).append(dict(pos_row))
+
+        # Resolve live prices for all positions (crypto/us-stock get fresh fetches)
+        if all_pos_rows:
+            now_str = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            resolved_prices = resolve_position_prices(list(all_pos_rows), now_str)
+        else:
+            resolved_prices = {}
 
         # Determine active agents: have open positions, running bots, or recent signals
         active_agent_ids: set[int] = set(positions_by_agent.keys())
@@ -1044,12 +1068,16 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             all_positions = []
             total_unrealized_pnl = 0
             for pos_row in positions:
+                pos_price = resolved_prices.get(
+                    position_price_cache_key(pos_row),
+                    pos_row.get("current_price"),
+                )
                 pos_pnl = 0
-                if pos_row.get("current_price") and pos_row.get("entry_price"):
+                if pos_price and pos_row.get("entry_price"):
                     if pos_row["side"] == "long":
-                        pos_pnl = (pos_row["current_price"] - pos_row["entry_price"]) * abs(pos_row["quantity"])
+                        pos_pnl = (pos_price - pos_row["entry_price"]) * abs(pos_row["quantity"])
                     else:
-                        pos_pnl = (pos_row["entry_price"] - pos_row["current_price"]) * abs(pos_row["quantity"])
+                        pos_pnl = (pos_row["entry_price"] - pos_price) * abs(pos_row["quantity"])
                 total_unrealized_pnl += pos_pnl
                 pos_pnl_pct = 0
                 if pos_row.get("entry_price") and pos_row["entry_price"] > 0:
@@ -1060,9 +1088,13 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                     "pnl": pos_pnl,
                     "pnl_pct": round(pos_pnl_pct, 1),
                     "entry_price": pos_row.get("entry_price"),
-                    "current_price": pos_row.get("current_price"),
+                    "current_price": pos_price,
                     "stop_loss_price": pos_row.get("stop_loss_price"),
                     "take_profit_price": pos_row.get("take_profit_price"),
+                    "trailing_sl_pct": pos_row.get("trailing_sl_pct"),
+                    "trailing_activation_pct": pos_row.get("trailing_activation_pct"),
+                    "peak_favorable_price": pos_row.get("peak_favorable_price"),
+                    "trailing_activated": bool(pos_row.get("trailing_activated")),
                     "quantity": pos_row.get("quantity"),
                     "opened_at": pos_row.get("opened_at"),
                 })

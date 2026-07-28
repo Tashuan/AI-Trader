@@ -11,6 +11,10 @@ export interface AgentPosition {
   current_price?: number | null;
   stop_loss_price?: number | null;
   take_profit_price?: number | null;
+  trailing_sl_pct?: number | null;
+  trailing_activation_pct?: number | null;
+  peak_favorable_price?: number | null;
+  trailing_activated?: boolean;
   quantity?: number | null;
   opened_at?: string | null;
   agent_id?: number;

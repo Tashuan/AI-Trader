@@ -678,10 +678,14 @@ async def auto_close_positions_loop():
                     SELECT p.id, p.agent_id, p.symbol, p.market, p.token_id, p.outcome,
                            p.side, p.quantity, p.entry_price, p.current_price,
                            p.stop_loss_price, p.take_profit_price, p.opened_at,
+                           p.trailing_sl_pct, p.trailing_activation_pct,
+                           p.peak_favorable_price, p.trailing_activated,
                            a.name as agent_name
                     FROM positions p
                     JOIN agents a ON a.id = p.agent_id
-                    WHERE p.stop_loss_price IS NOT NULL OR p.take_profit_price IS NOT NULL
+                    WHERE p.stop_loss_price IS NOT NULL
+                       OR p.take_profit_price IS NOT NULL
+                       OR p.trailing_sl_pct IS NOT NULL
                 """)
                 rows = cursor.fetchall()
             finally:
@@ -712,6 +716,87 @@ async def auto_close_positions_loop():
 
             fresh_prices = await asyncio.gather(*[fetch_fresh_price(r) for r in rows])
 
+            # ── Trailing SL ratchet: update peak price and SL before close check ──
+            trailing_updates = []
+            for idx, row in enumerate(rows):
+                trailing_pct = row["trailing_sl_pct"]
+                if trailing_pct is None:
+                    continue
+                current_price = fresh_prices[idx]
+                if current_price is None:
+                    continue
+
+                entry_price = row["entry_price"]
+                if not entry_price or entry_price <= 0:
+                    continue
+
+                side = row["side"]
+                activation_pct = row["trailing_activation_pct"]
+                activated = bool(row["trailing_activated"])
+                peak = row["peak_favorable_price"]
+                pos_id = row["id"]
+                symbol = row["symbol"]
+
+                # Compute profit % from entry
+                if side == "long":
+                    profit_pct = ((current_price - entry_price) / entry_price) * 100
+                else:
+                    profit_pct = ((entry_price - current_price) / entry_price) * 100
+
+                if not activated:
+                    # Check if activation threshold is met
+                    if activation_pct is not None and profit_pct >= activation_pct:
+                        activated = True
+                        if side == "long":
+                            peak = current_price
+                            new_sl = current_price * (1 - trailing_pct / 100)
+                        else:
+                            peak = current_price
+                            new_sl = current_price * (1 + trailing_pct / 100)
+                        trailing_updates.append((new_sl, peak, 1, pos_id))
+                        print(f"[Trailing] {symbol} {side} activated at {profit_pct:.2f}% profit, peak={peak:.4f}, SL={new_sl:.4f}")
+                else:
+                    # Already activated — ratchet SL as price moves favorably
+                    if side == "long":
+                        if peak is None or current_price > peak:
+                            peak = current_price
+                            new_sl = current_price * (1 - trailing_pct / 100)
+                            # Only ratchet SL up
+                            old_sl = row["stop_loss_price"]
+                            if old_sl is None or new_sl > old_sl:
+                                trailing_updates.append((new_sl, peak, 1, pos_id))
+                                print(f"[Trailing] {symbol} long ratcheted SL {old_sl} -> {new_sl:.4f} (peak={peak:.4f})")
+                            else:
+                                trailing_updates.append((old_sl, peak, 1, pos_id))
+                    else:
+                        if peak is None or current_price < peak:
+                            peak = current_price
+                            new_sl = current_price * (1 + trailing_pct / 100)
+                            # Only ratchet SL down
+                            old_sl = row["stop_loss_price"]
+                            if old_sl is None or new_sl < old_sl:
+                                trailing_updates.append((new_sl, peak, 1, pos_id))
+                                print(f"[Trailing] {symbol} short ratcheted SL {old_sl} -> {new_sl:.4f} (peak={peak:.4f})")
+                            else:
+                                trailing_updates.append((old_sl, peak, 1, pos_id))
+
+            # Write trailing updates to DB in one transaction
+            if trailing_updates:
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.executemany("""
+                        UPDATE positions
+                        SET stop_loss_price = ?, peak_favorable_price = ?, trailing_activated = ?
+                        WHERE id = ?
+                    """, trailing_updates)
+                    conn.commit()
+                finally:
+                    conn.close()
+
+            # Build a lookup of updated SLs by position id
+            updated_sls = {upd[3]: upd[0] for upd in trailing_updates}
+
             # ── Check thresholds and close sequentially (DB writes must be serial) ──
             closed_count = 0
             for idx, row in enumerate(rows):
@@ -722,7 +807,8 @@ async def auto_close_positions_loop():
                 symbol = row["symbol"]
                 market = row["market"]
                 side = row["side"]
-                stop_loss = row["stop_loss_price"]
+                # Use ratcheted SL if it was updated this cycle
+                stop_loss = updated_sls.get(row["id"], row["stop_loss_price"])
                 take_profit = row["take_profit_price"]
                 quantity = abs(row["quantity"])
                 agent_name = row["agent_name"] or "unknown"
@@ -798,8 +884,8 @@ async def auto_close_positions_loop():
                                 print(f"[Auto-Close] Borrow fee {symbol}: ${borrow_fee:.4f}")
 
                         try:
-                            import uuid
-                            signal_id = str(uuid.uuid4())
+                            from services import _reserve_signal_id
+                            signal_id = _reserve_signal_id(cursor)
                             cursor.execute(
                                 """
                                 INSERT INTO signals
@@ -1591,8 +1677,8 @@ async def limit_order_processor_loop():
                     )
 
                     # Log signal
-                    import uuid as _uuid
-                    signal_id = str(_uuid.uuid4())
+                    from services import _reserve_signal_id
+                    signal_id = _reserve_signal_id(cursor)
                     cursor.execute(
                         """
                         INSERT INTO signals

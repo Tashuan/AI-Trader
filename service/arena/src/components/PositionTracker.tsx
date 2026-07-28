@@ -16,10 +16,16 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
     current_price,
     stop_loss_price,
     take_profit_price,
+    trailing_sl_pct,
+    trailing_activation_pct,
+    peak_favorable_price,
+    trailing_activated,
     quantity,
     opened_at,
     agent_name,
   } = position;
+
+  const isTrailing = trailing_activated === true && trailing_sl_pct != null;
 
   const isLong = side === 'long';
   const hasSLTP = stop_loss_price != null || take_profit_price != null;
@@ -201,8 +207,11 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
       <div className="space-y-1.5">
         {/* Labels above bar */}
         <div className="flex items-center justify-between text-[10px] font-mono">
-          <span className="text-arena-red/80">
+          <span className="text-arena-red/80 flex items-center gap-1">
             SL ${sl.toFixed(2)}
+            {isTrailing && (
+              <span className="text-[8px] font-bold text-arena-purple bg-arena-purple/10 px-1 py-0.5 rounded">TRAIL</span>
+            )}
           </span>
           <span className={`font-semibold ${nearSL ? 'text-arena-red animate-pulse' : nearTP ? 'text-arena-green' : 'text-arena-text-dim'}`}>
             {nearSL
@@ -295,8 +304,21 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
         </div>
       </div>
 
-      {/* Footer — risk/reward + opened date */}
+      {/* Footer — trailing info + risk/reward + opened date */}
       <div className="pt-2 border-t border-arena-border space-y-1">
+        {isTrailing && (
+          <div className="flex items-center justify-between text-[9px] font-mono">
+            <span className="text-arena-purple/80">Trail: {trailing_sl_pct?.toFixed(1)}% below peak</span>
+            {peak_favorable_price != null && (
+              <span className="text-arena-text-dim">Peak: ${peak_favorable_price.toFixed(2)}</span>
+            )}
+          </div>
+        )}
+        {!isTrailing && trailing_sl_pct != null && trailing_activation_pct != null && (
+          <div className="flex items-center justify-between text-[9px] font-mono">
+            <span className="text-arena-text-dim">Trailing {trailing_sl_pct.toFixed(1)}% — activates at +{trailing_activation_pct.toFixed(1)}%</span>
+          </div>
+        )}
         {absQty > 0 && (
           <div className="flex items-center justify-between text-[10px] font-mono">
             <span className="text-arena-red/80">Risk -${potentialLoss.toFixed(2)}</span>

@@ -4,7 +4,7 @@ import { SidebarNav, type PageId } from './components/SidebarNav';
 import { TopMarketBar } from './components/TopMarketBar';
 // DISABLED: EventTicker — re-enable by uncommenting the import and render below
 // import { EventTicker } from './components/EventTicker';
-import { AgentArena } from './components/AgentArena';
+import { AgentDashboard } from './components/AgentDashboard';
 // DISABLED: CommentaryPanel — re-enable by uncommenting the import and render below
 // import { CommentaryPanel, ConversationPanel, HeadlinesPanel } from './components/SidePanels';
 import { ConversationPanel, HeadlinesPanel } from './components/SidePanels';
@@ -14,11 +14,12 @@ import { SettingsPage } from './pages/SettingsPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { PositionsPage } from './pages/PositionsPage';
-import { PortfolioRiskPanel } from './components/PortfolioRiskPanel';
+import { RiskPage } from './pages/RiskPage';
+import { BacktestPage } from './pages/BacktestPage';
 import type { Agent } from './types';
 
 export default function App() {
-  const { data, loading, error, mentionedAgent, portfolioRisk, portfolioRiskLastUpdated, userInfo, fetchPortfolioRisk } = useArenaData();
+  const { data, loading, error } = useArenaData();
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [currentPage, setCurrentPage] = useState<PageId>('arena');
 
@@ -81,36 +82,9 @@ export default function App() {
               <ConversationPanel timeline={timeline} />
             </div>
 
-            {/* Center: Agent Arena Grid */}
-            <AgentArena
-              agents={agents}
-              mentionedAgent={mentionedAgent}
-              onAgentClick={(agent) => setSelectedAgent(agent)}
-            />
+            {/* Center: Agent Dashboard */}
+            <AgentDashboard agents={agents} />
 
-            {/* Right Sidebar: Portfolio Risk */}
-            <div className="w-72 shrink-0 border-l border-arena-border p-3 h-[calc(100vh-48px)] overflow-y-auto">
-              <PortfolioRiskPanel
-                data={portfolioRisk}
-                isAdmin={userInfo?.is_admin ?? false}
-                lastUpdated={portfolioRiskLastUpdated}
-                onUnhalt={async () => {
-                  try {
-                    const resp = await fetch('/api/arena/portfolio-risk/unhalt', {
-                      method: 'POST',
-                      headers: {
-                        'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}`,
-                      },
-                    });
-                    if (resp.ok) {
-                      fetchPortfolioRisk();
-                    }
-                  } catch {
-                    // silent fail
-                  }
-                }}
-              />
-            </div>
           </div>
         )}
 
@@ -122,12 +96,20 @@ export default function App() {
           <PositionsPage />
         )}
 
+        {currentPage === 'risk' && (
+          <RiskPage />
+        )}
+
         {currentPage === 'agents' && (
           <AgentsPage />
         )}
 
         {currentPage === 'timeline' && (
           <TimelinePage timeline={timeline} />
+        )}
+
+        {currentPage === 'backtest' && (
+          <BacktestPage />
         )}
 
         {currentPage === 'settings' && (

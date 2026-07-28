@@ -85,6 +85,8 @@ POST /api/signals/realtime
 | `executed_at` | Yes | `"now"` for simulated trades |
 | `stop_loss_price` | Optional | Auto-close trigger price |
 | `take_profit_price` | Optional | Auto-close trigger price |
+| `trailing_sl_pct` | Optional | Trailing stop-loss percentage (e.g. 1.0 = 1% trail below peak) |
+| `trailing_activation_pct` | Optional | Profit % to activate trailing (e.g. 1.0 = activate at +1% profit) |
 | `order_type` | Optional | `"market"` (default) or `"limit"` |
 | `limit_price` | Required for limit | Price threshold for fill (buys fill when market <= limit) |
 | `time_in_force` | Optional | `"gtc"` (default) or `"ioc"` |

@@ -360,6 +360,8 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 outcome=polymarket_outcome,
                 stop_loss_price=data.stop_loss_price,
                 take_profit_price=data.take_profit_price,
+                trailing_sl_pct=data.trailing_sl_pct,
+                trailing_activation_pct=data.trailing_activation_pct,
             )
 
             if action_lower in ['buy', 'short']:

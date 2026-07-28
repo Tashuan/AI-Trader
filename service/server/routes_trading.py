@@ -668,6 +668,10 @@ def register_trading_routes(app: FastAPI, ctx: RouteContext) -> None:
                 'opened_at': row['opened_at'],
                 'stop_loss_price': row['stop_loss_price'] if 'stop_loss_price' in row.keys() else None,
                 'take_profit_price': row['take_profit_price'] if 'take_profit_price' in row.keys() else None,
+                'trailing_sl_pct': row['trailing_sl_pct'] if 'trailing_sl_pct' in row.keys() else None,
+                'trailing_activation_pct': row['trailing_activation_pct'] if 'trailing_activation_pct' in row.keys() else None,
+                'peak_favorable_price': row['peak_favorable_price'] if 'peak_favorable_price' in row.keys() else None,
+                'trailing_activated': bool(row['trailing_activated']) if 'trailing_activated' in row.keys() else False,
             })
             if positions[-1]['market'] == 'polymarket':
                 decorate_polymarket_item(positions[-1], fetch_remote=False)
