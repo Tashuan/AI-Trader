@@ -188,6 +188,59 @@ def _load_personalities() -> dict[str, Any]:
     return result
 
 
+def _load_goal_for_agent(cursor, agent_id: int, agent_cash: float = 100000.0) -> dict[str, Any]:
+    """Load goal data for an agent from config_json."""
+    cursor.execute('SELECT config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+    row = cursor.fetchone()
+    if not row or not row['config_json']:
+        return {'goal': None, 'status': 'no_goal', 'progress_pct': 0.0, 'can_trade': True}
+
+    try:
+        config = json.loads(row['config_json'])
+    except (json.JSONDecodeError, TypeError):
+        return {'goal': None, 'status': 'no_goal', 'progress_pct': 0.0, 'can_trade': True}
+
+    return _build_goal_data_from_config(config, agent_cash)
+
+
+def _build_goal_data_from_config(config: dict, agent_cash: float = 100000.0) -> dict[str, Any]:
+    """Build goal data from a pre-loaded config dict (no DB access)."""
+    goal = config.get('goal')
+    if not goal:
+        return {'goal': None, 'status': 'no_goal', 'progress_pct': 0.0, 'can_trade': True}
+
+    starting_equity = 100000.0
+    current_equity = float(agent_cash)
+    target = goal.get('target_amount', 0)
+    progress_pct = 0.0
+    if target > 0:
+        progress_pct = ((current_equity - starting_equity) / target) * 100
+
+    max_loss = goal.get('max_loss')
+    daily_loss = max(0.0, starting_equity - current_equity)
+    max_loss_hit = max_loss is not None and daily_loss >= max_loss
+    goal_achieved = current_equity >= starting_equity + target
+
+    status = 'active'
+    if goal_achieved:
+        status = 'achieved'
+    elif max_loss_hit:
+        status = 'max_loss_hit'
+    elif goal.get('status') == 'paused':
+        status = 'paused'
+
+    return {
+        'goal': goal,
+        'status': status,
+        'progress_pct': round(progress_pct, 1),
+        'can_trade': status == 'active',
+        'current_equity': round(current_equity, 2),
+        'starting_equity': starting_equity,
+        'goal_achieved': goal_achieved,
+        'max_loss_hit': max_loss_hit,
+    }
+
+
 # ============================================================
 # Helper: extract token and get agent
 # ============================================================
@@ -682,6 +735,9 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         personalities = _load_personalities()
         personality = personalities.get(agent["name"], {})
 
+        # Goal data
+        goal_data = _load_goal_for_agent(cursor, agent_id, float(agent.get("cash", 100000.0)))
+
         conn.close()
 
         return {
@@ -696,6 +752,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             "state": state,
             "relationships": relationships,
             "memories": memories,
+            "goal_data": goal_data,
         }
 
     # ─── GET /api/arena/positions — All open positions across agents ──
@@ -807,10 +864,35 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             for pos_row in cursor.fetchall():
                 positions_by_agent.setdefault(pos_row["agent_id"], []).append(dict(pos_row))
 
-        # Get profit history (latest for each agent)
-        profit_by_agent: dict[int, dict] = {}
+        # Determine active agents: have open positions, running bots, or recent signals
+        active_agent_ids: set[int] = set(positions_by_agent.keys())
+
+        # Add agents with recent signals (last 30 min)
         if agent_ids:
-            for aid in agent_ids:
+            cursor.execute(
+                f"""
+                SELECT DISTINCT agent_id FROM signals
+                WHERE agent_id IN ({placeholders})
+                AND datetime(created_at) > datetime('now', '-30 minutes')
+                """,
+                agent_ids,
+            )
+            for row in cursor.fetchall():
+                active_agent_ids.add(row["agent_id"])
+
+        # Add agents with running bots
+        bot_statuses = get_all_bot_statuses()
+        for row in agent_rows:
+            if bot_statuses.get(f"agent_{row['id']}"):
+                active_agent_ids.add(row["id"])
+
+        active_ids = list(active_agent_ids)
+        active_placeholders = ",".join("?" for _ in active_ids) if active_ids else ""
+
+        # Get profit history — only for active agents
+        profit_by_agent: dict[int, dict] = {}
+        if active_ids:
+            for aid in active_ids:
                 cursor.execute(
                     "SELECT total_value, cash, position_value, profit, recorded_at FROM profit_history WHERE agent_id = ? ORDER BY recorded_at DESC LIMIT 1",
                     (aid,),
@@ -819,80 +901,74 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 if row:
                     profit_by_agent[aid] = dict(row)
 
-        # Get trade counts and last trade
+        # Get trade counts and last trade — only for active agents
         trade_stats: dict[int, dict] = {}
-        if agent_ids:
-            for aid in agent_ids:
-                cursor.execute(
-                    """
-                    SELECT COUNT(*) as count, MAX(created_at) as last_trade_at
-                    FROM signals WHERE agent_id = ? AND message_type = 'operation'
-                    """,
-                    (aid,),
-                )
-                row = cursor.fetchone()
-                if row:
-                    trade_stats[aid] = dict(row)
-
-        # Get latest strategy signal (for thesis/reasoning)
         latest_strategy: dict[int, dict] = {}
-        if agent_ids:
-            for aid in agent_ids:
-                cursor.execute(
-                    """
-                    SELECT title, content, created_at
-                    FROM signals WHERE agent_id = ? AND message_type = 'strategy'
-                    ORDER BY created_at DESC LIMIT 1
-                    """,
-                    (aid,),
-                )
-                row = cursor.fetchone()
-                if row:
-                    latest_strategy[aid] = dict(row)
-
-        # Get agent stats — compute live per agent
-        stats_by_agent: dict[int, dict] = {}
-        if agent_ids:
-            for aid in agent_ids:
-                stats_by_agent[aid] = _compute_arena_stats(cursor, aid)
-
-        # Get last completed trade (for "Last Trade" display)
         last_trade_by_agent: dict[int, dict] = {}
-        if agent_ids:
-            for aid in agent_ids:
-                cursor.execute(
-                    """
-                    SELECT symbol, side, signal_type, pnl, created_at
-                    FROM signals WHERE agent_id = ? AND message_type = 'operation'
-                    ORDER BY created_at DESC LIMIT 1
-                    """,
-                    (aid,),
-                )
-                row = cursor.fetchone()
-                if row:
-                    last_trade_by_agent[aid] = dict(row)
+        if active_ids:
+            # Batch: trade counts and last trade time per agent
+            cursor.execute(
+                f"""
+                SELECT agent_id, COUNT(*) as count, MAX(created_at) as last_trade_at
+                FROM signals WHERE agent_id IN ({active_placeholders}) AND message_type = 'operation'
+                GROUP BY agent_id
+                """,
+                active_ids,
+            )
+            for row in cursor.fetchall():
+                trade_stats[row["agent_id"]] = dict(row)
+
+            # Batch: latest strategy signal per agent
+            cursor.execute(
+                f"""
+                SELECT DISTINCT ON (agent_id) agent_id, title, content, created_at
+                FROM signals WHERE agent_id IN ({active_placeholders}) AND message_type = 'strategy'
+                ORDER BY agent_id, created_at DESC
+                """,
+                active_ids,
+            )
+            for row in cursor.fetchall():
+                latest_strategy[row["agent_id"]] = dict(row)
+
+            # Batch: last completed trade per agent
+            cursor.execute(
+                f"""
+                SELECT DISTINCT ON (agent_id) agent_id, symbol, side, signal_type, pnl, created_at
+                FROM signals WHERE agent_id IN ({active_placeholders}) AND message_type = 'operation'
+                ORDER BY agent_id, created_at DESC
+                """,
+                active_ids,
+            )
+            for row in cursor.fetchall():
+                last_trade_by_agent[row["agent_id"]] = dict(row)
+
+        # Get agent stats — only for active agents
+        stats_by_agent: dict[int, dict] = {}
+        for aid in active_ids:
+            stats_by_agent[aid] = _compute_arena_stats(cursor, aid)
 
         conn.close()
 
-        # Get states, relationships, personalities
+        # Get states and personalities (skip relationships for now)
         states = get_agent_states()
-        all_relationships = compute_all_relationships()
         personalities = _load_personalities()
-        bot_statuses = get_all_bot_statuses()
+        all_relationships: dict[int, dict] = {}  # paused — was compute_all_relationships()
 
         # Check for recently active AI agents (any signal in last 5 min)
         recently_active: set[int] = set()
+        thoughts_by_agent: dict[int, list[dict]] = {}
+        memories_by_agent: dict[int, list[dict]] = {}
+        goal_configs_by_agent: dict[int, dict] = {}
         conn = get_db_connection()
         cursor = conn.cursor()
-        if agent_ids:
-            placeholders = ",".join("?" for _ in agent_ids)
+        if active_ids:
             cursor.execute(
                 f"""
                 SELECT DISTINCT agent_id FROM signals
-                WHERE agent_id IN ({placeholders})
+                WHERE agent_id IN ({active_placeholders})
                 AND datetime(created_at) > datetime('now', '-5 minutes')
                 """,
-                agent_ids,
+                active_ids,
             )
             for row in cursor.fetchall():
                 recently_active.add(row["agent_id"])
@@ -902,17 +978,16 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 f"""
                 SELECT DISTINCT actor_agent_id FROM experiment_events
                 WHERE event_type = 'agent_heartbeat'
-                AND actor_agent_id IN ({placeholders})
+                AND actor_agent_id IN ({active_placeholders})
                 AND datetime(created_at) > datetime('now', '-10 minutes')
                 """,
-                agent_ids,
+                active_ids,
             )
             for row in cursor.fetchall():
                 recently_active.add(row["actor_agent_id"])
 
-            # Fetch recent thoughts for each agent (last 5)
-            thoughts_by_agent: dict[int, list[dict]] = {}
-            for aid in agent_ids:
+            # Fetch recent thoughts — only for active agents
+            for aid in active_ids:
                 cursor.execute(
                     "SELECT content, created_at FROM agent_thoughts WHERE agent_id = ? ORDER BY id DESC LIMIT 5",
                     (aid,),
@@ -921,7 +996,34 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                     {"content": row["content"], "created_at": row["created_at"]}
                     for row in cursor.fetchall()
                 ]
-        conn.close()
+
+            # Batch-fetch memories for active agents
+            cursor.execute(
+                f"""
+                SELECT agent_id, memory_type, content, symbol, related_agent_id, impact, created_at
+                FROM agent_memories
+                WHERE agent_id IN ({active_placeholders})
+                ORDER BY created_at DESC
+                """,
+                active_ids,
+            )
+            for mrow in cursor.fetchall():
+                aid_m = mrow["agent_id"]
+                if aid_m not in memories_by_agent:
+                    memories_by_agent[aid_m] = []
+                if len(memories_by_agent[aid_m]) < 3:
+                    memories_by_agent[aid_m].append(dict(mrow))
+
+            # Batch-fetch goal/config_json for active agents
+            cursor.execute(
+                f"SELECT agent_id, config_json FROM agent_configs WHERE agent_id IN ({active_placeholders})",
+                active_ids,
+            )
+            for crow in cursor.fetchall():
+                try:
+                    goal_configs_by_agent[crow["agent_id"]] = json.loads(crow["config_json"]) if crow["config_json"] else {}
+                except (json.JSONDecodeError, TypeError):
+                    goal_configs_by_agent[crow["agent_id"]] = {}
 
         # Build agent list
         agents = []
@@ -987,9 +1089,13 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             # Relationship focus
             rel_focus = get_relationship_focus(aid, rels)
 
-            # Memories
-            memories = get_agent_memories(aid, limit=3)
+            # Memories — use batched data
+            memories = memories_by_agent.get(aid, [])
             memory_strings = [m["content"] for m in memories]
+
+            # Goal data — use batched config data
+            agent_config = goal_configs_by_agent.get(aid, {})
+            goal_data = _build_goal_data_from_config(agent_config, float(row["cash"] or 100000.0))
 
             # Today's P&L — use unrealized P&L from open positions, fall back to profit_history
             total_profit = profit_info.get("profit", 0)
@@ -1048,7 +1154,10 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 "risk_tolerance": personality.get("risk_tolerance", ""),
                 "strategy_type": personality.get("strategy_type", ""),
                 "thoughts": [t["content"] for t in thoughts_by_agent.get(aid, [])],
+                "goal_data": goal_data,
             })
+
+        conn.close()
 
         # Build markets data (lightweight — just agent attention, no prices)
         markets: dict[str, Any] = {}

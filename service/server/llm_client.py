@@ -49,6 +49,8 @@ class LLMClient:
 
     @property
     def is_configured(self) -> bool:
+        if os.getenv("ARENA_LLM_DISABLED", "").lower().strip() in ("1", "true", "yes", "on"):
+            return False
         if self.provider == "ollama":
             return True
         return bool(self.api_key)

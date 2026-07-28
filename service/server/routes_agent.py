@@ -19,6 +19,10 @@ from routes_models import (
     AgentPasswordResetRequest,
     AgentRegister,
     AgentTaskCreate,
+    GoalCreateRequest,
+    GoalUpdateRequest,
+    StrategyParamsUpdate,
+    PositionStateUpdate,
 )
 from routes_shared import (
     AGENT_MESSAGE_SUMMARY_CACHE_KEY_PREFIX,
@@ -1051,3 +1055,311 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
         if agent:
             return attach_experiment_unread_notice(dict(payload), agent['id'], surface='agents_count', ctx=ctx)
         return payload
+
+    # ─── Goal endpoints (self-service) ────────────────────────────
+
+    @app.get('/api/claw/agents/me/goal')
+    async def get_agent_goal(authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT config_json FROM agent_configs WHERE agent_id = ?', (agent['id'],))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or not row['config_json']:
+            return {'goal': None, 'status': 'no_goal'}
+
+        try:
+            config = json.loads(row['config_json'])
+        except (json.JSONDecodeError, TypeError):
+            return {'goal': None, 'status': 'no_goal'}
+
+        goal = config.get('goal')
+        if not goal:
+            return {'goal': None, 'status': 'no_goal'}
+
+        # Compute live progress
+        starting_equity = 100000.0
+        current_equity = float(agent.get('cash', 100000.0))
+        progress_pct = 0.0
+        if goal.get('target_amount', 0) > 0:
+            progress_pct = ((current_equity - starting_equity) / goal['target_amount']) * 100
+
+        max_loss = goal.get('max_loss')
+        daily_loss = max(0.0, starting_equity - current_equity)
+        max_loss_hit = max_loss is not None and daily_loss >= max_loss
+        goal_achieved = current_equity >= starting_equity + goal.get('target_amount', 0)
+
+        status = 'active'
+        if goal_achieved:
+            status = 'achieved'
+        elif max_loss_hit:
+            status = 'max_loss_hit'
+        elif goal.get('status') == 'paused':
+            status = 'paused'
+
+        can_trade = status == 'active'
+
+        return {
+            'goal': goal,
+            'status': status,
+            'can_trade': can_trade,
+            'progress_pct': round(progress_pct, 1),
+            'current_equity': round(current_equity, 2),
+            'starting_equity': starting_equity,
+            'goal_achieved': goal_achieved,
+            'max_loss_hit': max_loss_hit,
+        }
+
+    @app.post('/api/claw/agents/me/goal')
+    async def set_agent_goal(data: GoalCreateRequest, authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        if data.target_amount <= 0:
+            raise HTTPException(status_code=400, detail='target_amount must be positive')
+
+        goal = {
+            'target_amount': data.target_amount,
+            'deadline': data.deadline,
+            'max_loss': data.max_loss,
+            'description': data.description or '',
+            'status': 'active',
+            'created_at': datetime.now(timezone.utc).isoformat() + 'Z',
+        }
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, config_json FROM agent_configs WHERE agent_id = ?', (agent['id'],))
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                config = json.loads(row['config_json']) if row['config_json'] else {}
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+            config['goal'] = goal
+            cursor.execute(
+                'UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE agent_id = ?',
+                (json.dumps(config), datetime.now(timezone.utc).isoformat(), agent['id']),
+            )
+        else:
+            config = {'goal': goal}
+            cursor.execute(
+                'INSERT INTO agent_configs (agent_id, config_json, created_at, updated_at) VALUES (?, ?, ?, ?)',
+                (agent['id'], json.dumps(config), datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
+            )
+        conn.commit()
+        conn.close()
+
+        return {'success': True, 'goal': goal}
+
+    @app.delete('/api/claw/agents/me/goal')
+    async def clear_agent_goal(authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, config_json FROM agent_configs WHERE agent_id = ?', (agent['id'],))
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                config = json.loads(row['config_json']) if row['config_json'] else {}
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+            config.pop('goal', None)
+            cursor.execute(
+                'UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE agent_id = ?',
+                (json.dumps(config), datetime.now(timezone.utc).isoformat(), agent['id']),
+            )
+            conn.commit()
+        conn.close()
+
+        return {'success': True, 'message': 'Goal cleared'}
+
+    # ─── Strategy params endpoints (self-service) ─────────────────
+
+    DEFAULT_STRATEGY_PARAMS = {
+        'exit_rules': {
+            'stop_loss_pct': -2.0,
+            'take_profit_pct': 2.0,
+            'stagnation_cycles': 6,
+            'stagnation_threshold_pct': 0.3,
+            'momentum_death_vol_ratio': 0.5,
+            'ob_exhaustion_rsi': 75,
+        },
+        'entry_criteria': {
+            'min_signals': 4,
+            'min_signal_families': 2,
+            'min_vol_ratio': 1.5,
+            'bearish_macro_min_signals': 5,
+            'bearish_macro_threshold': 0.3,
+        },
+        'position_sizing': {
+            'max_positions': 1,
+            'normal_sizing_min_pct': 25,
+            'normal_sizing_max_pct': 40,
+            'approaching_sizing_min_pct': 15,
+            'approaching_sizing_max_pct': 25,
+            'final_stretch_tp_pct': 1.5,
+            'consecutive_loss_threshold': 3,
+            'consecutive_loss_size_cut_pct': 50,
+            'consecutive_loss_min_signals': 5,
+        },
+        'switch_logic': {
+            'switch_score_threshold_pct': 20,
+            'reentry_cooldown_cycles': 3,
+            'switch_require_profitable': True,
+        },
+        'scoring_weights': {
+            'signal_count_weight': 1.0,
+            'family_diversity_weight': 0.5,
+            'candle_quality_weight': 0.3,
+            'consolidation_bonus_weight': 0.2,
+        },
+        'indicators': {
+            'rsi_period': 14,
+            'rsi_bullish': 55,
+            'rsi_overbought': 75,
+            'rsi_oversold': 25,
+            'macd_fast': 12,
+            'macd_slow': 26,
+            'macd_signal': 9,
+            'ema_period': 20,
+            'stochastic_period': 14,
+            'atr_period': 14,
+            'vol_ratio_bullish': 1.5,
+            'vol_ratio_dead': 0.5,
+        },
+    }
+
+    def _merge_strategy_defaults(stored: dict) -> dict:
+        """Merge stored params over defaults so all fields are always populated."""
+        result = {}
+        for section, defaults in DEFAULT_STRATEGY_PARAMS.items():
+            stored_section = stored.get(section, {})
+            if isinstance(stored_section, dict):
+                result[section] = {**defaults, **stored_section}
+            else:
+                result[section] = defaults
+        # Include any extra top-level keys that aren't in defaults
+        for key, val in stored.items():
+            if key not in result:
+                result[key] = val
+        return result
+
+    @app.get('/api/claw/agents/me/strategy-params')
+    async def get_agent_strategy_params(authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT config_json FROM agent_configs WHERE agent_id = ?', (agent['id'],))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or not row['config_json']:
+            return {'strategy_params': _merge_strategy_defaults({})}
+
+        try:
+            config = json.loads(row['config_json'])
+        except (json.JSONDecodeError, TypeError):
+            return {'strategy_params': _merge_strategy_defaults({})}
+
+        return {'strategy_params': _merge_strategy_defaults(config.get('strategy_params', {}))}
+
+    @app.patch('/api/claw/agents/me/strategy-params')
+    async def update_agent_strategy_params(data: StrategyParamsUpdate, authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, config_json FROM agent_configs WHERE agent_id = ?', (agent['id'],))
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                config = json.loads(row['config_json']) if row['config_json'] else {}
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+        else:
+            config = {}
+
+        params = config.get('strategy_params', {})
+
+        update_data = data.model_dump(exclude_none=True)
+        for key, value in update_data.items():
+            if isinstance(value, dict) and key in params and isinstance(params[key], dict):
+                params[key] = {**params[key], **value}
+            else:
+                params[key] = value
+
+        config['strategy_params'] = params
+
+        if row:
+            cursor.execute(
+                'UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE agent_id = ?',
+                (json.dumps(config), datetime.now(timezone.utc).isoformat(), agent['id']),
+            )
+        else:
+            cursor.execute(
+                'INSERT INTO agent_configs (agent_id, config_json, created_at, updated_at) VALUES (?, ?, ?, ?)',
+                (agent['id'], json.dumps(config), datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
+            )
+        conn.commit()
+        conn.close()
+
+        return {'success': True, 'strategy_params': params}
+
+    # ─── Position state endpoint (self-service) ───────────────────
+
+    @app.patch('/api/positions/{position_id}/state')
+    async def update_position_state(position_id: int, data: PositionStateUpdate, authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM positions WHERE id = ? AND agent_id = ?', (position_id, agent['id']))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail='Position not found')
+
+        fields = []
+        values = []
+        if data.cycles_flat is not None:
+            fields.append('cycles_flat = ?')
+            values.append(data.cycles_flat)
+        if data.entry_score is not None:
+            fields.append('entry_score = ?')
+            values.append(data.entry_score)
+        if data.consecutive_losses is not None:
+            fields.append('consecutive_losses = ?')
+            values.append(data.consecutive_losses)
+
+        if fields:
+            values.append(position_id)
+            cursor.execute(f"UPDATE positions SET {', '.join(fields)} WHERE id = ?", values)
+            conn.commit()
+        conn.close()
+
+        return {'success': True, 'position_id': position_id}

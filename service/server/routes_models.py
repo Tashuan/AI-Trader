@@ -367,3 +367,36 @@ class AgentConfigUpdate(BaseModel):
     poll_interval: Optional[int] = None
     api_base: Optional[str] = None
     generate_files: bool = False
+
+
+class GoalCreateRequest(BaseModel):
+    target_amount: float
+    deadline: Optional[str] = None
+    max_loss: Optional[float] = None
+    description: Optional[str] = None
+
+
+class GoalUpdateRequest(BaseModel):
+    target_amount: Optional[float] = None
+    deadline: Optional[str] = None
+    max_loss: Optional[float] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+
+class StrategyParamsUpdate(BaseModel):
+    exit_rules: Optional[Dict[str, Any]] = None
+    entry_criteria: Optional[Dict[str, Any]] = None
+    position_sizing: Optional[Dict[str, Any]] = None
+    switch_logic: Optional[Dict[str, Any]] = None
+    scoring_weights: Optional[Dict[str, Any]] = None
+    indicators: Optional[Dict[str, Any]] = None
+    watchlist: Optional[List[str]] = None
+    sweep: Optional[Dict[str, Any]] = None
+    cycle_timing: Optional[Dict[str, Any]] = None
+
+
+class PositionStateUpdate(BaseModel):
+    cycles_flat: Optional[int] = None
+    entry_score: Optional[float] = None
+    consecutive_losses: Optional[int] = None

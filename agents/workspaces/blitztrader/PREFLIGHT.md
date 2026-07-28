@@ -1,31 +1,42 @@
 # PREFLIGHT — Read This EVERY CYCLE Before Doing Anything
 
+## Goal Check (FIRST — Before Anything Else)
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/claw/agents/me/goal | jq '{status, can_trade, progress_pct, goal_achieved, max_loss_hit}'
+```
+
+- `can_trade: false` → Skip to Position Review only. No new entries.
+- `goal_achieved: true` → Manage existing positions (close at profit targets). No new entries.
+- `max_loss_hit: true` → Stop trading entirely. Log it. Wait for user reset.
+- `status: "active"` → Proceed normally with goal-aware sizing.
+
+---
+
 ## Non-Negotiable Exit Rules (Hard-Coded, Not LLM Discretion)
 
-These fire regardless of how good the "thesis" still sounds. Check them FIRST, in this order, before writing any narrative reasoning.
+scan.py evaluates all 6 rules automatically. Check the `positions` array in scan.py output first. These fire regardless of how good the "thesis" still sounds.
 
-1. **Hard stop-loss: entry − (1.5 × ATR14)** for longs, **entry + (1.5 × ATR14)** for shorts. Compute ATR14 from 1h at entry, store in journal, don't recompute. No exceptions. Close immediately.
-2. **Profit target: entry + (3 × ATR14)** for longs, **entry − (3 × ATR14)** for shorts (2:1 reward/risk). Scale out per sizing plan. Don't rationalize holding for "more" without a new, independently-scored setup.
-3. **Stagnation timeout:** 6 consecutive cycles with price move < 0.3×ATR either direction AND no new volume signal → EXIT. Track `cycles_flat` per position mechanically:
-   - `cycles_flat += 1` if abs(price_change_since_last_cycle) < 0.3×ATR, else reset to 0.
-   - `if cycles_flat >= 6: close position, log reason "stagnation timeout"`.
+1. **Hard stop-loss: -2%.** No exceptions. Close immediately.
+2. **Profit target: +2%.** Scale out per sizing plan. Don't rationalize holding for "more" without a new, independently-scored setup. **Final stretch (within 20% of goal): take profit at 1.5% instead.**
+3. **Stagnation timeout:** 6 consecutive cycles with price move < 0.3% either direction AND no new volume signal → EXIT. `cycles_flat` is persisted in DB via `PATCH /api/positions/{id}/state`.
 4. **Momentum death:** volume ratio drops below 0.5x → exit, no debate.
 5. **Overbought exhaustion:** RSI > 75 AND volume dropping while price still rising → exit.
 6. **VWAP loss:** price closes below VWAP on a long entered above VWAP → exit.
 
-If you catch yourself writing "I'll hold one more cycle" for the second time about the same position, the rule above should already have fired. Check it before writing that sentence again.
+If scan.py returns `verdict: "EXIT"` for any position, execute the close immediately. The `exit_reason` field tells you which rule fired. No further reasoning needed.
 
 ---
 
 ## Position Review Template (Fill Out EVERY Open Position, EVERY Cycle)
 
-Copy this block for each open position. Fill in numbers BEFORE writing any interpretation. Numbers first, story second.
+scan.py provides the values. Copy this block for each open position into your journal:
 
 ```
 POSITION: [symbol] | SIDE: [long/short] | ENTRY: $[x] | CURRENT: $[x] | PnL: [x]%
 SL distance: [x]% | TP distance: [x]% | cycles_flat: [n] | vol_ratio: [x] | RSI: [x] | VWAP: [above/below]
-Rule 1 (1.5×ATR SL): [FIRED/NOT FIRED]
-Rule 2 (3×ATR TP): [FIRED/NOT FIRED]
+Rule 1 (-2% SL): [FIRED/NOT FIRED]
+Rule 2 (+2% TP): [FIRED/NOT FIRED]
 Rule 3 (stagnation 6 cycles): [FIRED/NOT FIRED]
 Rule 4 (momentum death vol<0.5x): [FIRED/NOT FIRED]
 Rule 5 (OB exhaustion RSI>75): [FIRED/NOT FIRED]
@@ -40,10 +51,12 @@ If NO rule fired → you may write qualitative read (momentum, OBV, thesis statu
 
 ## Entry Guardrails (Quick Reference)
 
-- Need 4+ signals across 2+ signal families AND volume ratio > 1.5x
-- Weight confidence lower if all 4+ signals are from same family (trend vs volume vs volatility)
+- **Run scan.py first:** `python3 scan.py --token $TOKEN` — check `ranked_setups` for qualifying entries
+- Need 4+ signals across 2+ signal families AND volume ratio > 1.5x (scan.py checks this)
 - After 3 consecutive losing trades: cut size 50%, require 5+ signals from 2+ families
+- **Single position model:** max 1 open position at a time
 - Never double up on a symbol you already hold — check `GET /api/positions` first
 - Every entry MUST include `stop_loss_price` and `take_profit_price` (platform auto-close is primary enforcement)
 - Bearish macro (bullish_count/total < 0.3): require 5+ signals, cut sizes 50%
+- **Goal-aware sizing:** Normal phase (0-80% progress) 25-40%, Approaching goal (80-100%) 15-25%
 - No setup = no trade. A fired exit rule = no debate.

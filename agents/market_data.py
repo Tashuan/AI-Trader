@@ -37,7 +37,6 @@ class TechnicalSnapshot:
     volume: float
     avg_volume: float
     atr: Optional[float] = None
-    avg_atr: Optional[float] = None
     signals: list[str] = field(default_factory=list)
 
     @property
@@ -228,97 +227,7 @@ class MarketDataClient:
         if len(closes) < 20:
             return None
 
-        latest = closes.iloc[-1]
-        if hasattr(latest, "item"):
-            latest = latest.item()
-        latest = float(latest)
-
-        sma_20 = float(closes.iloc[-20:].mean())
-        sma_50 = float(closes.iloc[-min(50, len(closes)):].mean()) if len(closes) >= 50 else None
-
-        # RSI (14-period)
-        deltas = closes.diff().dropna()
-        gains = deltas.clip(lower=0)
-        losses = deltas.clip(upper=0).abs()
-        avg_gain = float(gains.iloc[-14:].mean())
-        avg_loss = float(losses.iloc[-14:].mean())
-        rsi = 100 - (100 / (1 + (avg_gain / avg_loss if avg_loss > 0 else 999)))
-
-        # MACD (12, 26, 9)
-        ema_12 = closes.ewm(span=12, adjust=False).mean()
-        ema_26 = closes.ewm(span=26, adjust=False).mean()
-        macd_line = ema_12 - ema_26
-        signal_line = macd_line.ewm(span=9, adjust=False).mean()
-        macd_val = float(macd_line.iloc[-1])
-        signal_val = float(signal_line.iloc[-1])
-        macd_hist = macd_val - signal_val
-
-        # Bollinger Bands
-        bb_std = float(closes.iloc[-20:].std())
-        bb_upper = sma_20 + 2 * bb_std
-        bb_lower = sma_20 - 2 * bb_std
-
-        # Support/Resistance
-        recent = closes.iloc[-20:]
-        support = float(recent.min())
-        resistance = float(recent.max())
-
-        # Returns
-        ret_5d = ((latest - float(closes.iloc[-6])) / float(closes.iloc[-6]) * 100) if len(closes) >= 6 else None
-        ret_20d = ((latest - float(closes.iloc[-21])) / float(closes.iloc[-21]) * 100) if len(closes) >= 21 else None
-
-        # Volume
-        vol = float(volumes.iloc[-1]) if volumes is not None and len(volumes) > 0 else 0
-        avg_vol = float(volumes.iloc[-20:].mean()) if volumes is not None and len(volumes) >= 20 else vol
-
-        # ATR (14-period) and avg ATR (20-period average of ATR)
-        atr, avg_atr = self._calculate_atr_with_avg(highs, lows, closes)
-
-        # Build signals
-        signals = []
-        if rsi < 30:
-            signals.append("RSI oversold")
-        elif rsi > 70:
-            signals.append("RSI overbought")
-        if macd_hist > 0:
-            signals.append("MACD bullish")
-        else:
-            signals.append("MACD bearish")
-        if latest > sma_20:
-            signals.append("Above SMA20")
-        else:
-            signals.append("Below SMA20")
-        if latest < bb_lower:
-            signals.append("Below lower BB")
-        elif latest > bb_upper:
-            signals.append("Above upper BB")
-        if sma_50 and latest > sma_50:
-            signals.append("Above SMA50")
-        elif sma_50:
-            signals.append("Below SMA50")
-
-        return TechnicalSnapshot(
-            symbol=symbol,
-            price=latest,
-            rsi=rsi,
-            macd=macd_val,
-            macd_signal=signal_val,
-            macd_histogram=macd_hist,
-            sma_20=sma_20,
-            sma_50=sma_50,
-            bollinger_upper=bb_upper,
-            bollinger_lower=bb_lower,
-            bollinger_mid=sma_20,
-            support=support,
-            resistance=resistance,
-            return_5d=ret_5d,
-            return_20d=ret_20d,
-            volume=vol,
-            avg_volume=avg_vol,
-            atr=atr,
-            avg_atr=avg_atr,
-            signals=signals,
-        )
+        return self._compute_indicators(symbol, closes, highs, lows, volumes)
 
     def _fetch_technical_finnhub(self, symbol: str) -> Optional[TechnicalSnapshot]:
         """Fallback: Fetch technical analysis using Finnhub API (free tier: 60 calls/min)."""
@@ -377,7 +286,158 @@ class MarketDataClient:
         if len(closes) < 20:
             return None
 
-        latest = float(closes.iloc[-1])
+        return self._compute_indicators(symbol, closes, highs, lows, volumes)
+
+    # ============================================================
+    # Shared Indicator Computation (pandas-ta with manual fallback)
+    # ============================================================
+
+    @staticmethod
+    def _compute_indicators(
+        symbol: str,
+        closes,
+        highs=None,
+        lows=None,
+        volumes=None,
+    ) -> Optional[TechnicalSnapshot]:
+        """Compute technical indicators from OHLCV data using pandas-ta.
+
+        Falls back to manual calculations if pandas-ta is not installed.
+        Both yfinance and Finnhub paths delegate here to avoid duplication.
+        """
+        try:
+            import pandas as pd
+        except ImportError:
+            return None
+
+        if len(closes) < 20:
+            return None
+
+        latest = closes.iloc[-1]
+        if hasattr(latest, "item"):
+            latest = latest.item()
+        latest = float(latest)
+
+        # Try pandas-ta first
+        try:
+            import pandas_ta as ta
+            return MarketDataClient._compute_indicators_pandas_ta(
+                symbol, closes, highs, lows, volumes, latest, pd, ta
+            )
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        # Manual fallback
+        return MarketDataClient._compute_indicators_manual(
+            symbol, closes, highs, lows, volumes, latest, pd
+        )
+
+    @staticmethod
+    def _compute_indicators_pandas_ta(
+        symbol: str,
+        closes,
+        highs,
+        lows,
+        volumes,
+        latest: float,
+        pd,
+        ta,
+    ) -> Optional[TechnicalSnapshot]:
+        """Compute indicators using pandas-ta library."""
+        df = pd.DataFrame({"close": closes})
+        if highs is not None:
+            df["high"] = highs
+        if lows is not None:
+            df["low"] = lows
+        if volumes is not None:
+            df["volume"] = volumes
+
+        # RSI (14-period)
+        rsi_col = ta.rsi(df["close"], length=14)
+        rsi = float(rsi_col.iloc[-1]) if rsi_col is not None and not rsi_col.isna().all() else 50.0
+
+        # MACD (12, 26, 9)
+        macd_df = ta.macd(df["close"], fast=12, slow=26, signal=9)
+        if macd_df is not None and not macd_df.empty:
+            macd_val = float(macd_df.iloc[-1].get("MACD_12_26_9", 0))
+            signal_val = float(macd_df.iloc[-1].get("MACDs_12_26_9", 0))
+            macd_hist = float(macd_df.iloc[-1].get("MACDh_12_26_9", 0))
+        else:
+            macd_val = signal_val = macd_hist = 0.0
+
+        # SMA
+        sma_20 = float(ta.sma(df["close"], length=20).iloc[-1])
+        sma_50_series = ta.sma(df["close"], length=50) if len(closes) >= 50 else None
+        sma_50 = float(sma_50_series.iloc[-1]) if sma_50_series is not None and not sma_50_series.isna().all() else None
+
+        # Bollinger Bands
+        bb_df = ta.bbands(df["close"], length=20, std=2)
+        if bb_df is not None and not bb_df.empty:
+            bb_upper = float(bb_df.iloc[-1].get("BBU_20_2.0", sma_20))
+            bb_lower = float(bb_df.iloc[-1].get("BBL_20_2.0", sma_20))
+        else:
+            bb_std = float(closes.iloc[-20:].std())
+            bb_upper = sma_20 + 2 * bb_std
+            bb_lower = sma_20 - 2 * bb_std
+
+        # ATR
+        atr = None
+        if highs is not None and lows is not None:
+            atr_series = ta.atr(df["high"], df["low"], df["close"], length=14)
+            if atr_series is not None and not atr_series.isna().all():
+                atr = float(atr_series.iloc[-1])
+
+        # Support/Resistance
+        recent = closes.iloc[-20:]
+        support = float(recent.min())
+        resistance = float(recent.max())
+
+        # Returns
+        ret_5d = ((latest - float(closes.iloc[-6])) / float(closes.iloc[-6]) * 100) if len(closes) >= 6 else None
+        ret_20d = ((latest - float(closes.iloc[-21])) / float(closes.iloc[-21]) * 100) if len(closes) >= 21 else None
+
+        # Volume
+        vol = float(volumes.iloc[-1]) if volumes is not None and len(volumes) > 0 else 0
+        avg_vol = float(volumes.iloc[-20:].mean()) if volumes is not None and len(volumes) >= 20 else vol
+
+        # Build signals
+        signals = MarketDataClient._build_signals(rsi, macd_hist, latest, sma_20, bb_lower, bb_upper, sma_50)
+
+        return TechnicalSnapshot(
+            symbol=symbol,
+            price=latest,
+            rsi=rsi,
+            macd=macd_val,
+            macd_signal=signal_val,
+            macd_histogram=macd_hist,
+            sma_20=sma_20,
+            sma_50=sma_50,
+            bollinger_upper=bb_upper,
+            bollinger_lower=bb_lower,
+            bollinger_mid=sma_20,
+            support=support,
+            resistance=resistance,
+            return_5d=ret_5d,
+            return_20d=ret_20d,
+            volume=vol,
+            avg_volume=avg_vol,
+            atr=atr,
+            signals=signals,
+        )
+
+    @staticmethod
+    def _compute_indicators_manual(
+        symbol: str,
+        closes,
+        highs,
+        lows,
+        volumes,
+        latest: float,
+        pd,
+    ) -> Optional[TechnicalSnapshot]:
+        """Manual indicator computation fallback when pandas-ta is not available."""
         sma_20 = float(closes.iloc[-20:].mean())
         sma_50 = float(closes.iloc[-min(50, len(closes)):].mean()) if len(closes) >= 50 else None
 
@@ -413,34 +473,14 @@ class MarketDataClient:
         ret_20d = ((latest - float(closes.iloc[-21])) / float(closes.iloc[-21]) * 100) if len(closes) >= 21 else None
 
         # Volume
-        vol = float(volumes.iloc[-1]) if len(volumes) > 0 else 0
-        avg_vol = float(volumes.iloc[-20:].mean()) if len(volumes) >= 20 else vol
+        vol = float(volumes.iloc[-1]) if volumes is not None and len(volumes) > 0 else 0
+        avg_vol = float(volumes.iloc[-20:].mean()) if volumes is not None and len(volumes) >= 20 else vol
 
-        # ATR (14-period) and avg ATR (20-period average of ATR)
-        atr, avg_atr = self._calculate_atr_with_avg(highs, lows, closes)
+        # ATR (14-period)
+        atr = MarketDataClient._calculate_atr(highs, lows, closes)
 
         # Build signals
-        signals = []
-        if rsi < 30:
-            signals.append("RSI oversold")
-        elif rsi > 70:
-            signals.append("RSI overbought")
-        if macd_hist > 0:
-            signals.append("MACD bullish")
-        else:
-            signals.append("MACD bearish")
-        if latest > sma_20:
-            signals.append("Above SMA20")
-        else:
-            signals.append("Below SMA20")
-        if latest < bb_lower:
-            signals.append("Below lower BB")
-        elif latest > bb_upper:
-            signals.append("Above upper BB")
-        if sma_50 and latest > sma_50:
-            signals.append("Above SMA50")
-        elif sma_50:
-            signals.append("Below SMA50")
+        signals = MarketDataClient._build_signals(rsi, macd_hist, latest, sma_20, bb_lower, bb_upper, sma_50)
 
         return TechnicalSnapshot(
             symbol=symbol,
@@ -461,9 +501,34 @@ class MarketDataClient:
             volume=vol,
             avg_volume=avg_vol,
             atr=atr,
-            avg_atr=avg_atr,
             signals=signals,
         )
+
+    @staticmethod
+    def _build_signals(rsi, macd_hist, price, sma_20, bb_lower, bb_upper, sma_50) -> list[str]:
+        """Build human-readable signal labels from indicator values."""
+        signals = []
+        if rsi < 30:
+            signals.append("RSI oversold")
+        elif rsi > 70:
+            signals.append("RSI overbought")
+        if macd_hist > 0:
+            signals.append("MACD bullish")
+        else:
+            signals.append("MACD bearish")
+        if price > sma_20:
+            signals.append("Above SMA20")
+        else:
+            signals.append("Below SMA20")
+        if price < bb_lower:
+            signals.append("Below lower BB")
+        elif price > bb_upper:
+            signals.append("Above upper BB")
+        if sma_50 and price > sma_50:
+            signals.append("Above SMA50")
+        elif sma_50:
+            signals.append("Below SMA50")
+        return signals
 
     @staticmethod
     def _calculate_atr(highs, lows, closes, period: int = 14) -> Optional[float]:
@@ -488,37 +553,6 @@ class MarketDataClient:
         if hasattr(val, "item"):
             val = val.item()
         return float(val) if pd.notna(val) else None
-
-    @staticmethod
-    def _calculate_atr_with_avg(highs, lows, closes, period: int = 14, avg_period: int = 20) -> tuple[Optional[float], Optional[float]]:
-        """Calculate ATR and its recent average for volatility gate."""
-        try:
-            import pandas as pd
-        except ImportError:
-            return None, None
-        if highs is None or lows is None or closes is None:
-            return None, None
-        if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
-            return None, None
-
-        prev_close = closes.shift(1)
-        tr = pd.concat([
-            highs - lows,
-            (highs - prev_close).abs(),
-            (lows - prev_close).abs(),
-        ], axis=1).max(axis=1)
-        atr_series = tr.rolling(window=period).mean()
-        val = atr_series.iloc[-1]
-        if hasattr(val, "item"):
-            val = val.item()
-        current_atr = float(val) if pd.notna(val) else None
-
-        avg_val = atr_series.iloc[-avg_period:].mean()
-        if hasattr(avg_val, "item"):
-            avg_val = avg_val.item()
-        avg_atr = float(avg_val) if pd.notna(avg_val) else None
-
-        return current_atr, avg_atr
 
     @staticmethod
     def _normalize_symbol_finnhub(symbol: str) -> Optional[str]:

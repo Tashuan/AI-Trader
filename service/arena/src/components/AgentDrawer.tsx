@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { X, TrendingUp, TrendingDown, Brain, Users, Target } from 'lucide-react';
-import type { Agent } from '../types';
+import { X, TrendingUp, TrendingDown, Brain, Users, Target, Settings } from 'lucide-react';
+import type { Agent, GoalData } from '../types';
 import { GrowthChart } from './GrowthChart';
 import { PositionTracker } from './PositionTracker';
+import { GoalProgress } from './GoalProgress';
+import { GoalSetter } from './GoalSetter';
+import { StrategySettings } from './StrategySettings';
 
 interface AgentDrawerProps {
   agent: Agent | null;
@@ -21,11 +24,14 @@ interface AgentDetail {
   state: { state: string; detail: string; symbol: string; confidence: number };
   relationships: Record<string, { trust: number; dislike: number; agrees: number; disagrees: number }>;
   memories: { memory_type: string; content: string; symbol: string; impact: number }[];
+  goal_data?: GoalData;
 }
 
 export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showGoalSetter, setShowGoalSetter] = useState(false);
+  const [showStrategySettings, setShowStrategySettings] = useState(false);
 
   useEffect(() => {
     if (!agent) {
@@ -68,9 +74,25 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                 <div className="text-lg font-bold text-white">{agent.name}</div>
                 <span className="text-[10px] text-arena-text-dim">{agent.tagline}</span>
               </div>
-              <button onClick={onClose} className="text-arena-text-dim hover:text-white transition-colors">
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowGoalSetter(true)}
+                  className="text-arena-text-dim hover:text-arena-purple transition-colors"
+                  title="Set Goal"
+                >
+                  <Target size={16} />
+                </button>
+                <button
+                  onClick={() => setShowStrategySettings(true)}
+                  className="text-arena-text-dim hover:text-arena-purple transition-colors"
+                  title="Strategy Settings"
+                >
+                  <Settings size={16} />
+                </button>
+                <button onClick={onClose} className="text-arena-text-dim hover:text-white transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             {loading && (
@@ -87,6 +109,9 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                     <span className="text-[10px] text-arena-purple">{detail.personality?.goal || agent.goal}</span>
                   </div>
                 </Section>
+
+                {/* Goal Runner Progress */}
+                <GoalProgress goalData={detail.goal_data || agent.goal_data || null} />
 
                 {/* Current State */}
                 <Section title="Current State" icon={<TrendingUp size={12} />}>
@@ -218,6 +243,30 @@ export function AgentDrawer({ agent, onClose }: AgentDrawerProps) {
                   </Section>
                 )}
               </div>
+            )}
+
+            {showGoalSetter && (
+              <GoalSetter
+                agentId={agent.agent_id}
+                goalData={detail?.goal_data || agent.goal_data || null}
+                onClose={() => setShowGoalSetter(false)}
+                onUpdated={() => {
+                  // Trigger a refetch by toggling the detail
+                  if (agent) {
+                    fetch(`/api/arena/agent/${agent.agent_id}/detail`)
+                      .then(r => r.json())
+                      .then(data => setDetail(data))
+                      .catch(() => {});
+                  }
+                }}
+              />
+            )}
+
+            {showStrategySettings && (
+              <StrategySettings
+                agentId={agent.agent_id}
+                onClose={() => setShowStrategySettings(false)}
+              />
             )}
       </div>
     </div>

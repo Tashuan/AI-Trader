@@ -122,6 +122,46 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         polymarket_token_id = None
         polymarket_outcome = None
 
+        # ─── Goal gate: block new entries if goal prohibits trading ──
+        if action_lower in ('buy', 'short'):
+            try:
+                conn_goal = get_db_connection()
+                cursor_goal = conn_goal.cursor()
+                cursor_goal.execute('SELECT config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+                goal_row = cursor_goal.fetchone()
+                conn_goal.close()
+
+                if goal_row and goal_row['config_json']:
+                    try:
+                        goal_config = json.loads(goal_row['config_json'])
+                        goal = goal_config.get('goal')
+                        if goal and goal.get('status') != 'paused':
+                            starting_equity = 100000.0
+                            current_equity = float(agent.get('cash', 100000.0))
+                            target = goal.get('target_amount', 0)
+                            max_loss = goal.get('max_loss')
+                            daily_loss = max(0.0, starting_equity - current_equity)
+
+                            goal_achieved = current_equity >= starting_equity + target
+                            max_loss_hit = max_loss is not None and daily_loss >= max_loss
+
+                            if goal_achieved:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail=f'Goal achieved (${current_equity:.2f} >= ${starting_equity + target:.2f}). New trades blocked.',
+                                )
+                            if max_loss_hit:
+                                raise HTTPException(
+                                    status_code=403,
+                                    detail=f'Max loss hit (${daily_loss:.2f} >= ${max_loss:.2f}). New trades blocked.',
+                                )
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
         if market == 'polymarket' and action_lower in ('short', 'cover'):
             raise HTTPException(
                 status_code=400,

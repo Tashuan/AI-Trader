@@ -32,10 +32,7 @@ def _active_database_scope() -> str:
         import database
 
         backend = database.get_database_backend_name()
-        if backend == "postgresql":
-            raw = database.DATABASE_URL or "postgresql"
-        else:
-            raw = getattr(database, "_SQLITE_DB_PATH", "") or "sqlite"
+        raw = database.DATABASE_URL or "postgresql"
     except Exception:
         raw = "default"
         backend = "unknown"

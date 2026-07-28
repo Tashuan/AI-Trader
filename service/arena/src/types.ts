@@ -31,6 +31,24 @@ export interface AgentRelationship {
   disagrees: number;
 }
 
+export interface GoalData {
+  goal: {
+    target_amount: number;
+    deadline: string | null;
+    max_loss: number | null;
+    description: string;
+    status: string;
+    created_at: string;
+  } | null;
+  status: 'active' | 'achieved' | 'max_loss_hit' | 'paused' | 'no_goal';
+  can_trade: boolean;
+  progress_pct: number;
+  current_equity: number;
+  starting_equity: number;
+  goal_achieved: boolean;
+  max_loss_hit: boolean;
+}
+
 export interface Agent {
   agent_id: number;
   name: string;
@@ -67,6 +85,7 @@ export interface Agent {
   last_action?: string;
   last_action_at?: number;
   thoughts: string[];
+  goal_data?: GoalData;
 }
 
 export interface MarketData {

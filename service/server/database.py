@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import re
-import sqlite3
+import threading
 from typing import Any, Iterable, Optional, Sequence
 
 from config import DATABASE_URL
@@ -21,8 +21,11 @@ except ImportError:  # pragma: no cover - dependency is optional until PostgreSQ
     dict_row = None
 
 
-_BASE_DIR = os.path.dirname(__file__)
-_SQLITE_DB_PATH = os.getenv("DB_PATH", os.path.join(_BASE_DIR, "data", "local.db"))
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is required. Local SQLite is no longer supported. "
+        "Set DATABASE_URL to your Supabase/PostgreSQL connection string."
+    )
 _POSTGRES_NOW_TEXT_SQL = (
     "to_char(CURRENT_TIMESTAMP AT TIME ZONE 'UTC', "
     "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')"
@@ -49,7 +52,7 @@ _POSTGRES_RETRYABLE_SQLSTATES = {"40001", "40P01", "55P03"}
 
 
 def using_postgres() -> bool:
-    return bool(DATABASE_URL)
+    return True
 
 
 def get_database_backend_name() -> str:
@@ -66,10 +69,6 @@ def begin_write_transaction(cursor: Any) -> None:
 
 def is_retryable_db_error(exc: Exception) -> bool:
     """Return True when the error is a transient write conflict worth retrying."""
-    if isinstance(exc, sqlite3.OperationalError):
-        message = str(exc).lower()
-        return "database is locked" in message or "database is busy" in message
-
     sqlstate = getattr(exc, "sqlstate", None)
     if not sqlstate:
         cause = getattr(exc, "__cause__", None)
@@ -84,8 +83,6 @@ def is_retryable_db_error(exc: Exception) -> bool:
             "could not serialize access",
             "deadlock detected",
             "lock not available",
-            "database is locked",
-            "database is busy",
         )
     )
 
@@ -267,9 +264,10 @@ class DatabaseCursor:
 
 
 class DatabaseConnection:
-    def __init__(self, connection: Any, backend: str):
+    def __init__(self, connection: Any, backend: str, pool: Any = None):
         self._connection = connection
         self._backend = backend
+        self._pool = pool
 
     @property
     def autocommit(self):
@@ -289,7 +287,11 @@ class DatabaseConnection:
         self._connection.rollback()
 
     def close(self):
-        self._connection.close()
+        if self._pool is not None:
+            # Return connection to pool instead of closing it
+            self._pool.putconn(self._connection)
+        else:
+            self._connection.close()
 
     def __enter__(self):
         return self
@@ -310,27 +312,46 @@ class DatabaseConnection:
         return getattr(self._connection, name)
 
 
+_pg_pool: Any = None
+_pg_pool_lock = threading.Lock()
+
+
+def _get_pg_pool():
+    """Lazily create a psycopg connection pool for reuse across requests."""
+    global _pg_pool
+    if _pg_pool is not None:
+        return _pg_pool
+    with _pg_pool_lock:
+        if _pg_pool is not None:
+            return _pg_pool
+        try:
+            from psycopg_pool import ConnectionPool
+        except ImportError:
+            # psycopg_pool not installed — fall back to direct connect
+            return None
+        _pg_pool = ConnectionPool(
+            conninfo=DATABASE_URL,
+            min_size=2,
+            max_size=10,
+            timeout=30,
+            kwargs={"row_factory": dict_row},
+        )
+        return _pg_pool
+
+
 def get_db_connection():
-    """Get database connection. Supports both SQLite and PostgreSQL."""
-    if using_postgres():
-        if psycopg is None:
-            raise RuntimeError(
-                "PostgreSQL support requires psycopg. Install service requirements first."
-            )
-        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
-        return DatabaseConnection(conn, "postgres")
-
-    db_path = _SQLITE_DB_PATH
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
-    conn = sqlite3.connect(db_path, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-
-    # Enable WAL mode for better concurrent access
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-
-    return DatabaseConnection(conn, "sqlite")
+    """Get database connection (PostgreSQL/Supabase only)."""
+    if psycopg is None:
+        raise RuntimeError(
+            "PostgreSQL support requires psycopg. Install service requirements first."
+        )
+    pool = _get_pg_pool()
+    if pool is not None:
+        conn = pool.getconn()
+        return DatabaseConnection(conn, "postgres", pool=pool)
+    # Fallback: direct connect (no pool)
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    return DatabaseConnection(conn, "postgres")
 
 
 def get_database_status() -> dict[str, Any]:
@@ -357,12 +378,7 @@ def get_database_status() -> dict[str, Any]:
                 "server_port": row["server_port"],
             }
 
-        cursor.execute("SELECT 1 AS ok")
-        cursor.fetchone()
-        return {
-            "backend": get_database_backend_name(),
-            "database_path": _SQLITE_DB_PATH,
-        }
+        raise RuntimeError("Database backend is not PostgreSQL")
     finally:
         conn.close()
 
@@ -1279,6 +1295,22 @@ def init_database():
     except Exception:
         pass
 
+    # Goal Runner: position state columns for deterministic cycle tracking
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN cycles_flat INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN entry_score REAL DEFAULT 0")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN consecutive_losses INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
     # Limit orders table — persistent resting orders
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS limit_orders (
@@ -1999,9 +2031,7 @@ def init_database():
         ON agent_memories(agent_id, created_at DESC)
     """)
 
-    if not using_postgres():
-        conn.commit()
-    elif previous_autocommit is not None:
+    if previous_autocommit is not None:
         conn.autocommit = previous_autocommit
     conn.close()
     print("[INFO] Database initialized")

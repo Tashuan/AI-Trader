@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Header, HTTPException
 
 from database import get_db_connection
-from routes_models import AgentConfigCreate, AgentConfigUpdate
+from routes_models import AgentConfigCreate, AgentConfigUpdate, GoalCreateRequest, GoalUpdateRequest, StrategyParamsUpdate
 from routes_shared import RouteContext, utc_now_iso_z
 from services import _get_agent_by_id, _get_agent_by_name, _get_agent_by_token
 from utils import _extract_token, hash_password
@@ -1052,3 +1052,322 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
             'name': agent['name'],
             'cash': amount,
         }
+
+    # ─── Admin Goal Management ────────────────────────────────────
+
+    @app.post('/api/agents/manage/{agent_id}/goal')
+    async def admin_set_agent_goal(
+        agent_id: int,
+        data: GoalCreateRequest,
+        authorization: str = Header(None),
+    ):
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+
+        if data.target_amount <= 0:
+            raise HTTPException(status_code=400, detail='target_amount must be positive')
+
+        goal = {
+            'target_amount': data.target_amount,
+            'deadline': data.deadline,
+            'max_loss': data.max_loss,
+            'description': data.description or '',
+            'status': 'active',
+            'created_at': _now_iso(),
+        }
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                config = json.loads(row['config_json']) if row['config_json'] else {}
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+            config['goal'] = goal
+            cursor.execute(
+                'UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE agent_id = ?',
+                (json.dumps(config), _now_iso(), agent_id),
+            )
+        else:
+            config = {'goal': goal}
+            cursor.execute(
+                'INSERT INTO agent_configs (agent_id, config_json, created_at, updated_at) VALUES (?, ?, ?, ?)',
+                (agent_id, json.dumps(config), _now_iso(), _now_iso()),
+            )
+        conn.commit()
+        conn.close()
+
+        return {'success': True, 'agent_id': agent_id, 'goal': goal}
+
+    @app.delete('/api/agents/manage/{agent_id}/goal')
+    async def admin_clear_agent_goal(
+        agent_id: int,
+        authorization: str = Header(None),
+    ):
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                config = json.loads(row['config_json']) if row['config_json'] else {}
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+            config.pop('goal', None)
+            cursor.execute(
+                'UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE agent_id = ?',
+                (json.dumps(config), _now_iso(), agent_id),
+            )
+            conn.commit()
+        conn.close()
+
+        return {'success': True, 'agent_id': agent_id, 'message': 'Goal cleared'}
+
+    @app.get('/api/agents/manage/{agent_id}/goal')
+    async def admin_get_agent_goal(
+        agent_id: int,
+        authorization: str = Header(None),
+    ):
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or not row['config_json']:
+            return {'agent_id': agent_id, 'goal': None, 'status': 'no_goal'}
+
+        try:
+            config = json.loads(row['config_json'])
+        except (json.JSONDecodeError, TypeError):
+            return {'agent_id': agent_id, 'goal': None, 'status': 'no_goal'}
+
+        goal = config.get('goal')
+        if not goal:
+            return {'agent_id': agent_id, 'goal': None, 'status': 'no_goal'}
+
+        starting_equity = 100000.0
+        current_equity = float(agent.get('cash', 100000.0))
+        progress_pct = 0.0
+        if goal.get('target_amount', 0) > 0:
+            progress_pct = ((current_equity - starting_equity) / goal['target_amount']) * 100
+
+        max_loss = goal.get('max_loss')
+        daily_loss = max(0.0, starting_equity - current_equity)
+        max_loss_hit = max_loss is not None and daily_loss >= max_loss
+        goal_achieved = current_equity >= starting_equity + goal.get('target_amount', 0)
+
+        status = 'active'
+        if goal_achieved:
+            status = 'achieved'
+        elif max_loss_hit:
+            status = 'max_loss_hit'
+        elif goal.get('status') == 'paused':
+            status = 'paused'
+
+        return {
+            'agent_id': agent_id,
+            'goal': goal,
+            'status': status,
+            'can_trade': status == 'active',
+            'progress_pct': round(progress_pct, 1),
+            'current_equity': round(current_equity, 2),
+            'starting_equity': starting_equity,
+            'goal_achieved': goal_achieved,
+            'max_loss_hit': max_loss_hit,
+        }
+
+    # ─── Admin Strategy Params ────────────────────────────────────
+
+    DEFAULT_STRATEGY_PARAMS = {
+        'exit_rules': {
+            'stop_loss_pct': -2.0,
+            'take_profit_pct': 2.0,
+            'stagnation_cycles': 6,
+            'stagnation_threshold_pct': 0.3,
+            'momentum_death_vol_ratio': 0.5,
+            'ob_exhaustion_rsi': 75,
+        },
+        'entry_criteria': {
+            'min_signals': 4,
+            'min_signal_families': 2,
+            'min_vol_ratio': 1.5,
+            'bearish_macro_min_signals': 5,
+            'bearish_macro_threshold': 0.3,
+        },
+        'position_sizing': {
+            'max_positions': 1,
+            'normal_sizing_min_pct': 25,
+            'normal_sizing_max_pct': 40,
+            'approaching_sizing_min_pct': 15,
+            'approaching_sizing_max_pct': 25,
+            'final_stretch_tp_pct': 1.5,
+            'consecutive_loss_threshold': 3,
+            'consecutive_loss_size_cut_pct': 50,
+            'consecutive_loss_min_signals': 5,
+        },
+        'switch_logic': {
+            'switch_score_threshold_pct': 20,
+            'reentry_cooldown_cycles': 3,
+            'switch_require_profitable': True,
+        },
+        'scoring_weights': {
+            'signal_count_weight': 1.0,
+            'family_diversity_weight': 0.5,
+            'candle_quality_weight': 0.3,
+            'consolidation_bonus_weight': 0.2,
+        },
+        'indicators': {
+            'rsi_period': 14,
+            'rsi_bullish': 55,
+            'rsi_overbought': 75,
+            'rsi_oversold': 25,
+            'macd_fast': 12,
+            'macd_slow': 26,
+            'macd_signal': 9,
+            'ema_period': 20,
+            'stochastic_period': 14,
+            'atr_period': 14,
+            'vol_ratio_bullish': 1.5,
+            'vol_ratio_dead': 0.5,
+        },
+    }
+
+    def _merge_strategy_defaults(stored: dict) -> dict:
+        result = {}
+        for section, defaults in DEFAULT_STRATEGY_PARAMS.items():
+            stored_section = stored.get(section, {})
+            if isinstance(stored_section, dict):
+                result[section] = {**defaults, **stored_section}
+            else:
+                result[section] = defaults
+        for key, val in stored.items():
+            if key not in result:
+                result[key] = val
+        return result
+
+    @app.get('/api/agents/manage/{agent_id}/strategy-params')
+    async def admin_get_strategy_params(
+        agent_id: int,
+        authorization: str = Header(None),
+    ):
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or not row['config_json']:
+            return {'agent_id': agent_id, 'strategy_params': _merge_strategy_defaults({})}
+
+        try:
+            config = json.loads(row['config_json'])
+        except (json.JSONDecodeError, TypeError):
+            return {'agent_id': agent_id, 'strategy_params': _merge_strategy_defaults({})}
+
+        return {'agent_id': agent_id, 'strategy_params': _merge_strategy_defaults(config.get('strategy_params', {}))}
+
+    @app.put('/api/agents/manage/{agent_id}/strategy-params')
+    async def admin_replace_strategy_params(
+        agent_id: int,
+        data: StrategyParamsUpdate,
+        authorization: str = Header(None),
+    ):
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                config = json.loads(row['config_json']) if row['config_json'] else {}
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+        else:
+            config = {}
+
+        config['strategy_params'] = data.model_dump(exclude_none=True)
+
+        if row:
+            cursor.execute(
+                'UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE agent_id = ?',
+                (json.dumps(config), _now_iso(), agent_id),
+            )
+        else:
+            cursor.execute(
+                'INSERT INTO agent_configs (agent_id, config_json, created_at, updated_at) VALUES (?, ?, ?, ?)',
+                (agent_id, json.dumps(config), _now_iso(), _now_iso()),
+            )
+        conn.commit()
+        conn.close()
+
+        return {'success': True, 'agent_id': agent_id, 'strategy_params': config['strategy_params']}
+
+    @app.patch('/api/agents/manage/{agent_id}/strategy-params')
+    async def admin_update_strategy_params(
+        agent_id: int,
+        data: StrategyParamsUpdate,
+        authorization: str = Header(None),
+    ):
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+        row = cursor.fetchone()
+
+        if row:
+            try:
+                config = json.loads(row['config_json']) if row['config_json'] else {}
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+        else:
+            config = {}
+
+        params = config.get('strategy_params', {})
+        update_data = data.model_dump(exclude_none=True)
+        for key, value in update_data.items():
+            if isinstance(value, dict) and key in params and isinstance(params[key], dict):
+                params[key] = {**params[key], **value}
+            else:
+                params[key] = value
+
+        config['strategy_params'] = params
+
+        if row:
+            cursor.execute(
+                'UPDATE agent_configs SET config_json = ?, updated_at = ? WHERE agent_id = ?',
+                (json.dumps(config), _now_iso(), agent_id),
+            )
+        else:
+            cursor.execute(
+                'INSERT INTO agent_configs (agent_id, config_json, created_at, updated_at) VALUES (?, ?, ?, ?)',
+                (agent_id, json.dumps(config), _now_iso(), _now_iso()),
+            )
+        conn.commit()
+        conn.close()
+
+        return {'success': True, 'agent_id': agent_id, 'strategy_params': params}
