@@ -25,8 +25,9 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
   const hasSLTP = stop_loss_price != null || take_profit_price != null;
   const isProfit = pnl >= 0;
 
-  // ── No SL/TP: simplified card ──
-  if (!hasSLTP || !entry_price || !current_price) {
+  // ── No SL/TP or no entry_price: simplified card ──
+  // (current_price may be null temporarily — we still render the slider using entry_price as fallback)
+  if (!hasSLTP || !entry_price) {
     return (
       <div className="card-base p-3 space-y-2">
         <div className="flex items-center justify-between">
@@ -54,11 +55,13 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
   // ── Compute bar geometry ──
   const sl = stop_loss_price ?? entry_price;
   const tp = take_profit_price ?? entry_price;
+  // Fall back to entry_price when current_price is null so the slider still renders
+  const effectiveCurrent = current_price ?? entry_price;
 
   // For longs: SL is left (lower), TP is right (higher)
   // For shorts: SL is right (higher), TP is left (lower) — mirror the bar
-  const low = Math.min(sl, tp, entry_price, current_price);
-  const high = Math.max(sl, tp, entry_price, current_price);
+  const low = Math.min(sl, tp, entry_price, effectiveCurrent);
+  const high = Math.max(sl, tp, entry_price, effectiveCurrent);
   const range = high - low || 1;
 
   const pct = (val: number) => ((val - low) / range) * 100;
@@ -67,13 +70,13 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
   const slPct = isLong ? pct(sl) : 100 - pct(sl);
   const tpPct = isLong ? pct(tp) : 100 - pct(tp);
   const entryPct = isLong ? pct(entry_price) : 100 - pct(entry_price);
-  const currPct = isLong ? pct(current_price) : 100 - pct(current_price);
+  const currPct = isLong ? pct(effectiveCurrent) : 100 - pct(effectiveCurrent);
 
   const clampedCurr = Math.max(2, Math.min(98, currPct));
 
   // Progress: how far from entry toward TP (0-100%)
   const distToTP = Math.abs(tp - entry_price);
-  const distFromEntry = Math.abs(current_price - entry_price);
+  const distFromEntry = Math.abs(effectiveCurrent - entry_price);
   const progressToTP = distToTP > 0 ? (distFromEntry / distToTP) * 100 : 0;
   const progressToSL = Math.abs(sl - entry_price) > 0
     ? (distFromEntry / Math.abs(sl - entry_price)) * 100

@@ -926,6 +926,10 @@ def get_price_from_market(
             # Crypto pricing now uses Hyperliquid public endpoints.
             # Try historical candle (when executed_at is provided), then fall back to mid price.
             price = _get_hyperliquid_candle_close(symbol, executed_at) or _get_hyperliquid_mid_price(symbol)
+            # Fallback to yfinance for crypto symbols not listed on Hyperliquid (e.g. LINK, UNI, etc.)
+            if price is None:
+                _price_log(f"[Price API] Hyperliquid unavailable for {symbol}; trying yfinance crypto fallback")
+                price = _get_yfinance_crypto_price(symbol, executed_at)
         elif market == "polymarket":
             # Polymarket pricing uses public Gamma + CLOB endpoints.
             # We use the current orderbook mid price (paper trading).
@@ -1072,6 +1076,37 @@ def _extract_yfinance_close_price(frame: Any, symbol: str, target_utc: datetime)
         return price if price > 0 else None
     except Exception as exc:
         _price_log(f"[Price API] yfinance parse error for {symbol}: {exc}")
+        return None
+
+
+def _get_yfinance_crypto_price(symbol: str, executed_at: str) -> Optional[float]:
+    """Best-effort Yahoo Finance fallback for crypto symbols not on Hyperliquid."""
+    target_utc = _parse_executed_at_to_utc(executed_at)
+    if not target_utc:
+        return None
+
+    yf_symbol = f"{symbol.strip().upper()}-USD"
+    try:
+        intraday_start = (target_utc - timedelta(days=1)).date().isoformat()
+        intraday_end = (target_utc + timedelta(days=1)).date().isoformat()
+        frame = _download_yfinance_history(yf_symbol, intraday_start, intraday_end, "1m")
+        price = _extract_yfinance_close_price(frame, yf_symbol, target_utc)
+        if price is not None:
+            _price_log(f"[Price API] yfinance crypto fallback fetched {yf_symbol}: ${price}")
+            return price
+
+        daily_start = (target_utc - timedelta(days=10)).date().isoformat()
+        daily_end = (target_utc + timedelta(days=1)).date().isoformat()
+        frame = _download_yfinance_history(yf_symbol, daily_start, daily_end, "1d")
+        price = _extract_yfinance_close_price(frame, yf_symbol, target_utc)
+        if price is not None:
+            _price_log(f"[Price API] yfinance crypto daily fallback fetched {yf_symbol}: ${price}")
+        return price
+    except ImportError as exc:
+        _price_log(f"[Price API] yfinance crypto fallback unavailable: {exc}")
+        return None
+    except Exception as exc:
+        _price_log(f"[Price API] yfinance crypto fallback failed for {yf_symbol}: {exc}")
         return None
 
 
