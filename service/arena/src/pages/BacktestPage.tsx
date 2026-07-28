@@ -26,6 +26,7 @@ interface TradeRecord {
   pnl: number;
   pnl_pct: number;
   hold_days: number;
+  hold_hours: number;
   reason: string;
 }
 
@@ -54,6 +55,8 @@ interface BacktestReport {
     total_pnl: number;
     avg_pnl_pct: number;
   }>;
+  interval: string;
+  slippage_bps: number;
 }
 
 export function BacktestPage() {
@@ -72,6 +75,8 @@ export function BacktestPage() {
   const [llmDiagnosis, setLlmDiagnosis] = useState<string | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmAvailable, setLlmAvailable] = useState<boolean | null>(null);
+  const [candleInterval, setCandleInterval] = useState('1d');
+  const [slippageBps, setSlippageBps] = useState('5');
 
   const applyPreset = (preset: string) => {
     setActivePreset(preset);
@@ -119,6 +124,18 @@ export function BacktestPage() {
 
   const selectedStrategy = strategies.find(s => s.key === selectedKey);
 
+  useEffect(() => {
+    if (!selectedStrategy) return;
+    const hp = selectedStrategy.hold_period;
+    if (hp === 'scalp') {
+      setCandleInterval('15m');
+    } else if (hp === 'intraday') {
+      setCandleInterval('1h');
+    } else {
+      setCandleInterval('1d');
+    }
+  }, [selectedStrategy]);
+
   const handleRun = async () => {
     if (!selectedKey) return;
     setRunning(true);
@@ -135,6 +152,8 @@ export function BacktestPage() {
       if (symbolsInput.trim()) {
         body.symbols = symbolsInput.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       }
+      body.interval = candleInterval;
+      body.slippage_bps = parseFloat(slippageBps) || 0;
 
       const resp = await fetch('/api/backtest/run', {
         method: 'POST',
@@ -455,6 +474,8 @@ export function BacktestPage() {
     lines.push(`End Date: ${report.end_date}`);
     lines.push(`Initial Capital: $${report.initial_capital.toLocaleString()}`);
     lines.push(`Symbols Tested: ${report.symbols.join(', ')}`);
+    lines.push(`Candle Interval: ${report.interval || '1d'}`);
+    lines.push(`Slippage: ${report.slippage_bps ?? 0} bps`);
     if (symbolsInput.trim()) {
       lines.push(`Symbols Override: ${symbolsInput}`);
     }
@@ -601,6 +622,40 @@ export function BacktestPage() {
               step="1000"
             />
           </div>
+
+          {/* Candle Interval */}
+          <div>
+            <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">Candle Interval</label>
+            <select
+              className="form-input"
+              value={candleInterval}
+              onChange={e => setCandleInterval(e.target.value)}
+            >
+              <option value="1d">Daily (1d) — swing/position strategies</option>
+              <option value="1h">1 Hour (1h) — intraday, up to ~2yr history</option>
+              <option value="15m">15 Min (15m) — scalp/momentum, ~60d history</option>
+              <option value="5m">5 Min (5m) — high-frequency scalp, ~60d history</option>
+            </select>
+            {candleInterval !== '1d' && (
+              <div className="mt-1 text-[9px] text-arena-yellow/80">
+                Intraday bars have limited history (~60 days for 5m/15m). Date range will be clamped automatically.
+              </div>
+            )}
+          </div>
+
+          {/* Slippage */}
+          <div>
+            <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">Slippage (bps)</label>
+            <input
+              type="number"
+              className="form-input"
+              value={slippageBps}
+              onChange={e => setSlippageBps(e.target.value)}
+              min="0"
+              step="1"
+            />
+            <div className="mt-1 text-[9px] text-arena-text-dim">5 bps = 0.05% adverse fill per trade. Set 0 for idealized fills.</div>
+          </div>
         </div>
 
         {/* Symbols Override */}
@@ -642,7 +697,7 @@ export function BacktestPage() {
               <div>
                 <div className="text-sm font-bold text-white">{report.agent_name}</div>
                 <div className="text-[10px] text-arena-text-dim">
-                  {report.start_date} → {report.end_date} | {report.total_trades} trades
+                  {report.start_date} → {report.end_date} | {report.total_trades} trades | {report.interval || '1d'}{report.slippage_bps ? ` | ${report.slippage_bps}bps slip` : ''}
                 </div>
               </div>
               <button

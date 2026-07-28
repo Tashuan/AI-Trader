@@ -6,6 +6,9 @@ const API_BASE = '/api';
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/activity`;
 const FULL_REFRESH_INTERVAL = 30000;
 const PORTFOLIO_RISK_INTERVAL = 30000;
+const FAST_RETRY_INTERVAL = 5000;
+const WS_RECONNECT_BASE = 1000;
+const WS_RECONNECT_MAX = 30000;
 
 export function useArenaData() {
   const [data, setData] = useState<ArenaFullResponse | null>(null);
@@ -26,7 +29,8 @@ export function useArenaData() {
       setData(json);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to fetch arena data');
+      const msg = e instanceof Error ? e.message : 'Failed to fetch arena data';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -59,28 +63,51 @@ export function useArenaData() {
     }
   }, []);
 
-  // Initial load + periodic refresh
+  // Initial load + adaptive polling (fast retry on error, normal interval on success)
   useEffect(() => {
     fetchFull();
     fetchPortfolioRisk();
     fetchUserInfo();
 
-    const fullInterval = setInterval(fetchFull, FULL_REFRESH_INTERVAL);
-    const portfolioRiskInterval = setInterval(fetchPortfolioRisk, PORTFOLIO_RISK_INTERVAL);
+    let fullTimer: ReturnType<typeof setTimeout>;
+    let riskTimer: ReturnType<typeof setTimeout>;
+
+    const scheduleFull = () => {
+      const interval = error ? FAST_RETRY_INTERVAL : FULL_REFRESH_INTERVAL;
+      fullTimer = setTimeout(async () => {
+        await fetchFull();
+        scheduleFull();
+      }, interval);
+    };
+
+    const scheduleRisk = () => {
+      riskTimer = setTimeout(async () => {
+        await fetchPortfolioRisk();
+        scheduleRisk();
+      }, PORTFOLIO_RISK_INTERVAL);
+    };
+
+    scheduleFull();
+    scheduleRisk();
 
     return () => {
-      clearInterval(fullInterval);
-      clearInterval(portfolioRiskInterval);
+      clearTimeout(fullTimer);
+      clearTimeout(riskTimer);
     };
-  }, [fetchFull, fetchPortfolioRisk]);
+  }, [fetchFull, fetchPortfolioRisk, error]);
 
-  // WebSocket for real-time events
+  // WebSocket for real-time events with exponential backoff
   useEffect(() => {
     let reconnectTimer: ReturnType<typeof setTimeout>;
+    let backoff = WS_RECONNECT_BASE;
 
     const connectWs = () => {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
+
+      ws.onopen = () => {
+        backoff = WS_RECONNECT_BASE;
+      };
 
       ws.onmessage = (event) => {
         try {
@@ -92,7 +119,8 @@ export function useArenaData() {
       };
 
       ws.onclose = () => {
-        reconnectTimer = setTimeout(connectWs, 3000);
+        reconnectTimer = setTimeout(connectWs, backoff);
+        backoff = Math.min(backoff * 2, WS_RECONNECT_MAX);
       };
 
       ws.onerror = () => {

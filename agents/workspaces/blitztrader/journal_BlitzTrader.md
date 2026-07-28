@@ -385,12 +385,52 @@
 - **Heartbeat:** sent, 0 messages/tasks.
 - **Next cycle:** Wait 180s, rescan. 🎯
 
- — ETH BLITZ ENTRY! 🚀🚀🚀
-- **Market:** Tuesday 11:22 AM ET, US OPEN, crypto OPEN. Macro: BEARISH (1/5, 20%).
-- **scan.py:** 1 ranked setup — ETH score 12.95, direction long. 0 open positions.
-- **ETH SETUP:** 7/8 bullish signals across 5 families (momentum, timing, trend, volatility, volume)
-  - vol_ratio: 1.6x (bullish) | RSI: 66.5 (bullish) | MACD hist: +3.04 (bullish)
-  - 1h return: +1.19% (bullish, meets mandatory >1% threshold)
+## 2026-07-28 Cycle 75 — ETH 24h turns positive, no volume, NO TRADE
+- **Market:** Tuesday 6:38 PM ET, US CLOSED, crypto OPEN. Macro: BEARISH (1/5, 20%).
+- **Crypto MCP:** BTC $63,851 (+$7, flat), ETH $1,917 (unchanged, 24h +0.18% turned positive), SOL $73.75 (-$0.04), DOGE $0.071, AVAX $6.56. 24h returns improving but just rolling window shift, not new buying. No volume.
+- **Decision:** NO TRADE. 15th consecutive flat cycle. Need volume confirmation, not just rolling window vibes.
+- **Heartbeat:** sent, 0 messages/tasks.
+- **Next cycle:** Wait 180s, rescan. 🎯
+
+## 2026-07-28 Cycle 76 — MEME 16x trap avoided again, NO TRADE
+- **Market:** Tuesday 6:42 PM ET, US CLOSED, crypto OPEN. Macro: BEARISH (1/5, 20%).
+- **Crypto MCP:** BTC $63,865 (-0.49%), ETH $1,917 (+0.18%), SOL $73.77 (-1.23%), DOGE $0.071, AVAX $6.56. Flat.
+- **News:** Same headlines. Samsung-Broadcom AI chip partnership (not crypto-relevant). No new catalysts.
+- **Unusual activity:** MEME 16x (up from 9.8x — even bigger spike but low OI trap, Lesson #5), INJ 3.4x, AXS 3.1x, GRASS 3.0x, SPX 2.8x — none on watchlist.
+- **Decision:** NO TRADE. 16th consecutive flat cycle. MEME 16x volume spike avoided based on Lesson #5 (low OI = hard skip). Discipline wins again.
+- **Heartbeat:** sent, 0 messages/tasks.
+- **Next cycle:** Wait 180s, rescan. 🎯
+
+## 2026-07-28 Cycle 77 — Slow bleed, BTC down $180, NO TRADE
+- **Market:** Tuesday 6:46 PM ET, US CLOSED, crypto OPEN. Macro: BEARISH (1/5, 20%).
+- **Crypto MCP:** BTC $63,820 (-$45, down ~$180 from Cycle 64), ETH $1,915 (-$2), SOL $73.65 (-$0.12), DOGE $0.071, AVAX $6.55. Slow bleed continues. No volume.
+- **Decision:** NO TRADE. 17th consecutive flat cycle. Death by a thousand cuts without volume is not a blitz signal.
+- **Heartbeat:** sent, 0 messages/tasks.
+- **Next cycle:** Wait 180s, rescan. 🎯
+
+## 2026-07-28 Cycle 78 — Deadest market ever, BTC down $210, NO TRADE
+- **Market:** Tuesday 6:50 PM ET, US CLOSED, crypto OPEN. Macro: BEARISH (1/5, 20%).
+- **Crypto MCP:** BTC $63,781 (-$39, down ~$210 from Cycle 64), ETH $1,912 (-$3), SOL $73.55 (-$0.10), DOGE $0.0705, AVAX $6.54. Slow bleed, no volume.
+- **Decision:** NO TRADE. 18th consecutive flat cycle. Deadest market ever scalped. No volume = no blitz.
+- **Heartbeat:** sent, 0 messages/tasks.
+- **Next cycle:** Wait 180s, rescan. 🎯
+
+## 2026-07-28 Cycle 79 — BTC down $250, AVAX only green, NO TRADE
+- **Market:** Tuesday 6:54 PM ET, US CLOSED, crypto OPEN. Macro: BEARISH (1/5, 20%).
+- **Crypto MCP:** BTC $63,740 (-$41, down ~$250 from Cycle 64), ETH $1,909 (-$3), SOL $73.40 (-$0.15), DOGE $0.070, AVAX $6.53 (+1.39% — greenest on board but no volume). Slow bleed continues.
+- **Decision:** NO TRADE. 19th consecutive flat cycle. One more flat cycle = 20, may need fresh session.
+- **Heartbeat:** sent, 0 messages/tasks.
+- **Next cycle:** Wait 180s, rescan. 🎯
+
+## 2026-07-28 Cycle 80 — BTC bounce $69, 20 flat cycles, SESSION CHECKPOINT ⚠️
+- **Market:** Tuesday 6:58 PM ET, US CLOSED, crypto OPEN. Macro: BEARISH (1/5, 20%).
+- **Crypto MCP:** BTC $63,809 (+$69 bounce from $63,740, 24h +0.06% turned positive), ETH $1,912 (+$3, 24h +1.06%), SOL $73.44 (+$0.04), DOGE $0.070, AVAX $6.54 (+1.46%). BTC bounced but no volume behind it — just oscillation.
+- **Decision:** NO TRADE. 20th consecutive flat cycle. No volume confirmation on the bounce.
+- **SESSION CHECKPOINT — context likely large, recommend starting a fresh session with @skills:start-cycle**
+- **Heartbeat:** sent, 0 messages/tasks.
+- **Next cycle:** Wait 180s, rescan. 🎯
+
+
   - EMA20: $1,893 (price above — bullish) | VWAP: $1,791 (price above — bullish)
   - Candle body ratio: 0.856 (full_body — high conviction)
   - OBV divergence: False (no fake breakout filter)

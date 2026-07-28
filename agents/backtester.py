@@ -24,7 +24,7 @@ class BacktestAgent(BaseAgent):
     analyze() method runs unchanged against historical data.
     """
 
-    def __init__(self, personality: Personality, initial_capital: float = 100000.0):
+    def __init__(self, personality: Personality, initial_capital: float = 100000.0, slippage_bps: float = 0.0):
         super().__init__(personality, api_base="http://localhost:0/api")
         self.cash = initial_capital
         self.portfolio_value = initial_capital
@@ -32,7 +32,10 @@ class BacktestAgent(BaseAgent):
         self._positions: dict[str, dict] = {}  # symbol -> {qty, entry_price, entry_date, side}
         self._closed_trades: list[TradeRecord] = []
         self._current_date: str = ""
-        self._price_lookup: dict[str, float] = {}  # symbol -> current price for this sim day
+        self._price_lookup: dict[str, float] = {}  # symbol -> current price for this sim bar
+        # Slippage in basis points, applied adversely: buys fill higher, sells fill lower.
+        # Models the real cost of chasing momentum (buying strength, selling weakness).
+        self._slippage_bps = slippage_bps
         self.logger = logging.getLogger(f"Backtest:{personality.name}")
         self.logger.handlers = [logging.StreamHandler()]
         self.logger.setLevel(logging.WARNING)
@@ -78,24 +81,45 @@ class BacktestAgent(BaseAgent):
             "side": pos.get("side", "long"),
         }
 
+    @staticmethod
+    def _hold_span(entry_ts: str, exit_ts: str) -> tuple[int, float]:
+        """Return (hold_days, hold_hours) between two ISO-ish timestamps."""
+        if not entry_ts or not exit_ts:
+            return 0, 0.0
+        try:
+            d1 = datetime.fromisoformat(entry_ts)
+            d2 = datetime.fromisoformat(exit_ts)
+        except Exception:
+            try:
+                d1 = datetime.fromisoformat(entry_ts.split("T")[0])
+                d2 = datetime.fromisoformat(exit_ts.split("T")[0])
+            except Exception:
+                return 0, 0.0
+        delta = d2 - d1
+        return delta.days, round(delta.total_seconds() / 3600.0, 2)
+
     def execute_trade(self, decision: TradeDecision) -> bool:
         symbol = decision.symbol
-        price = self._price_lookup.get(symbol)
-        if price is None or price <= 0:
+        raw_price = self._price_lookup.get(symbol)
+        if raw_price is None or raw_price <= 0:
             return False
 
         qty = decision.quantity
         if qty <= 0:
             return False
 
+        slip = self._slippage_bps / 10000.0
+
         if decision.action in ("buy", "short"):
-            cost = qty * price
+            # Buying momentum fills worse (higher) due to slippage.
+            fill_price = raw_price * (1 + slip)
+            cost = qty * fill_price
             if cost > self.cash:
                 return False
             self.cash -= cost
             self._positions[symbol] = {
                 "quantity": qty,
-                "entry_price": price,
+                "entry_price": fill_price,
                 "entry_date": self._current_date,
                 "side": "long" if decision.action == "buy" else "short",
             }
@@ -107,22 +131,18 @@ class BacktestAgent(BaseAgent):
             if not pos or pos["quantity"] <= 0:
                 return False
 
+            # Selling into weakness/urgency fills worse (lower) due to slippage.
+            fill_price = raw_price * (1 - slip)
+
             sell_qty = min(qty, pos["quantity"])
-            proceeds = sell_qty * price
+            proceeds = sell_qty * fill_price
             self.cash += proceeds
 
-            pnl = (price - pos["entry_price"]) * sell_qty
-            pnl_pct = ((price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
+            pnl = (fill_price - pos["entry_price"]) * sell_qty
+            pnl_pct = ((fill_price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
 
             entry_date = pos.get("entry_date", "")
-            hold_days = 0
-            if entry_date and self._current_date:
-                try:
-                    d1 = datetime.fromisoformat(entry_date.split("T")[0])
-                    d2 = datetime.fromisoformat(self._current_date.split("T")[0])
-                    hold_days = (d2 - d1).days
-                except Exception:
-                    pass
+            hold_days, hold_hours = self._hold_span(entry_date, self._current_date)
 
             self._closed_trades.append(TradeRecord(
                 symbol=symbol,
@@ -130,11 +150,12 @@ class BacktestAgent(BaseAgent):
                 entry_date=entry_date,
                 exit_date=self._current_date,
                 entry_price=pos["entry_price"],
-                exit_price=price,
+                exit_price=fill_price,
                 quantity=sell_qty,
                 pnl=pnl,
                 pnl_pct=pnl_pct,
                 hold_days=hold_days,
+                hold_hours=hold_hours,
                 reason=decision.reason[:200] if decision.reason else "",
             ))
 
@@ -172,6 +193,34 @@ class Backtester:
     simulates trade execution at that day's close price.
     """
 
+    # Max lookback yfinance allows per intraday interval (approximate, per Yahoo's limits)
+    _INTRADAY_MAX_LOOKBACK_DAYS = {
+        "1m": 7,
+        "2m": 60,
+        "5m": 60,
+        "15m": 60,
+        "30m": 60,
+        "60m": 730,
+        "1h": 730,
+        "90m": 60,
+        "4h": 730,
+    }
+
+    # Approximate bars-per-day used to scale Sharpe annualization for intraday bars.
+    # Crypto trades 24/7, equities ~6.5h/day — this uses a 24h approximation since
+    # the default watchlist mixes both; treat as a rough scaling factor, not exact.
+    _BARS_PER_DAY = {
+        "1d": 1,
+        "4h": 6,
+        "1h": 24,
+        "60m": 24,
+        "30m": 48,
+        "15m": 96,
+        "5m": 288,
+        "2m": 720,
+        "1m": 1440,
+    }
+
     def __init__(
         self,
         agent_class: type,
@@ -180,6 +229,8 @@ class Backtester:
         start_date: str = "",
         end_date: str = "",
         initial_capital: float = 100000.0,
+        interval: str = "1d",
+        slippage_bps: float = 0.0,
     ):
         self.agent_class = agent_class
         self.personality = personality
@@ -187,10 +238,20 @@ class Backtester:
         self.start_date = start_date
         self.end_date = end_date
         self.initial_capital = initial_capital
+        self.interval = interval or "1d"
+        self.slippage_bps = slippage_bps
         self.market_data = MarketDataClient()
 
     def _fetch_historical_data(self, symbol: str) -> Optional[dict]:
-        """Fetch historical OHLCV data for a symbol via yfinance."""
+        """Fetch historical OHLCV data for a symbol via yfinance.
+
+        For daily bars ("1d"), fetches from 1 year before start_date so
+        indicators (SMA20, Bollinger Bands, RSI) have enough history.
+        For intraday bars, yfinance restricts how far back history is
+        available (e.g. ~60 days for 5m/15m/30m, ~7 days for 1m), so the
+        fetch window is clamped to that limit and a smaller indicator
+        lookback buffer (a few days) is used instead of a full year.
+        """
         try:
             import yfinance as yf
         except ImportError:
@@ -199,11 +260,27 @@ class Backtester:
         MarketDataClient._suppress_yfinance_logging()
 
         yf_symbol = self.market_data._normalize_symbol(symbol)
+        is_intraday = self.interval != "1d"
 
-        period = "max" if not self.start_date else None
         try:
             ticker = yf.Ticker(yf_symbol)
-            if period:
+            if is_intraday:
+                max_lookback = self._INTRADAY_MAX_LOOKBACK_DAYS.get(self.interval, 60)
+                now = datetime.now()
+                requested_start = (
+                    datetime.fromisoformat(self.start_date) - timedelta(days=5)
+                    if self.start_date else now - timedelta(days=max_lookback)
+                )
+                earliest_allowed = now - timedelta(days=max_lookback - 1)
+                fetch_start_dt = max(requested_start, earliest_allowed)
+                start = fetch_start_dt.strftime("%Y-%m-%d")
+                end_dt = (
+                    datetime.fromisoformat(self.end_date) + timedelta(days=1)
+                    if self.end_date else now
+                )
+                end = min(end_dt, now).strftime("%Y-%m-%d")
+                df = ticker.history(start=start, end=end, interval=self.interval, auto_adjust=False, raise_errors=False)
+            elif not self.start_date:
                 df = ticker.history(period="2y", interval="1d", auto_adjust=False, raise_errors=False)
             else:
                 # Fetch from 1 year before start_date so indicators have enough
@@ -221,6 +298,22 @@ class Backtester:
 
         df = df.reset_index()
         return {"df": df, "symbol": symbol}
+
+    @staticmethod
+    def _time_col(df) -> str:
+        """Return the timestamp column name — 'Datetime' for intraday bars, 'Date' for daily."""
+        if "Datetime" in df.columns:
+            return "Datetime"
+        return "Date"
+
+    def _ts_key(self, x) -> str:
+        """Format a pandas timestamp to a string key at the granularity matching self.interval."""
+        if hasattr(x, "strftime"):
+            if self.interval == "1d":
+                return x.strftime("%Y-%m-%d")
+            return x.strftime("%Y-%m-%dT%H:%M:%S")
+        s = str(x)
+        return s[:10] if self.interval == "1d" else s[:19]
 
     def run(self) -> BacktestReport:
         """Execute the backtest and return a performance report."""
@@ -241,23 +334,27 @@ class Backtester:
                 final_equity=self.initial_capital,
                 equity_curve=[],
                 trades=[],
+                interval=self.interval,
+                slippage_bps=self.slippage_bps,
             )
 
-        # Determine date range from the data
-        all_dates = set()
+        # Determine the simulation timeline from the data (unified across daily/intraday)
+        all_ts = set()
         for sym_data in historical.values():
             df = sym_data["df"]
-            if "Date" in df.columns:
-                for d in df["Date"]:
-                    all_dates.add(d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10])
+            col = self._time_col(df)
+            if col in df.columns:
+                for t in df[col]:
+                    all_ts.add(self._ts_key(t))
 
-        sorted_dates = sorted(all_dates)
+        sorted_ts = sorted(all_ts)
         if self.start_date:
-            sorted_dates = [d for d in sorted_dates if d >= self.start_date]
+            sorted_ts = [t for t in sorted_ts if t >= self.start_date]
         if self.end_date:
-            sorted_dates = [d for d in sorted_dates if d <= self.end_date]
+            end_bound = self.end_date if self.interval == "1d" else f"{self.end_date}T23:59:59"
+            sorted_ts = [t for t in sorted_ts if t <= end_bound]
 
-        if not sorted_dates:
+        if not sorted_ts:
             return BacktestReport.calculate_metrics(
                 agent_name=self.personality.name,
                 symbols=self.symbols,
@@ -267,6 +364,8 @@ class Backtester:
                 final_equity=self.initial_capital,
                 equity_curve=[],
                 trades=[],
+                interval=self.interval,
+                slippage_bps=self.slippage_bps,
             )
 
         # Create a dynamic class that inherits from the real strategy class
@@ -278,55 +377,66 @@ class Backtester:
             (BacktestAgent, self.agent_class),
             {},
         )
-        agent = BacktestStrategy(self.personality, self.initial_capital)
+        agent = BacktestStrategy(self.personality, self.initial_capital, self.slippage_bps)
         agent.on_start()
 
+        # Pre-resolve each symbol's timestamp column and build O(1) lookup structures.
+        # For each symbol we store:
+        #   - ts_list: sorted list of ts_keys (for bisect)
+        #   - ts_to_idx: dict mapping ts_key -> row index in the df
+        # This avoids O(n²) boolean masking on every iteration.
+        import bisect
+        col_map: dict[str, str] = {}
+        ts_list_map: dict[str, list[str]] = {}
+        ts_to_idx_map: dict[str, dict[str, int]] = {}
+        for sym, sym_data in historical.items():
+            df = sym_data["df"]
+            col = self._time_col(df)
+            col_map[sym] = col
+            keys = df[col].apply(self._ts_key).tolist()
+            ts_to_idx_map[sym] = {}
+            ts_list = []
+            for i, k in enumerate(keys):
+                ts_to_idx_map[sym][k] = i
+                ts_list.append(k)
+            ts_list_map[sym] = ts_list
+
         equity_curve: list[dict] = []
-        actual_start = sorted_dates[0]
-        actual_end = sorted_dates[-1]
+        actual_start = sorted_ts[0]
+        actual_end = sorted_ts[-1]
+        min_bars = 20 if self.interval == "1d" else min(20, max(5, len(sorted_ts) // 4))
 
-        for sim_date in sorted_dates:
-            agent._current_date = sim_date
+        for sim_ts in sorted_ts:
+            agent._current_date = sim_ts
 
-            # Build price lookup for this date
+            # Build price lookup for this bar (O(1) per symbol)
             for sym, sym_data in historical.items():
                 df = sym_data["df"]
-                date_col = "Date" if "Date" in df.columns else df.index.name or "Date"
-                try:
-                    if "Date" in df.columns:
-                        mask = df["Date"].apply(lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10]) == sim_date
-                    else:
-                        mask = df.index.to_series().apply(lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10]) == sim_date
-                    matching = df[mask]
-                    if not matching.empty:
-                        row = matching.iloc[-1]
-                        close = float(row["Close"]) if "Close" in row else 0.0
+                idx = ts_to_idx_map[sym].get(sim_ts)
+                if idx is not None:
+                    try:
+                        close = float(df.iloc[idx]["Close"])
                         agent._price_lookup[sym] = close
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
 
-            # Build TechnicalSnapshot for each symbol using data up to sim_date
+            # Build TechnicalSnapshot for each symbol using data up to sim_ts (O(log n) bisect)
             snapshots: dict[str, TechnicalSnapshot] = {}
             for sym, sym_data in historical.items():
                 df = sym_data["df"]
-                try:
-                    if "Date" in df.columns:
-                        mask = df["Date"].apply(lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10]) <= sim_date
-                    else:
-                        mask = df.index.to_series().apply(lambda x: x.strftime("%Y-%m-%d") if hasattr(x, "strftime") else str(x)[:10]) <= sim_date
-                    window = df[mask]
-                except Exception:
+                ts_list = ts_list_map[sym]
+                # Find how many bars are available up to and including sim_ts
+                pos = bisect.bisect_right(ts_list, sim_ts)
+                if pos < min_bars:
                     continue
 
-                if len(window) < 20:
-                    continue
-
+                window = df.iloc[:pos]
                 closes = window["Close"].squeeze().dropna()
                 volumes = window["Volume"].squeeze().dropna() if "Volume" in window else None
                 highs = window["High"].squeeze().dropna() if "High" in window else None
                 lows = window["Low"].squeeze().dropna() if "Low" in window else None
 
-                if len(closes) < 20:
+                if len(closes) < min_bars:
                     continue
 
                 snapshot = MarketDataClient._compute_indicators(sym, closes, highs, lows, volumes)
@@ -334,12 +444,12 @@ class Backtester:
                     snapshots[sym] = snapshot
 
             if not snapshots:
-                # Record equity even on no-data days
+                # Record equity even on no-data bars
                 equity = agent.cash + sum(
                     pos["quantity"] * agent._price_lookup.get(s, pos["entry_price"])
                     for s, pos in agent._positions.items()
                 )
-                equity_curve.append({"date": sim_date, "equity": round(equity, 2)})
+                equity_curve.append({"date": sim_ts, "equity": round(equity, 2)})
                 continue
 
             # Override market_data.fetch_technical to return our precomputed snapshots
@@ -370,7 +480,7 @@ class Backtester:
                 pos["quantity"] * agent._price_lookup.get(s, pos["entry_price"])
                 for s, pos in agent._positions.items()
             )
-            equity_curve.append({"date": sim_date, "equity": round(equity, 2)})
+            equity_curve.append({"date": sim_ts, "equity": round(equity, 2)})
 
         # Close any remaining open positions at last available prices
         for sym, pos in list(agent._positions.items()):
@@ -379,14 +489,7 @@ class Backtester:
             pnl_pct = ((price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
 
             entry_date = pos.get("entry_date", "")
-            hold_days = 0
-            if entry_date and actual_end:
-                try:
-                    d1 = datetime.fromisoformat(entry_date.split("T")[0])
-                    d2 = datetime.fromisoformat(actual_end.split("T")[0])
-                    hold_days = (d2 - d1).days
-                except Exception:
-                    pass
+            hold_days, hold_hours = agent._hold_span(entry_date, actual_end)
 
             agent._closed_trades.append(TradeRecord(
                 symbol=sym,
@@ -399,12 +502,14 @@ class Backtester:
                 pnl=pnl,
                 pnl_pct=pnl_pct,
                 hold_days=hold_days,
+                hold_hours=hold_hours,
                 reason="Backtest end — position auto-closed",
             ))
             agent.cash += pos["quantity"] * price
             del agent._positions[sym]
 
         final_equity = agent.cash
+        periods_per_year = self._BARS_PER_DAY.get(self.interval, 1) * 252.0
 
         return BacktestReport.calculate_metrics(
             agent_name=self.personality.name,
@@ -415,4 +520,7 @@ class Backtester:
             final_equity=final_equity,
             equity_curve=equity_curve,
             trades=agent._closed_trades,
+            interval=self.interval,
+            slippage_bps=self.slippage_bps,
+            periods_per_year=periods_per_year,
         )

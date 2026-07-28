@@ -34,7 +34,7 @@ export default function App() {
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div className="h-screen flex items-center justify-center bg-arena-bg">
         <div className="text-center">
@@ -60,6 +60,14 @@ export default function App() {
 
   return (
     <div className="h-screen flex bg-arena-bg overflow-hidden">
+      {/* Reconnecting banner — shows stale data with a warning when backend is down */}
+      {error && data && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-arena-red/90 text-white text-xs text-center py-1 px-4 flex items-center justify-center gap-2">
+          <span className="animate-pulse">●</span>
+          <span>Reconnecting… {error}</span>
+        </div>
+      )}
+
       {/* Collapsible Sidebar Nav */}
       <SidebarNav currentPage={currentPage} onNavigate={setCurrentPage} />
 

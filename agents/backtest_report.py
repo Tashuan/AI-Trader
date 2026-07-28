@@ -20,6 +20,7 @@ class TradeRecord:
     pnl: float
     pnl_pct: float
     hold_days: int
+    hold_hours: float = 0.0
     reason: str = ""
 
     def to_dict(self) -> dict:
@@ -34,6 +35,7 @@ class TradeRecord:
             "pnl": round(self.pnl, 2),
             "pnl_pct": round(self.pnl_pct, 2),
             "hold_days": self.hold_days,
+            "hold_hours": round(self.hold_hours, 2),
             "reason": self.reason,
         }
 
@@ -59,6 +61,8 @@ class BacktestReport:
     equity_curve: list[dict] = field(default_factory=list)
     trades: list[dict] = field(default_factory=list)
     per_symbol_stats: dict = field(default_factory=dict)
+    interval: str = "1d"
+    slippage_bps: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -80,6 +84,8 @@ class BacktestReport:
             "equity_curve": self.equity_curve,
             "trades": self.trades,
             "per_symbol_stats": self.per_symbol_stats,
+            "interval": self.interval,
+            "slippage_bps": self.slippage_bps,
         }
 
     @staticmethod
@@ -92,24 +98,32 @@ class BacktestReport:
         final_equity: float,
         equity_curve: list[dict],
         trades: list[TradeRecord],
+        interval: str = "1d",
+        slippage_bps: float = 0.0,
+        periods_per_year: float = 252.0,
     ) -> "BacktestReport":
-        """Compute all performance metrics from raw backtest data."""
+        """Compute all performance metrics from raw backtest data.
+
+        periods_per_year scales the Sharpe annualization factor to match the
+        bar interval used (e.g. 252 for daily bars, much higher for intraday
+        bars where each equity_curve point is a smaller slice of time).
+        """
         total_return_pct = ((final_equity - initial_capital) / initial_capital * 100) if initial_capital > 0 else 0.0
 
-        # Sharpe ratio (daily returns, annualized)
+        # Sharpe ratio (per-bar returns, annualized using periods_per_year)
         sharpe = 0.0
         if len(equity_curve) > 1:
-            daily_returns = []
+            period_returns = []
             for i in range(1, len(equity_curve)):
                 prev_eq = equity_curve[i - 1]["equity"]
                 curr_eq = equity_curve[i]["equity"]
                 if prev_eq > 0:
-                    daily_returns.append((curr_eq - prev_eq) / prev_eq)
-            if daily_returns:
-                avg_ret = sum(daily_returns) / len(daily_returns)
-                variance = sum((r - avg_ret) ** 2 for r in daily_returns) / len(daily_returns)
+                    period_returns.append((curr_eq - prev_eq) / prev_eq)
+            if period_returns:
+                avg_ret = sum(period_returns) / len(period_returns)
+                variance = sum((r - avg_ret) ** 2 for r in period_returns) / len(period_returns)
                 std_ret = math.sqrt(variance) if variance > 0 else 0.001
-                sharpe = (avg_ret / std_ret) * math.sqrt(252) if std_ret > 0 else 0.0
+                sharpe = (avg_ret / std_ret) * math.sqrt(periods_per_year) if std_ret > 0 else 0.0
 
         # Max drawdown
         max_dd = 0.0
@@ -167,4 +181,6 @@ class BacktestReport:
             equity_curve=equity_curve,
             trades=[t.to_dict() for t in trades],
             per_symbol_stats=per_symbol,
+            interval=interval,
+            slippage_bps=slippage_bps,
         )

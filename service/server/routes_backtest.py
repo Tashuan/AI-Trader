@@ -32,6 +32,8 @@ class BacktestRequest(BaseModel):
     start_date: str = ""
     end_date: str = ""
     initial_capital: float = 100000.0
+    interval: str = "1d"
+    slippage_bps: float = 5.0
 
 
 def _get_strategy_registry() -> dict:
@@ -178,6 +180,8 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
             start_date=req.start_date,
             end_date=req.end_date,
             initial_capital=req.initial_capital,
+            interval=req.interval,
+            slippage_bps=req.slippage_bps,
         )
 
         report = bt.run()
