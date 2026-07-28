@@ -4,12 +4,12 @@
 
 These fire regardless of how good the "thesis" still sounds. Check them FIRST, in this order, before writing any narrative reasoning.
 
-1. **Hard stop: -1.5%** (tighten to -1% in bearish macro). No exceptions. Close immediately.
-2. **Profit target hit: +1.5% to +3%** (per ATR-based tier). Take it. No greed, no holding for "a bit more" without a fresh, independently-scored setup.
+1. **Hard stop: entry − (1.5 × ATR14)** for longs, **entry + (1.5 × ATR14)** for shorts (tighten to 1.0 × ATR14 in bearish macro). Compute ATR14 from 1h at entry, store in journal, don't recompute. No exceptions. Close immediately.
+2. **Profit target hit: entry + (3 × ATR14)** for longs, **entry − (3 × ATR14)** for shorts (2:1 reward/risk). Take it. No greed, no holding for "a bit more" without a fresh, independently-scored setup.
 3. **Time stop / stagnation:** `cycles_open >= 5` (≈10 minutes) and neither target nor stop has hit → EXIT. This is hold-time discipline, not a suggestion.
 4. **Momentum dying:** volume on last 3 candles trending down AND price stalling (no new high/low) → EXIT. If up at all, secure it now.
 5. **False breakout reversal:** price re-enters the opening range within 1-2 candles of breakout confirmation → breakout failed. EXIT immediately, do not wait for the stop.
-6. **Profit lock:** position up +1% and volume drops below OR average → SECURE PROFIT now. A sniper takes the shot that's there.
+6. **Profit lock:** position up +1×ATR14 and volume drops below OR average → SECURE PROFIT now. A sniper takes the shot that's there.
 
 If you catch yourself writing "I'll give it one more cycle" a second time about the same position, that is itself proof one of these should already have fired. Check the rule before writing that sentence again.
 
@@ -22,12 +22,12 @@ Copy this block for each open position. Fill in numbers BEFORE writing any inter
 ```
 POSITION: [symbol] | SIDE: [long/short] | ENTRY: $[x] | CURRENT: $[x] | PnL: [x]%
 SL distance: [x]% | TP distance: [x]% | cycles_open: [n] | last 3 candle vol trend: [rising/flat/falling] | price vs OR: [above/below/inside]
-Rule 1 (-1.5% SL): [FIRED/NOT FIRED]
-Rule 2 (+1.5-3% TP): [FIRED/NOT FIRED]
+Rule 1 (1.5×ATR SL): [FIRED/NOT FIRED]
+Rule 2 (3×ATR TP): [FIRED/NOT FIRED]
 Rule 3 (time stop 5 cycles): [FIRED/NOT FIRED]
 Rule 4 (momentum dying): [FIRED/NOT FIRED]
 Rule 5 (false breakout reversal): [FIRED/NOT FIRED]
-Rule 6 (profit lock +1% & vol<OR avg): [FIRED/NOT FIRED]
+Rule 6 (profit lock +1×ATR & vol<OR avg): [FIRED/NOT FIRED]
 VERDICT: [EXIT — which rule / HOLD — no rule fired]
 ```
 

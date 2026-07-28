@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Filter, TrendingUp, TrendingDown, Target } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Filter, TrendingUp, TrendingDown, Target, Check, ChevronDown } from 'lucide-react';
 import { PositionTracker } from '../components/PositionTracker';
 import type { AgentPosition } from '../types';
 
@@ -15,7 +15,9 @@ export function PositionsPage() {
   const [positions, setPositions] = useState<AgentPosition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [agentFilter, setAgentFilter] = useState<string>('all');
+  const [agentFilter, setAgentFilter] = useState<string[]>([]);
+  const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
+  const agentDropdownRef = useRef<HTMLDivElement>(null);
   const [sideFilter, setSideFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('pnl');
   const [availableAgents, setAvailableAgents] = useState<{ id: number; name: string }[]>([]);
@@ -49,10 +51,20 @@ export function PositionsPage() {
     return () => clearInterval(interval);
   }, [fetchPositions]);
 
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (agentDropdownRef.current && !agentDropdownRef.current.contains(e.target as Node)) {
+        setAgentDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   // Apply filters + sorting
   const filtered = positions
     .filter(pos => {
-      if (agentFilter !== 'all' && pos.agent_name !== agentFilter) return false;
+      if (agentFilter.length > 0 && !agentFilter.includes(pos.agent_name ?? '')) return false;
       if (sideFilter !== 'all' && pos.side !== sideFilter) return false;
       return true;
     })
@@ -131,17 +143,55 @@ export function PositionsPage() {
           <Filter size={12} className="text-arena-text-dim" />
         </div>
 
-        {/* Agent filter */}
-        <select
-          value={agentFilter}
-          onChange={e => setAgentFilter(e.target.value)}
-          className="form-input w-auto min-w-[120px]"
-        >
-          <option value="all">All Agents</option>
-          {availableAgents.map(a => (
-            <option key={a.id} value={a.name}>{a.name}</option>
-          ))}
-        </select>
+        {/* Agent filter — multi-select */}
+        <div className="relative" ref={agentDropdownRef}>
+          <button
+            onClick={() => setAgentDropdownOpen(o => !o)}
+            className="form-input w-auto min-w-[120px] flex items-center justify-between gap-1.5 cursor-pointer"
+          >
+            <span className="truncate">
+              {agentFilter.length === 0
+                ? 'All Agents'
+                : agentFilter.length === 1
+                  ? agentFilter[0]
+                  : `${agentFilter.length} agents`}
+            </span>
+            <ChevronDown size={12} className={`text-arena-text-dim shrink-0 transition-transform ${agentDropdownOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {agentDropdownOpen && (
+            <div className="absolute top-full left-0 mt-1 z-20 min-w-[160px] card-base p-1 shadow-xl">
+              {availableAgents.map(a => {
+                const checked = agentFilter.includes(a.name);
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => {
+                      setAgentFilter(prev =>
+                        checked
+                          ? prev.filter(n => n !== a.name)
+                          : [...prev, a.name],
+                      );
+                    }}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 text-left"
+                  >
+                    <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${checked ? 'bg-arena-purple border-arena-purple' : 'border-white/20'}`}>
+                      {checked && <Check size={10} className="text-white" />}
+                    </span>
+                    <span className="text-[11px] text-white/80 truncate">{a.name}</span>
+                  </button>
+                );
+              })}
+              {agentFilter.length > 0 && (
+                <button
+                  onClick={() => setAgentFilter([])}
+                  className="w-full text-[10px] text-arena-text-dim hover:text-white px-2 py-1.5 border-t border-arena-border mt-1"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Side filter */}
         <select

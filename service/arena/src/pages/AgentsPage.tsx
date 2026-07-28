@@ -47,6 +47,8 @@ const ALL_AGENTS: AgentEntry[] = [
   { fileName: 'Prophet', name: 'Prophet' },
   { fileName: 'RangeRider', name: 'RangeRider' },
   { fileName: 'SpreadMaster', name: 'SpreadMaster' },
+  { fileName: 'FuturesFlow', name: 'FuturesFlow' },
+  { fileName: 'NightHawk', name: 'NightHawk' },
 ];
 
 function buildAgentPrompt(agentsDir: string, fileName: string): string {

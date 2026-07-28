@@ -256,9 +256,11 @@ def _update_position_from_signal(
             new_qty = current_qty + quantity
             new_entry_price = ((current_qty * row["entry_price"]) + (quantity * price)) / new_qty
             cursor.execute("""
-                UPDATE positions SET quantity = ?, entry_price = ?, opened_at = ?
+                UPDATE positions SET quantity = ?, entry_price = ?, opened_at = ?,
+                    stop_loss_price = COALESCE(?, stop_loss_price),
+                    take_profit_price = COALESCE(?, take_profit_price)
                 WHERE id = ?
-            """, (new_qty, new_entry_price, executed_at, position_id))
+            """, (new_qty, new_entry_price, executed_at, stop_loss_price, take_profit_price, position_id))
             print(f"[Position] {symbol}: increased long position to {new_qty}")
         else:
             # Create new long position
@@ -303,9 +305,11 @@ def _update_position_from_signal(
                 (current_short_qty * row["entry_price"]) + (quantity * price)
             ) / abs(new_qty)
             cursor.execute("""
-                UPDATE positions SET quantity = ?, entry_price = ?, opened_at = ?
+                UPDATE positions SET quantity = ?, entry_price = ?, opened_at = ?,
+                    stop_loss_price = COALESCE(?, stop_loss_price),
+                    take_profit_price = COALESCE(?, take_profit_price)
                 WHERE id = ?
-            """, (new_qty, new_entry_price, executed_at, position_id))
+            """, (new_qty, new_entry_price, executed_at, stop_loss_price, take_profit_price, position_id))
             print(f"[Position] {symbol}: increased short position to {new_qty}")
         else:
             # Create new short position (negative quantity for short)

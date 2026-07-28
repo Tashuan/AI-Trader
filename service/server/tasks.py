@@ -473,7 +473,7 @@ async def update_position_prices():
     # Get max parallel requests from environment variable
     max_parallel = _env_int("MAX_PARALLEL_PRICE_FETCH", 2, minimum=1)
     verbose_fetch = _env_bool("POSITION_PRICE_VERBOSE_FETCH_LOGS", False)
-    refresh_priced_markets = _env_csv_set("POSITION_PRICE_REFRESH_PRICED_MARKETS", "crypto,us-stock")
+    refresh_priced_markets = _env_csv_set("POSITION_PRICE_REFRESH_PRICED_MARKETS", "crypto,us-stock,futures,forex")
 
     # Wait a bit on startup before first update
     await asyncio.sleep(_env_int("POSITION_PRICE_STARTUP_DELAY_SECONDS", 15, minimum=0))
@@ -653,22 +653,21 @@ async def update_position_prices():
 async def auto_close_positions_loop():
     """Background task to auto-close positions when stop-loss or take-profit thresholds are hit.
 
-    Runs after each price update cycle. Checks all open positions that have
-    stop_loss_price or take_profit_price set, and closes them if the current
-    price has crossed the threshold.
+    Checks all open positions that have stop_loss_price or take_profit_price set,
+    and closes them if the current price has crossed the threshold.
 
-    For real-time markets (crypto, us-stock), fetches fresh prices on each
-    check instead of relying on potentially stale DB values from the
-    background price updater.
+    Fetches fresh prices for ALL positions in parallel on each check to ensure
+    triggers fire as close to real-time as possible. Falls back to DB current_price
+    if a fresh fetch fails.
     """
-    from database import get_db_connection
+    from database import get_db_connection, begin_write_transaction
     from services import _update_position_from_signal
     from price_fetcher import get_price_from_market
-    from routes_shared import normalize_market
-
-    _realtime_markets = {"crypto", "us-stock"}
 
     await asyncio.sleep(_env_int("AUTO_CLOSE_STARTUP_DELAY_SECONDS", 30, minimum=0))
+
+    max_parallel = _env_int("AUTO_CLOSE_MAX_PARALLEL_FETCH", 5, minimum=1)
+    semaphore = asyncio.Semaphore(max_parallel)
 
     while True:
         try:
@@ -689,39 +688,39 @@ async def auto_close_positions_loop():
                 conn.close()
 
             if not rows:
-                await asyncio.sleep(_env_int("AUTO_CLOSE_CHECK_INTERVAL", 15, minimum=5))
+                await asyncio.sleep(_env_int("AUTO_CLOSE_CHECK_INTERVAL", 5, minimum=3))
                 continue
 
-            closed_count = 0
-            for row in rows:
-                symbol = row["symbol"]
-                market = row["market"]
-                normalized_market = normalize_market(market)
+            # ── Fetch fresh prices in parallel for all positions ──
+            now_utc = datetime.now(timezone.utc)
+            executed_at_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-                # Fetch fresh price for real-time markets to avoid acting on
-                # stale DB values between background refresh cycles.
-                if normalized_market in _realtime_markets:
-                    now_utc = datetime.now(timezone.utc)
-                    executed_at_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+            async def fetch_fresh_price(row):
+                async with semaphore:
                     try:
-                        fetched_price = await asyncio.to_thread(
+                        price = await asyncio.to_thread(
                             get_price_from_market,
-                            symbol,
+                            row["symbol"],
                             executed_at_str,
-                            market,
+                            row["market"],
                             row["token_id"],
                             row["outcome"],
                         )
-                        current_price = fetched_price if fetched_price is not None else row["current_price"]
-                    except Exception as fetch_err:
-                        print(f"[Auto-Close] Fresh price fetch failed for {symbol}: {fetch_err}, using DB price")
-                        current_price = row["current_price"]
-                else:
-                    current_price = row["current_price"]
+                        return price if price is not None else row["current_price"]
+                    except Exception:
+                        return row["current_price"]
 
+            fresh_prices = await asyncio.gather(*[fetch_fresh_price(r) for r in rows])
+
+            # ── Check thresholds and close sequentially (DB writes must be serial) ──
+            closed_count = 0
+            for idx, row in enumerate(rows):
+                current_price = fresh_prices[idx]
                 if current_price is None:
                     continue
 
+                symbol = row["symbol"]
+                market = row["market"]
                 side = row["side"]
                 stop_loss = row["stop_loss_price"]
                 take_profit = row["take_profit_price"]
@@ -756,119 +755,124 @@ async def auto_close_positions_loop():
                 conn = get_db_connection()
                 try:
                     cursor = conn.cursor()
-                    _update_position_from_signal(
-                        agent_id=row["agent_id"],
-                        symbol=symbol,
-                        market=market,
-                        action=close_action,
-                        quantity=quantity,
-                        price=current_price,
-                        executed_at=executed_at,
-                        cursor=cursor,
-                        token_id=row["token_id"],
-                        outcome=row["outcome"],
-                    )
-
-                    trade_value = current_price * quantity
-                    if side == "long":
-                        cursor.execute(
-                            "UPDATE agents SET cash = cash + ? WHERE id = ?",
-                            (trade_value, row["agent_id"]),
-                        )
-                    else:
-                        entry_price = row["entry_price"]
-                        cover_credit = ((2 * entry_price) - current_price) * quantity
-                        # Borrow fee for short positions
-                        borrow_fee = 0.0
-                        try:
-                            from fees import compute_borrow_fee
-                            opened_dt = datetime.fromisoformat(row["opened_at"].replace('Z', '+00:00'))
-                            now_dt = datetime.now(timezone.utc)
-                            days_held = max(0.0, (now_dt - opened_dt).total_seconds() / 86400.0)
-                            position_value = abs(row["quantity"]) * entry_price
-                            borrow_fee = compute_borrow_fee(symbol, position_value, days_held)
-                        except Exception:
-                            pass
-                        cursor.execute(
-                            "UPDATE agents SET cash = cash + ? WHERE id = ?",
-                            (cover_credit - borrow_fee, row["agent_id"]),
-                        )
-                        if borrow_fee > 0:
-                            print(f"[Auto-Close] Borrow fee {symbol}: ${borrow_fee:.4f}")
-
+                    begin_write_transaction(cursor)
                     try:
-                        import uuid
-                        signal_id = str(uuid.uuid4())
-                        cursor.execute(
-                            """
-                            INSERT INTO signals
-                                (signal_id, agent_id, message_type, market, signal_type,
-                                 symbol, title, content, tags, timestamp, created_at)
-                            VALUES (?, ?, 'trade', ?, 'auto_close', ?, ?, ?, 'auto-close,stop-loss,take-profit', ?, ?)
-                            """,
-                            (
-                                signal_id,
-                                row["agent_id"],
-                                market,
-                                symbol,
-                                f"Auto-close: {symbol} — {close_reason}",
-                                f"Position auto-closed by worker: {close_reason}. Agent: {agent_name}, side: {side}, qty: {quantity}, entry: {row['entry_price']}, exit: {current_price}",
-                                int(now.timestamp()),
-                                now.isoformat(),
-                            ),
+                        _update_position_from_signal(
+                            agent_id=row["agent_id"],
+                            symbol=symbol,
+                            market=market,
+                            action=close_action,
+                            quantity=quantity,
+                            price=current_price,
+                            executed_at=executed_at,
+                            cursor=cursor,
+                            token_id=row["token_id"],
+                            outcome=row["outcome"],
                         )
-                    except Exception as sig_err:
-                        print(f"[Auto-Close] Signal insert failed for {symbol}: {sig_err}")
 
-                    try:
-                        import json as _json
-                        cursor.execute(
-                            """
-                            SELECT id FROM trading_decision_log
-                            WHERE agent_id = ? AND symbol = ? AND action IN ('buy', 'short')
-                              AND closing_log_id IS NULL
-                            ORDER BY created_at DESC LIMIT 1
-                            """,
-                            (row["agent_id"], symbol),
-                        )
-                        prior_entry = cursor.fetchone()
-                        cursor.execute(
-                            """
-                            INSERT INTO trading_decision_log
-                            (agent_id, action, market, symbol, reason, metadata_json, closing_log_id, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                row["agent_id"],
-                                close_action,
-                                market,
-                                symbol,
-                                f"Auto-close: {close_reason}",
-                                _json.dumps({
-                                    "price": float(current_price),
-                                    "quantity": float(quantity),
-                                    "trade_value": float(current_price * quantity),
-                                    "entry_price": float(row["entry_price"]) if row["entry_price"] else None,
-                                    "stop_loss_price": float(stop_loss) if stop_loss else None,
-                                    "take_profit_price": float(take_profit) if take_profit else None,
-                                    "trigger": "auto_close",
-                                }),
-                                prior_entry["id"] if prior_entry else None,
-                                now.isoformat(),
-                            ),
-                        )
-                        exit_log_id = cursor.lastrowid
-                        if prior_entry:
+                        trade_value = current_price * quantity
+                        if side == "long":
                             cursor.execute(
-                                "UPDATE trading_decision_log SET closing_log_id = ? WHERE id = ?",
-                                (exit_log_id, prior_entry["id"]),
+                                "UPDATE agents SET cash = cash + ? WHERE id = ?",
+                                (trade_value, row["agent_id"]),
                             )
-                    except Exception as log_err:
-                        print(f"[Auto-Close] Decision log insert failed for {symbol}: {log_err}")
+                        else:
+                            entry_price = row["entry_price"]
+                            cover_credit = ((2 * entry_price) - current_price) * quantity
+                            # Borrow fee for short positions
+                            borrow_fee = 0.0
+                            try:
+                                from fees import compute_borrow_fee
+                                opened_dt = datetime.fromisoformat(row["opened_at"].replace('Z', '+00:00'))
+                                now_dt = datetime.now(timezone.utc)
+                                days_held = max(0.0, (now_dt - opened_dt).total_seconds() / 86400.0)
+                                position_value = abs(row["quantity"]) * entry_price
+                                borrow_fee = compute_borrow_fee(symbol, position_value, days_held)
+                            except Exception:
+                                pass
+                            cursor.execute(
+                                "UPDATE agents SET cash = cash + ? WHERE id = ?",
+                                (cover_credit - borrow_fee, row["agent_id"]),
+                            )
+                            if borrow_fee > 0:
+                                print(f"[Auto-Close] Borrow fee {symbol}: ${borrow_fee:.4f}")
 
-                    conn.commit()
-                    closed_count += 1
-                    print(f"[Auto-Close] {agent_name} {symbol} {side} — {close_reason} — closed at {current_price}")
+                        try:
+                            import uuid
+                            signal_id = str(uuid.uuid4())
+                            cursor.execute(
+                                """
+                                INSERT INTO signals
+                                    (signal_id, agent_id, message_type, market, signal_type,
+                                     symbol, title, content, tags, timestamp, created_at)
+                                VALUES (?, ?, 'trade', ?, 'auto_close', ?, ?, ?, 'auto-close,stop-loss,take-profit', ?, ?)
+                                """,
+                                (
+                                    signal_id,
+                                    row["agent_id"],
+                                    market,
+                                    symbol,
+                                    f"Auto-close: {symbol} — {close_reason}",
+                                    f"Position auto-closed by worker: {close_reason}. Agent: {agent_name}, side: {side}, qty: {quantity}, entry: {row['entry_price']}, exit: {current_price}",
+                                    int(now.timestamp()),
+                                    now.isoformat(),
+                                ),
+                            )
+                        except Exception as sig_err:
+                            print(f"[Auto-Close] Signal insert failed for {symbol}: {sig_err}")
+
+                        try:
+                            import json as _json
+                            cursor.execute(
+                                """
+                                SELECT id FROM trading_decision_log
+                                WHERE agent_id = ? AND symbol = ? AND action IN ('buy', 'short')
+                                  AND closing_log_id IS NULL
+                                ORDER BY created_at DESC LIMIT 1
+                                """,
+                                (row["agent_id"], symbol),
+                            )
+                            prior_entry = cursor.fetchone()
+                            cursor.execute(
+                                """
+                                INSERT INTO trading_decision_log
+                                (agent_id, action, market, symbol, reason, metadata_json, closing_log_id, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    row["agent_id"],
+                                    close_action,
+                                    market,
+                                    symbol,
+                                    f"Auto-close: {close_reason}",
+                                    _json.dumps({
+                                        "price": float(current_price),
+                                        "quantity": float(quantity),
+                                        "trade_value": float(current_price * quantity),
+                                        "entry_price": float(row["entry_price"]) if row["entry_price"] else None,
+                                        "stop_loss_price": float(stop_loss) if stop_loss else None,
+                                        "take_profit_price": float(take_profit) if take_profit else None,
+                                        "trigger": "auto_close",
+                                    }),
+                                    prior_entry["id"] if prior_entry else None,
+                                    now.isoformat(),
+                                ),
+                            )
+                            exit_log_id = cursor.lastrowid
+                            if prior_entry:
+                                cursor.execute(
+                                    "UPDATE trading_decision_log SET closing_log_id = ? WHERE id = ?",
+                                    (exit_log_id, prior_entry["id"]),
+                                )
+                        except Exception as log_err:
+                            print(f"[Auto-Close] Decision log insert failed for {symbol}: {log_err}")
+
+                        conn.commit()
+                        closed_count += 1
+                        print(f"[Auto-Close] {agent_name} {symbol} {side} — {close_reason} — closed at {current_price}")
+                    except Exception as write_err:
+                        conn.rollback()
+                        print(f"[Auto-Close] Write failed for {symbol}: {write_err}")
                 finally:
                     conn.close()
 
@@ -878,7 +882,7 @@ async def auto_close_positions_loop():
         except Exception as e:
             print(f"[Auto-Close Error] {e}")
 
-        check_interval = _env_int("AUTO_CLOSE_CHECK_INTERVAL", 15, minimum=5)
+        check_interval = _env_int("AUTO_CLOSE_CHECK_INTERVAL", 5, minimum=3)
         await asyncio.sleep(check_interval)
 
 

@@ -103,9 +103,15 @@ Consensus = momentum confirmation, a secondary filter, not a primary signal. Fet
 
 Note: several of these overlap (RSI, MACD, and "1h return > +1%" are all largely restating "price has upward momentum" in different math). Don't treat 4 of these as 4 independent confirmations if 3 of them are trend/momentum measures and only 1 is a volume/participation measure. Weight your own confidence lower if the 4+ you found are all from the same underlying signal family (trend vs. volume vs. volatility).
 
-**Mandatory platform SL/TP on every entry:** Every `POST /api/signals/realtime` buy MUST include `stop_loss_price` and `take_profit_price` fields, computed from the entry price at the -2% / +2% levels. This is not optional — the platform auto-close is your primary enforcement mechanism for the Non-Negotiable Exit Rules. The manual per-cycle checks are a backstop, not a substitute. Example:
+**Mandatory platform SL/TP on every entry (ATR-based):** Every `POST /api/signals/realtime` buy MUST include `stop_loss_price` and `take_profit_price` fields, computed from ATR14 at entry time:
+- **Stop-loss:** entry − (1.5 × ATR14) for longs, entry + (1.5 × ATR14) for shorts
+- **Take-profit:** entry + (3 × ATR14) for longs, entry − (3 × ATR14) for shorts (2:1 reward/risk)
+
+**How to get ATR:** Use `mcp0_get_technical_indicators` with `indicators: ["atr"]` and `interval: "1h"` for the symbol. If MCP is unavailable, compute from yfinance 1h data (14-period ATR). If neither works, fall back to 2% of entry price as a rough ATR proxy. Store the ATR value in the journal at entry — do not recompute mid-trade.
+
+This is not optional — the platform auto-close is your primary enforcement mechanism for the Non-Negotiable Exit Rules. The manual per-cycle checks are a backstop, not a substitute. Example:
 ```json
-{"market":"polymarket","action":"buy","symbol":"...","outcome":"Yes","token_id":"...","price":0,"quantity":50,"executed_at":"now","stop_loss_price":<entry*0.98>,"take_profit_price":<entry*1.02>,"content":"..."}
+{"market":"crypto","action":"buy","symbol":"BTC","price":0,"quantity":0.5,"executed_at":"now","stop_loss_price":<entry - 1.5*ATR14>,"take_profit_price":<entry + 3*ATR14>,"content":"Momentum long: ATR14=1200"}
 ```
 
 **Position overlap check:** run `GET /api/positions` before entering — never double up on a symbol you already hold.

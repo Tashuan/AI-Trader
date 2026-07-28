@@ -568,58 +568,9 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     @app.get("/api/arena/narrative/commentary")
     async def arena_commentary():
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Get recent signals for context
-        cursor.execute(
-            """
-            SELECT s.*, a.name as agent_name
-            FROM signals s
-            JOIN agents a ON a.id = s.agent_id
-            ORDER BY s.created_at DESC
-            LIMIT 15
-            """
-        )
-        signals = [dict(row) for row in cursor.fetchall()]
-
-        # Get recent replies
-        signal_ids = [s["id"] for s in signals if s.get("id")]
-        replies = []
-        if signal_ids:
-            placeholders = ",".join("?" for _ in signal_ids[:15])
-            cursor.execute(
-                f"""
-                SELECT r.*, a.name as agent_name
-                FROM signal_replies r
-                JOIN agents a ON a.id = r.agent_id
-                WHERE r.signal_id IN ({placeholders})
-                ORDER BY r.created_at DESC
-                LIMIT 30
-                """,
-                signal_ids[:15],
-            )
-            replies = [dict(row) for row in cursor.fetchall()]
-
-        # Get agent name map
-        cursor.execute("SELECT id, name FROM agents")
-        agent_name_map = {row["id"]: row["name"] for row in cursor.fetchall()}
-        conn.close()
-
-        # Build events for context
-        events = build_timeline_events(signals, replies, limit=15)
-
-        # Get personalities and relationships
-        personalities = _load_personalities()
-        relationships = compute_all_relationships()
-
-        commentary = generate_commentary(
-            events,
-            personalities,
-            relationships,
-            agent_name_map,
-        )
-        return {"commentary": commentary}
+        # DISABLED: Arena commentator — short-circuit to empty response.
+        # Re-enable by replacing this body with the original DB + generate_commentary logic.
+        return {"commentary": []}
 
     # ─── GET /api/arena/breaking-events ─────────────────────────────
 

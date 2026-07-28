@@ -30,6 +30,7 @@ from strategy_news import NewsHoundAgent
 from strategy_technical import ChartMasterAgent
 from strategy_contrarian import FadeMasterAgent
 from strategy_momentum import BlitzTraderAgent
+from strategy_after_hours import NightHawkAgent
 
 # Map personality keys to agent classes
 AGENT_CLASSES = {
@@ -37,10 +38,11 @@ AGENT_CLASSES = {
     "chartmaster": ChartMasterAgent,
     "fademaster": FadeMasterAgent,
     "blitztrader": BlitzTraderAgent,
+    "nighthawk": NightHawkAgent,
 }
 
 # Default agents to run
-DEFAULT_AGENTS = ["newshound", "chartmaster", "fademaster", "blitztrader"]
+DEFAULT_AGENTS = ["newshound", "chartmaster", "fademaster", "blitztrader", "nighthawk"]
 
 
 def create_agent(key: str, api_base: str, poll_interval: int) -> BaseAgent:

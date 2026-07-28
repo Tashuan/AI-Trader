@@ -140,6 +140,12 @@ Use Liquid MCP tools directly for richer analysis — these cover index and comm
 - `mcp0_show_chart("GOLD", interval="4h")` — candlestick chart (use 4h for swing analysis)
 - `mcp0_get_news()` — may cover futures/commodity headlines
 
+**⚠️ Price Source Discrepancy — Platform vs MCP:**
+Platform prices come from **yfinance** (CME futures: ES, GC, SI, CL). MCP prices come from **Liquid perpetual swaps** (SP500, GOLD, SILVER, OIL perps). These are different instruments and will NOT match exactly — different funding/basis, CME gaps vs 24/7 perps, different liquidity pools. Typical spread: 0.05–0.5%.
+- **Trade execution & P&L:** Platform (yfinance) prices are the source of truth for fills, TP/SL triggers, and position tracking. Always reference platform `current_price` from `GET /api/positions` for exit decisions.
+- **Market scanning & analysis:** MCP prices are fine for directional analysis, positioning, funding, OI, and technical indicators. Don't expect exact price matches — use MCP for signal generation, platform for execution.
+- **Crypto (BTC, ETH, SOL):** Both sources use Hyperliquid — prices should match closely. No discrepancy expected.
+
 **Futures proxy symbol mapping:**
 | Futures | MCP Symbol | Notes |
 |---------|-----------|-------|

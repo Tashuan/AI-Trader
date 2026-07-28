@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { useArenaData } from './hooks/useArenaData';
 import { SidebarNav, type PageId } from './components/SidebarNav';
 import { TopMarketBar } from './components/TopMarketBar';
-import { EventTicker } from './components/EventTicker';
+// DISABLED: EventTicker — re-enable by uncommenting the import and render below
+// import { EventTicker } from './components/EventTicker';
 import { AgentArena } from './components/AgentArena';
-import { CommentaryPanel, ConversationPanel, HeadlinesPanel } from './components/SidePanels';
+// DISABLED: CommentaryPanel — re-enable by uncommenting the import and render below
+// import { CommentaryPanel, ConversationPanel, HeadlinesPanel } from './components/SidePanels';
+import { ConversationPanel, HeadlinesPanel } from './components/SidePanels';
 import { AgentDrawer } from './components/AgentDrawer';
 import { MarketsPage } from './pages/MarketsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -15,7 +18,7 @@ import { PortfolioRiskPanel } from './components/PortfolioRiskPanel';
 import type { Agent } from './types';
 
 export default function App() {
-  const { data, loading, error, commentary, mentionedAgent, portfolioRisk, portfolioRiskLastUpdated, userInfo, fetchPortfolioRisk } = useArenaData();
+  const { data, loading, error, mentionedAgent, portfolioRisk, portfolioRiskLastUpdated, userInfo, fetchPortfolioRisk } = useArenaData();
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [currentPage, setCurrentPage] = useState<PageId>('arena');
 
@@ -51,7 +54,8 @@ export default function App() {
   const agents = data?.agents || [];
   const headlines = data?.headlines || [];
   const timeline = data?.timeline || [];
-  const breakingEvent = data?.breaking_event || null;
+  // DISABLED: breakingEvent no longer needed — market chips and banner removed
+  // const breakingEvent = data?.breaking_event || null;
 
   return (
     <div className="h-screen flex bg-arena-bg overflow-hidden">
@@ -60,18 +64,19 @@ export default function App() {
 
       {/* Main column */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Market Bar */}
-        <TopMarketBar markets={markets} breakingEvent={breakingEvent} />
+        {/* Top Market Bar (market chips disabled — header only) */}
+        <TopMarketBar />
 
-        {/* Event Ticker */}
-        <EventTicker events={timeline} />
+        {/* DISABLED: Event Ticker — re-enable by uncommenting */}
+        {/* <EventTicker events={timeline} /> */}
 
         {/* Page Content */}
         {currentPage === 'arena' && (
           <div className="flex-1 flex overflow-hidden">
-            {/* Left Sidebar: Commentary + Headlines + Conversation */}
+            {/* Left Sidebar: Headlines + Conversation */}
             <div className="w-80 shrink-0 border-r border-arena-border p-3 flex flex-col overflow-hidden">
-              <CommentaryPanel commentary={commentary} />
+              {/* DISABLED: CommentaryPanel — re-enable by uncommenting */}
+              {/* <CommentaryPanel commentary={commentary} /> */}
               <HeadlinesPanel headlines={headlines} />
               <ConversationPanel timeline={timeline} />
             </div>
@@ -84,7 +89,7 @@ export default function App() {
             />
 
             {/* Right Sidebar: Portfolio Risk */}
-            <div className="w-72 shrink-0 border-l border-arena-border p-3 h-[calc(100vh-90px)] overflow-y-auto">
+            <div className="w-72 shrink-0 border-l border-arena-border p-3 h-[calc(100vh-48px)] overflow-y-auto">
               <PortfolioRiskPanel
                 data={portfolioRisk}
                 isAdmin={userInfo?.is_admin ?? false}

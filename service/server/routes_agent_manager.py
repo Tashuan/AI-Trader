@@ -126,6 +126,16 @@ STRATEGY_TEMPLATES = {
         "default_hold": "swing",
         "default_confidence": 0.65,
     },
+    "after_hours_scalp": {
+        "label": "After-Hours Session Scalp (NightHawk)",
+        "description": "Session-aware crypto scalper — shifts behavior by global trading session (London kill zone, Tokyo, US after-hours). Patient predator, aggressive at the right time.",
+        "strategy_file": "strategy_after_hours.py",
+        "default_watchlist": ["BTC", "ETH", "SOL", "DOGE"],
+        "default_voice": "calculated, nocturnal, predatory, references session timing and global markets",
+        "default_risk": "aggressive",
+        "default_hold": "scalp",
+        "default_confidence": 0.45,
+    },
     "custom": {
         "label": "Custom",
         "description": "Define your own strategy — no preset template",

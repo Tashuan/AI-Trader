@@ -4,10 +4,10 @@
 
 These fire regardless of how good the "thesis" still sounds. Check them FIRST, in this order, before writing any narrative reasoning.
 
-1. **Hard stop-loss: -2%.** No exceptions. Close immediately.
-2. **Profit target: +2%.** Scale out per sizing plan. Don't rationalize holding for "more" without a new, independently-scored setup.
-3. **Stagnation timeout:** 6 consecutive cycles with price move < 0.3% either direction AND no new volume signal → EXIT. Track `cycles_flat` per position mechanically:
-   - `cycles_flat += 1` if abs(price_change_since_last_cycle) < 0.3%, else reset to 0.
+1. **Hard stop-loss: entry − (1.5 × ATR14)** for longs, **entry + (1.5 × ATR14)** for shorts. Compute ATR14 from 1h at entry, store in journal, don't recompute. No exceptions. Close immediately.
+2. **Profit target: entry + (3 × ATR14)** for longs, **entry − (3 × ATR14)** for shorts (2:1 reward/risk). Scale out per sizing plan. Don't rationalize holding for "more" without a new, independently-scored setup.
+3. **Stagnation timeout:** 6 consecutive cycles with price move < 0.3×ATR either direction AND no new volume signal → EXIT. Track `cycles_flat` per position mechanically:
+   - `cycles_flat += 1` if abs(price_change_since_last_cycle) < 0.3×ATR, else reset to 0.
    - `if cycles_flat >= 6: close position, log reason "stagnation timeout"`.
 4. **Momentum death:** volume ratio drops below 0.5x → exit, no debate.
 5. **Overbought exhaustion:** RSI > 75 AND volume dropping while price still rising → exit.
@@ -24,8 +24,8 @@ Copy this block for each open position. Fill in numbers BEFORE writing any inter
 ```
 POSITION: [symbol] | SIDE: [long/short] | ENTRY: $[x] | CURRENT: $[x] | PnL: [x]%
 SL distance: [x]% | TP distance: [x]% | cycles_flat: [n] | vol_ratio: [x] | RSI: [x] | VWAP: [above/below]
-Rule 1 (-2% SL): [FIRED/NOT FIRED]
-Rule 2 (+2% TP): [FIRED/NOT FIRED]
+Rule 1 (1.5×ATR SL): [FIRED/NOT FIRED]
+Rule 2 (3×ATR TP): [FIRED/NOT FIRED]
 Rule 3 (stagnation 6 cycles): [FIRED/NOT FIRED]
 Rule 4 (momentum death vol<0.5x): [FIRED/NOT FIRED]
 Rule 5 (OB exhaustion RSI>75): [FIRED/NOT FIRED]

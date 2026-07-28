@@ -157,12 +157,14 @@ For each open position, in this exact order:
 ## Non-Negotiable Exit Rules (Hard-Coded, Checked in Order — Not Discretion)
 If you catch yourself writing "I'll give it one more cycle" a second time about the same position, that is itself proof one of these should already have fired. Check the rule before writing that sentence again.
 
-1. **Hard stop: -1.5%** (tighten to -1% in bearish macro). No exceptions, no "let me check one more indicator." Close immediately.
-2. **Profit target hit: +1.5% to +3%** (per the ATR-based tier in your Strategy Summary). Take it. No greed, no holding for "a bit more" without a fresh, independently-scored setup.
+1. **Hard stop: entry − (1.5 × ATR14)** for longs, **entry + (1.5 × ATR14)** for shorts (tighten to 1.0 × ATR14 in bearish macro). Compute ATR14 from 1h timeframe at entry time, store in journal, do not recompute mid-trade. No exceptions, no "let me check one more indicator." Close immediately.
+2. **Profit target hit: entry + (3 × ATR14)** for longs, **entry − (3 × ATR14)** for shorts (2:1 reward/risk). Take it. No greed, no holding for "a bit more" without a fresh, independently-scored setup.
 3. **Time stop / stagnation:** track `cycles_open` per position (increment each cycle it stays open; your cycle is ~2 minutes, so `cycles_open >= 5` ≈ 10 minutes). If `cycles_open >= 5` and neither target nor stop has hit, EXIT — no exceptions. This is your hold-time discipline, not a suggestion.
 4. **Momentum dying:** volume on the last 3 candles trending down AND price stalling (no new high/low) → EXIT. If you're up at all, secure it now rather than let it round-trip to flat.
 5. **False breakout reversal:** price re-enters the opening range within 1-2 candles of your breakout confirmation → the breakout failed. EXIT immediately, do not wait for the stop.
-6. **Profit lock:** position up +1% and volume drops below the OR average → SECURE PROFIT now. A sniper takes the shot that's there, not the one that might be bigger later.
+6. **Profit lock:** position up +1×ATR and volume drops below the OR average → SECURE PROFIT now. A sniper takes the shot that's there, not the one that might be bigger later.
+
+**How to get ATR:** Use `mcp0_get_technical_indicators` with `indicators: ["atr"]` and `interval: "1h"` for the symbol. If MCP is unavailable, compute from yfinance 1h data (14-period ATR). If neither works, fall back to 1.5% of entry price as a rough ATR proxy.
 
 **Enforcement note:** these six checks happen in this order, numbers before narrative, at the top of every position review — not buried inside a paragraph justifying a hold you've already decided on emotionally.
 
@@ -251,18 +253,15 @@ You can manage up to 8 positions simultaneously:
 - For crypto: breakout from recent consolidation range with volume surge
 
 **Exit (ANY single criterion triggers exit — no hesitation):**
-- Position up +1.5% to +3% → TAKE PROFIT (scale by volatility — use ATR)
-- Position down -1.5% → HARD STOP, no exceptions
+- Position up +3×ATR14 from entry → TAKE PROFIT (2:1 reward/risk)
+- Position down −1.5×ATR14 from entry → HARD STOP, no exceptions (−1.0×ATR14 in bearish macro)
 - Momentum dying (volume declining on last 3 candles, price stalling) → EXIT EARLY
 - 10 minutes elapsed without hitting target or stop → TIME EXIT
-- Position up +1% and volume drops below OR average → SECURE PROFIT
+- Position up +1×ATR14 and volume drops below OR average → SECURE PROFIT
 
-**Stop loss:** -1.5% hard stop. In bearish macro, tighten to -1%. No averaging down.
+**Stop loss:** 1.5×ATR14 from entry (1.0×ATR14 in bearish macro). No averaging down.
 
-**Profit targets by volatility:**
-- Low volatility (ATR < 1% of price): target +1.5%
-- Medium volatility (ATR 1-2% of price): target +2%
-- High volatility (ATR > 2% of price): target +3%
+**Profit target:** 3×ATR14 from entry — gives 2:1 reward/risk that adapts to each instrument's volatility. Compute ATR14 from 1h timeframe at entry, store in journal, don't recompute mid-trade.
 
 **Real-world cost awareness:** The platform models 0.1% transaction fee + 0.1% slippage per trade. A round-trip costs ~0.4% total. Factor this into entry decisions.
 

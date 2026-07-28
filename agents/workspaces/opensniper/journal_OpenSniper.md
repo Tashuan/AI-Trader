@@ -58,3 +58,34 @@
 - **What worked:** Exit discipline — sold before stop hit at $0.925. Cut at -0.43% instead of -1.5%.
 - **What was wrong:** The 404% volume surge was a spike, not sustained. By the time I entered (5 min after the break), the momentum was already fading. The breakout was real but the follow-through was nonexistent — KAITO reversed immediately.
 - **Lesson:** CIRCUIT BREAKER — 3 consecutive losses. Even 11/12 score setups can fail. The market is not trending today — it's chopping. Stop trading breakouts in a chop market. Require 3x volume AND multiple candle closes above resistance. Consider standing down until a clear trend emerges.
+
+### Cycle Log — 2026-07-21 08:49 ET (Pre-Market)
+- **Phase:** Pre-Market (41 min to open)
+- **Positions:** 0/6 | **Circuit breaker:** ACTIVE
+- **Pre-market gaps:** MSFT +2.15%, AMD +1.58%, AMZN +1.12%, NVDA +0.23%, META -0.02%, AAPL -2.14%, TSLA -2.96%
+- **Crypto scan:** BTC $66,487 near resistance $66,620 but 1m volume declining -84%. ETH $1,942 +3.65%. SOL $78.47 +2.29%. DOGE 25x volume but flat price — accumulation, not breakout.
+- **Unusual activity:** MERL 21.8x, DOGE 12.7x, JTO 12.4x, KAITO 9.9x, ONDO 9.0x — none showing clean breakouts
+- **Consensus:** No agent activity on watchlist symbols
+- **News catalysts:** AI rebound (AMD, Micron, Sandisk up), China AI export controls, TSMC US expansion, GM earnings beat, US-Iran tensions
+- **Verdict:** No trades. No clean setups. BTC volume dying near resistance. Waiting for 9:30 open to map opening ranges on MSFT, AMD, TSLA.
+- **Kill zone plan:** MSFT long bias (AI rebound +2.15% gap), AMD long bias (AI catalyst +1.58% gap), TSLA short bias (-2.96% gap). Require 8+/12 score, 3x volume, multiple candle closes (circuit breaker).
+
+### Cycle Log — 2026-07-21 10:00 ET (Kill Zone Complete)
+- **Phase:** Phase 3 Sniper Engagement (9:35-10:00 ET) complete
+- **Positions:** 0/6 | **Circuit breaker:** ACTIVE
+- **Opening ranges (9:30-9:35):**
+  - AMD: $524.03-$533.00 (9 min wide, 1.7%)
+  - TSLA: $369.99-$375.70
+  - NVDA: $206.26-$208.65
+  - MSFT: $396.32-$399.87
+  - UNH: $420.50-$424.27 (healthcare)
+  - GM: $74.80-$77.86 (industrial/earnings)
+- **Pre-market gap updates at open:** AMD +5.4%, TSLA -2.5%, NVDA +1.5%, MSFT +1.3%, UNH +1.0%, GM +1.9%
+- **Near-misses / watched setups:**
+  - UNH: broke above OR high $424.27 at 9:42, held above through 9:47 (+1.3%), but volume collapsed from 25K to 14K at 9:51 and price stalled. Momentum death — no entry.
+  - AMD: broke above OR high $533.00 at 9:50, multiple closes above, but max volume ratio only 0.67x (271K vs 403K OR avg). Pulled back inside OR at 9:53 — false breakout.
+  - MSFT/TSLA/GM: multiple closes above OR highs, but volume ratios 0.2-0.7x — no surge.
+- **Verdict:** No trades. Opening range breakouts occurred but volume never confirmed (max ratio 0.99x on UNH, below 1.5x standard and far below 3x circuit breaker requirement). Market drifted higher on declining/low volume.
+- **Sector observations:** Tech/AI (AMD, NVDA, MSFT) strongest sector theme. Healthcare UNH showed relative strength. Energy (USO, XLE, WTIOIL) did not extend. Financials (XLF, JPM) and defense/aerospace (BA, GE) weak. GM earnings beat produced gap but low follow-through.
+- **Circuit breaker discipline:** Maintained. Did not chase weak-volume breakouts despite multiple above-OR closes. No-trade is a valid outcome in a low-volume drift.
+- **Next phase:** Phase 5 Mid-Day Standby. Reduce size, scan for sudden volume explosions, pivot to crypto if no setups.

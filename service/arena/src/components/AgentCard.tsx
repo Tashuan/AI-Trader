@@ -110,6 +110,25 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
         </div>
       </div>
 
+      {/* P&L Stats — prominent, below header */}
+      <div className="flex items-stretch gap-2 mb-3">
+        <div className="flex-1 rounded-lg bg-arena-bg/60 border border-arena-border px-3 py-2">
+          <div className="text-[9px] text-arena-text-dim mb-0.5">OPEN P&L</div>
+          <div className={`text-sm font-mono font-bold ${agent.today_pnl >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+            {agent.today_pnl >= 0 ? '+' : '-'}${Math.abs(agent.today_pnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </div>
+        </div>
+        <div className="flex-1 rounded-lg bg-arena-bg/60 border border-arena-border px-3 py-2 text-right">
+          <div className="text-[9px] text-arena-text-dim mb-0.5">TOTAL P&L</div>
+          <div className={`text-sm font-mono font-bold ${agent.total_profit >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
+            {agent.total_profit >= 0 ? '+' : '-'}${Math.abs(agent.total_profit).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            <span className="text-[10px] ml-1">
+              ({agent.total_profit >= 0 ? '+' : ''}{((agent.total_profit / 100000) * 100).toFixed(1)}%)
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Watching symbol */}
       <div className="mb-2 min-h-[16px]">
         {agent.state_symbol ? (
@@ -245,20 +264,6 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
         )}
       </div>
 
-      {/* Footer: Total P&L */}
-      <div className="flex items-center justify-between pt-2 border-t border-arena-border mt-auto">
-        <span className="text-[9px] text-arena-text-dim">
-          TOTAL P&L
-        </span>
-        <div className="flex items-center gap-2">
-          <span className={`text-[11px] font-mono font-semibold ${agent.total_profit >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
-            {agent.total_profit >= 0 ? '+' : ''}${Math.abs(agent.total_profit).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </span>
-          <span className={`text-[9px] font-mono ${agent.total_profit >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
-            ({agent.total_profit >= 0 ? '+' : ''}{((agent.total_profit / 100000) * 100).toFixed(1)}%)
-          </span>
-        </div>
-      </div>
     </motion.div>
   );
 }

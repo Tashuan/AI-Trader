@@ -85,6 +85,11 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
 
   const currColor = isProfit ? '#10B981' : '#EF4444';
 
+  // ── Potential profit / loss from TP / SL ──
+  const absQty = Math.abs(quantity ?? 0);
+  const potentialProfit = absQty > 0 ? Math.abs(tp - entry_price) * absQty : 0;
+  const potentialLoss = absQty > 0 ? Math.abs(sl - entry_price) * absQty : 0;
+
   if (compact) {
     return (
       <div className="space-y-1">
@@ -135,6 +140,12 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
           </span>
           <span className="text-arena-green/80">${tp.toFixed(2)}</span>
         </div>
+        {absQty > 0 && (
+          <div className="flex items-center justify-between text-[9px] font-mono">
+            <span className="text-arena-red/70">Risk: ${potentialLoss.toFixed(2)}</span>
+            <span className="text-arena-green/70">Reward: ${potentialProfit.toFixed(2)}</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -142,20 +153,22 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
   // ── Full card ──
   return (
     <div className="card-base card-hover p-4 space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${isLong ? 'text-arena-green bg-arena-green/10' : 'text-arena-red bg-arena-red/10'}`}>
-            {side.toUpperCase()}
-          </span>
-          <span className="text-sm font-mono font-semibold text-white">{symbol}</span>
+      {/* Header — symbol as anchor, P&L as hero number */}
+      <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${isLong ? 'text-arena-green bg-arena-green/10' : 'text-arena-red bg-arena-red/10'}`}>
+              {side.toUpperCase()}
+            </span>
+            <span className="text-sm font-mono font-semibold text-white">{symbol}</span>
+          </div>
           {agent_name && (
-            <span className="text-[10px] text-arena-text-dim">{agent_name}</span>
+            <span className="text-[10px] text-arena-text-dim ml-1">by {agent_name}</span>
           )}
         </div>
         <div className="text-right">
-          <div className={`text-sm font-mono font-bold ${isProfit ? 'text-arena-green' : 'text-arena-red'}`}>
-            {isProfit ? '+' : ''}${Math.abs(pnl).toFixed(2)}
+          <div className={`text-base font-mono font-bold leading-tight ${isProfit ? 'text-arena-green' : 'text-arena-red'}`}>
+            {isProfit ? '+' : '-'}${Math.abs(pnl).toFixed(2)}
           </div>
           <div className={`text-[10px] font-mono ${isProfit ? 'text-arena-green' : 'text-arena-red'}`}>
             {isProfit ? '+' : ''}{pnl_pct.toFixed(1)}%
@@ -163,7 +176,25 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
         </div>
       </div>
 
-      {/* SL/TP Progress Bar */}
+      {/* Key metrics — 3-col grid */}
+      <div className="grid grid-cols-3 gap-2 text-[10px] font-mono">
+        <div>
+          <div className="text-arena-text-dim mb-0.5">Entry</div>
+          <div className="text-white/80">${entry_price?.toFixed(2) ?? '-'}</div>
+        </div>
+        <div className="text-center">
+          <div className="text-arena-text-dim mb-0.5">Current</div>
+          <div className={isProfit ? 'text-arena-green' : 'text-arena-red'}>
+            ${current_price?.toFixed(2) ?? '-'}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-arena-text-dim mb-0.5">Qty</div>
+          <div className="text-white/80">{absQty > 0 ? absQty.toFixed(4) : '-'}</div>
+        </div>
+      </div>
+
+      {/* SL/TP Progress Bar — kept as-is */}
       <div className="space-y-1.5">
         {/* Labels above bar */}
         <div className="flex items-center justify-between text-[10px] font-mono">
@@ -254,21 +285,25 @@ export function PositionTracker({ position, compact = false }: PositionTrackerPr
           </motion.div>
         </div>
 
-        {/* Price labels below bar */}
+        {/* Range labels below bar — simplified */}
         <div className="flex items-center justify-between text-[9px] font-mono text-arena-text-dim">
           <span>${low.toFixed(2)}</span>
-          <span className="text-white/60">
-            Entry ${entry_price.toFixed(2)} → Current ${current_price.toFixed(2)}
-          </span>
           <span>${high.toFixed(2)}</span>
         </div>
       </div>
 
-      {/* Footer stats */}
-      <div className="flex items-center justify-between pt-2 border-t border-arena-border text-[10px] font-mono text-arena-text-dim">
-        <span>Qty: {Math.abs(quantity ?? 0).toFixed(4)}</span>
+      {/* Footer — risk/reward + opened date */}
+      <div className="pt-2 border-t border-arena-border space-y-1">
+        {absQty > 0 && (
+          <div className="flex items-center justify-between text-[10px] font-mono">
+            <span className="text-arena-red/80">Risk -${potentialLoss.toFixed(2)}</span>
+            <span className="text-arena-green/80">Reward +${potentialProfit.toFixed(2)}</span>
+          </div>
+        )}
         {opened_at && (
-          <span>Opened: {formatDate(opened_at)}</span>
+          <div className="text-[9px] font-mono text-arena-text-dim">
+            Opened {formatDate(opened_at)}
+          </div>
         )}
       </div>
     </div>

@@ -37,6 +37,7 @@ class TechnicalSnapshot:
     volume: float
     avg_volume: float
     atr: Optional[float] = None
+    avg_atr: Optional[float] = None
     signals: list[str] = field(default_factory=list)
 
     @property
@@ -270,8 +271,8 @@ class MarketDataClient:
         vol = float(volumes.iloc[-1]) if volumes is not None and len(volumes) > 0 else 0
         avg_vol = float(volumes.iloc[-20:].mean()) if volumes is not None and len(volumes) >= 20 else vol
 
-        # ATR (14-period)
-        atr = self._calculate_atr(highs, lows, closes)
+        # ATR (14-period) and avg ATR (20-period average of ATR)
+        atr, avg_atr = self._calculate_atr_with_avg(highs, lows, closes)
 
         # Build signals
         signals = []
@@ -315,6 +316,7 @@ class MarketDataClient:
             volume=vol,
             avg_volume=avg_vol,
             atr=atr,
+            avg_atr=avg_atr,
             signals=signals,
         )
 
@@ -414,8 +416,8 @@ class MarketDataClient:
         vol = float(volumes.iloc[-1]) if len(volumes) > 0 else 0
         avg_vol = float(volumes.iloc[-20:].mean()) if len(volumes) >= 20 else vol
 
-        # ATR (14-period)
-        atr = self._calculate_atr(highs, lows, closes)
+        # ATR (14-period) and avg ATR (20-period average of ATR)
+        atr, avg_atr = self._calculate_atr_with_avg(highs, lows, closes)
 
         # Build signals
         signals = []
@@ -459,6 +461,7 @@ class MarketDataClient:
             volume=vol,
             avg_volume=avg_vol,
             atr=atr,
+            avg_atr=avg_atr,
             signals=signals,
         )
 
@@ -485,6 +488,37 @@ class MarketDataClient:
         if hasattr(val, "item"):
             val = val.item()
         return float(val) if pd.notna(val) else None
+
+    @staticmethod
+    def _calculate_atr_with_avg(highs, lows, closes, period: int = 14, avg_period: int = 20) -> tuple[Optional[float], Optional[float]]:
+        """Calculate ATR and its recent average for volatility gate."""
+        try:
+            import pandas as pd
+        except ImportError:
+            return None, None
+        if highs is None or lows is None or closes is None:
+            return None, None
+        if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
+            return None, None
+
+        prev_close = closes.shift(1)
+        tr = pd.concat([
+            highs - lows,
+            (highs - prev_close).abs(),
+            (lows - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        atr_series = tr.rolling(window=period).mean()
+        val = atr_series.iloc[-1]
+        if hasattr(val, "item"):
+            val = val.item()
+        current_atr = float(val) if pd.notna(val) else None
+
+        avg_val = atr_series.iloc[-avg_period:].mean()
+        if hasattr(avg_val, "item"):
+            avg_val = avg_val.item()
+        avg_atr = float(avg_val) if pd.notna(avg_val) else None
+
+        return current_atr, avg_atr
 
     @staticmethod
     def _normalize_symbol_finnhub(symbol: str) -> Optional[str]:
