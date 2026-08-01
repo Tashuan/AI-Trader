@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, Check, ChevronDown, ChevronUp, Bot, Play, Square, Wifi, WifiOff, Circle, Settings } from 'lucide-react';
+import { Copy, Check, ChevronDown, ChevronUp, Bot, Play, Square, Wifi, WifiOff, Circle, Settings, Zap } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import { AgentEditorModal } from '../components/AgentEditorModal';
 
@@ -35,12 +35,20 @@ interface RegisteredAgent {
   online: boolean;
 }
 
+interface RunnerStatus {
+  running: boolean;
+  pid: number | null;
+  thread: string | null;
+  bot_type: string;
+}
+
 const ALL_AGENTS: AgentEntry[] = [
   { fileName: 'NewsHound', name: 'NewsHound' },
   { fileName: 'ChartMaster', name: 'ChartMaster' },
   { fileName: 'FadeMaster', name: 'FadeMaster' },
   { fileName: 'MomentumRider', name: 'MomentumRider' },
   { fileName: 'BlitzTrader', name: 'BlitzTrader' },
+  { fileName: 'BlitzRunner', name: 'BlitzRunner' },
   { fileName: 'CopyCat', name: 'CopyCat' },
   { fileName: 'EventMaster', name: 'EventMaster' },
   { fileName: 'OpenSniper', name: 'OpenSniper' },
@@ -65,6 +73,7 @@ export function AgentsPage() {
   const [registeredAgents, setRegisteredAgents] = useState<Record<string, RegisteredAgent>>({});
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [editAgent, setEditAgent] = useState<{ id: number; name: string } | null>(null);
+  const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
 
   const fetchData = useCallback(() => {
     fetch('/api/arena/personalities')
@@ -79,6 +88,11 @@ export function AgentsPage() {
     fetch('/api/arena/bots')
       .then(r => r.json())
       .then(data => setBotStatuses(data.bots || {}))
+      .catch(() => {});
+
+    fetch('/api/arena/runner/status')
+      .then(r => r.json())
+      .then(data => setRunnerStatus(data))
       .catch(() => {});
 
     fetch('/api/arena/full')
@@ -127,6 +141,30 @@ export function AgentsPage() {
     setActionLoading(null);
   };
 
+  const handleStartRunner = async () => {
+    setActionLoading('start-runner');
+    try {
+      await fetch('/api/arena/runner/start', { method: 'POST' });
+      await new Promise(r => setTimeout(r, 500));
+      fetchData();
+    } catch (e) {
+      console.error('Failed to start runner:', e);
+    }
+    setActionLoading(null);
+  };
+
+  const handleStopRunner = async () => {
+    setActionLoading('stop-runner');
+    try {
+      await fetch('/api/arena/runner/stop', { method: 'POST' });
+      await new Promise(r => setTimeout(r, 500));
+      fetchData();
+    } catch (e) {
+      console.error('Failed to stop runner:', e);
+    }
+    setActionLoading(null);
+  };
+
   const handleDisconnect = async (agentId: number, agentName: string) => {
     setActionLoading(`disconnect-${agentName}`);
     try {
@@ -161,6 +199,76 @@ export function AgentsPage() {
         </div>
       </div>
 
+      {/* BlitzRunner — Deterministic Goal Runner */}
+      <div className="card-base p-4 mb-4 border-l-2 border-l-arena-yellow/40">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <div className="w-9 h-9 rounded-full bg-arena-yellow/15 flex items-center justify-center">
+                <Zap size={16} className="text-arena-yellow" />
+              </div>
+              <div
+                className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-arena-card"
+                style={{ background: runnerStatus?.running ? '#34D399' : '#8B92A5' }}
+              />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-white flex items-center gap-2">
+                BlitzRunner
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-arena-yellow/15 text-arena-yellow font-mono">
+                  DETERMINISTIC
+                </span>
+              </div>
+              <div className="text-[10px] text-arena-text-dim">
+                Goal Runner that executes the exact backtest strategy — no AI judgment, no LLM in the loop. Uses scan_core for entries, exits, sizing, and switch logic.
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {runnerStatus?.running ? (
+              <>
+                <div className="flex items-center gap-2 text-[10px] text-arena-green">
+                  <Circle size={8} className="fill-arena-green text-arena-green animate-pulse" />
+                  <span>Running</span>
+                </div>
+                <Tooltip text="Stop the deterministic BlitzRunner" side="left">
+                  <button
+                    onClick={handleStopRunner}
+                    disabled={actionLoading === 'stop-runner'}
+                    className="px-3 py-1.5 bg-arena-red/15 text-arena-red rounded-lg hover:bg-arena-red/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Square size={12} />
+                    <span className="text-[10px] font-semibold">{actionLoading === 'stop-runner' ? 'Stopping...' : 'Stop'}</span>
+                  </button>
+                </Tooltip>
+              </>
+            ) : (
+              <>
+                <div className="text-[10px] text-arena-text-dim">
+                  Not running — launch to start deterministic strategy execution
+                </div>
+                <Tooltip text="Starts the deterministic Goal Runner — executes the same scan_core logic as the backtester with zero LLM judgment" side="left">
+                  <button
+                    onClick={handleStartRunner}
+                    disabled={actionLoading === 'start-runner'}
+                    className="px-3 py-1.5 bg-arena-green/15 text-arena-green rounded-lg hover:bg-arena-green/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Play size={12} />
+                    <span className="text-[10px] font-semibold">{actionLoading === 'start-runner' ? 'Starting...' : 'Launch Runner'}</span>
+                  </button>
+                </Tooltip>
+              </>
+            )}
+          </div>
+        </div>
+        {runnerStatus?.running && (
+          <div className="mt-2 pt-2 border-t border-arena-border/50 text-[9px] text-arena-text-dim">
+            Runs alongside the AI agent for A/B comparison. Trades use the same BlitzTrader account — positions are shared.
+          </div>
+        )}
+      </div>
+
       {/* Agent cards */}
       <div className="space-y-2">
         {ALL_AGENTS.map(agent => {
@@ -170,7 +278,8 @@ export function AgentsPage() {
           const copyKey = `prompt-${agent.name}`;
           const agentKey = agent.name.toLowerCase();
           const botStatus = botStatuses[agentKey];
-          const botRunning = botStatus?.running || false;
+          const isRunner = agent.name === 'BlitzRunner';
+          const botRunning = botStatus?.running || (isRunner && runnerStatus?.running) || false;
           const registered = registeredAgents[agent.name];
           const aiOnline = registered?.online || false;
           const hasPersonality = !!personality;
@@ -210,7 +319,7 @@ export function AgentsPage() {
                   {/* Status badges */}
                   <div className="flex items-center gap-1.5">
                     {botRunning && (
-                      <Tooltip text={`Python bot running (PID: ${botStatus.pid})`} side="bottom">
+                      <Tooltip text={`Python bot running${botStatus?.pid ? ` (PID: ${botStatus.pid})` : ''}`} side="bottom">
                         <span className="text-[9px] px-2 py-0.5 rounded-full bg-arena-green/15 text-arena-green flex items-center gap-1">
                           <Bot size={8} /> BOT
                         </span>

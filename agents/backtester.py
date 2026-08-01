@@ -48,16 +48,23 @@ class BacktestAgent(BaseAgent):
         equity = self.cash
         for sym, pos in self._positions.items():
             price = self._price_lookup.get(sym, pos["entry_price"])
-            equity += pos["quantity"] * price
+            if pos.get("side") == "short":
+                # Short positions: equity contribution = entry_proceeds - current_cost_to_cover
+                # When we shorted, we received entry_price * qty. To close, we pay current price * qty.
+                # PnL = (entry_price - current_price) * qty
+                equity += (pos["entry_price"] - price) * pos["quantity"]
+                equity += pos["entry_price"] * pos["quantity"]  # add back the short proceeds we already received
+            else:
+                equity += pos["quantity"] * price
         self.portfolio_value = equity
-        self.cash = self.cash  # already tracked
         self.positions = [
             {
                 "symbol": sym,
                 "quantity": pos["quantity"],
                 "entry_price": pos["entry_price"],
                 "current_price": self._price_lookup.get(sym, pos["entry_price"]),
-                "pnl": (self._price_lookup.get(sym, pos["entry_price"]) - pos["entry_price"]) * pos["quantity"],
+                "pnl": (self._price_lookup.get(sym, pos["entry_price"]) - pos["entry_price"]) * pos["quantity"] if pos.get("side", "long") == "long"
+                       else (pos["entry_price"] - self._price_lookup.get(sym, pos["entry_price"])) * pos["quantity"],
                 "side": pos.get("side", "long"),
             }
             for sym, pos in self._positions.items()
@@ -73,12 +80,17 @@ class BacktestAgent(BaseAgent):
         if not pos:
             return {"quantity": 0, "entry_price": 0, "pnl": 0, "side": "long"}
         price = self._price_lookup.get(symbol, pos["entry_price"])
+        side = pos.get("side", "long")
+        if side == "short":
+            pnl = (pos["entry_price"] - price) * pos["quantity"]
+        else:
+            pnl = (price - pos["entry_price"]) * pos["quantity"]
         return {
             "quantity": pos["quantity"],
             "entry_price": pos["entry_price"],
             "current_price": price,
-            "pnl": (price - pos["entry_price"]) * pos["quantity"],
-            "side": pos.get("side", "long"),
+            "pnl": pnl,
+            "side": side,
         }
 
     @staticmethod
@@ -110,7 +122,7 @@ class BacktestAgent(BaseAgent):
 
         slip = self._slippage_bps / 10000.0
 
-        if decision.action in ("buy", "short"):
+        if decision.action == "buy":
             # Buying momentum fills worse (higher) due to slippage.
             fill_price = raw_price * (1 + slip)
             cost = qty * fill_price
@@ -121,7 +133,24 @@ class BacktestAgent(BaseAgent):
                 "quantity": qty,
                 "entry_price": fill_price,
                 "entry_date": self._current_date,
-                "side": "long" if decision.action == "buy" else "short",
+                "side": "long",
+            }
+            self.trades_made += 1
+            return True
+
+        elif decision.action == "short":
+            # Shorting into weakness fills worse (lower) due to slippage — we receive less.
+            fill_price = raw_price * (1 - slip)
+            proceeds = qty * fill_price
+            # Reserve the proceeds as collateral (can't spend them)
+            if proceeds > self.cash:
+                return False
+            self.cash += proceeds  # receive short proceeds
+            self._positions[symbol] = {
+                "quantity": qty,
+                "entry_price": fill_price,
+                "entry_date": self._current_date,
+                "side": "short",
             }
             self.trades_made += 1
             return True
@@ -131,22 +160,33 @@ class BacktestAgent(BaseAgent):
             if not pos or pos["quantity"] <= 0:
                 return False
 
-            # Selling into weakness/urgency fills worse (lower) due to slippage.
-            fill_price = raw_price * (1 - slip)
-
+            side = pos.get("side", "long")
             sell_qty = min(qty, pos["quantity"])
-            proceeds = sell_qty * fill_price
-            self.cash += proceeds
 
-            pnl = (fill_price - pos["entry_price"]) * sell_qty
-            pnl_pct = ((fill_price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
+            if side == "short":
+                # Covering: buying back to close short. Fills worse (higher) due to slippage.
+                fill_price = raw_price * (1 + slip)
+                cost = sell_qty * fill_price
+                if cost > self.cash:
+                    return False
+                self.cash -= cost
+                # Short PnL: profit when exit < entry
+                pnl = (pos["entry_price"] - fill_price) * sell_qty
+                pnl_pct = ((pos["entry_price"] - fill_price) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
+            else:
+                # Selling long: fills worse (lower) due to slippage.
+                fill_price = raw_price * (1 - slip)
+                proceeds = sell_qty * fill_price
+                self.cash += proceeds
+                pnl = (fill_price - pos["entry_price"]) * sell_qty
+                pnl_pct = ((fill_price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
 
             entry_date = pos.get("entry_date", "")
             hold_days, hold_hours = self._hold_span(entry_date, self._current_date)
 
             self._closed_trades.append(TradeRecord(
                 symbol=symbol,
-                side=pos.get("side", "long"),
+                side=side,
                 entry_date=entry_date,
                 exit_date=self._current_date,
                 entry_price=pos["entry_price"],
@@ -475,25 +515,38 @@ class Backtester:
             # Restore original method
             agent.market_data.fetch_technical = original_fetch
 
-            # Record equity
-            equity = agent.cash + sum(
-                pos["quantity"] * agent._price_lookup.get(s, pos["entry_price"])
-                for s, pos in agent._positions.items()
-            )
+            # Record equity (handle both long and short positions)
+            equity = agent.cash
+            for s, pos in agent._positions.items():
+                price = agent._price_lookup.get(s, pos["entry_price"])
+                if pos.get("side") == "short":
+                    # Short: we received entry proceeds already (in cash).
+                    # Equity impact = (entry - current) * qty — profit when price drops
+                    equity += (pos["entry_price"] - price) * pos["quantity"]
+                else:
+                    equity += pos["quantity"] * price
             equity_curve.append({"date": sim_ts, "equity": round(equity, 2)})
 
         # Close any remaining open positions at last available prices
         for sym, pos in list(agent._positions.items()):
             price = agent._price_lookup.get(sym, pos["entry_price"])
-            pnl = (price - pos["entry_price"]) * pos["quantity"]
-            pnl_pct = ((price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
+            side = pos.get("side", "long")
+            if side == "short":
+                # Cover short: buy back at current price
+                pnl = (pos["entry_price"] - price) * pos["quantity"]
+                pnl_pct = ((pos["entry_price"] - price) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
+                agent.cash -= pos["quantity"] * price  # pay to cover
+            else:
+                pnl = (price - pos["entry_price"]) * pos["quantity"]
+                pnl_pct = ((price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
+                agent.cash += pos["quantity"] * price  # receive proceeds from selling
 
             entry_date = pos.get("entry_date", "")
             hold_days, hold_hours = agent._hold_span(entry_date, actual_end)
 
             agent._closed_trades.append(TradeRecord(
                 symbol=sym,
-                side=pos.get("side", "long"),
+                side=side,
                 entry_date=entry_date,
                 exit_date=actual_end,
                 entry_price=pos["entry_price"],
@@ -505,7 +558,6 @@ class Backtester:
                 hold_hours=hold_hours,
                 reason="Backtest end — position auto-closed",
             ))
-            agent.cash += pos["quantity"] * price
             del agent._positions[sym]
 
         final_equity = agent.cash

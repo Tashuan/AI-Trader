@@ -132,12 +132,21 @@ curl -s -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application
 
 These fire regardless of how good the "thesis" still sounds. scan.py checks them automatically, but you must also verify manually.
 
+**For long positions:**
 1. **Hard stop-loss: -2%.** No exceptions, no "let me check one more indicator first." Close immediately.
 2. **Profit target: +2%.** Scale out per sizing plan; don't rationalize holding for "more" without a new, independently-scored setup.
 3. **Stagnation timeout:** if a position has been open for **6 consecutive cycles** with price move **< 0.3% in either direction** and no new volume signal, EXIT regardless of thesis. `cycles_flat` is persisted in the DB via `PATCH /api/positions/{id}/state`.
 4. **Momentum death:** volume ratio drops below 0.5x → exit, no debate.
 5. **Overbought exhaustion:** RSI > 75 AND volume dropping while price still rising → exit (take the profit before it round-trips).
 6. **VWAP loss** (if available): price closes below VWAP on a long you entered above VWAP → exit.
+
+**For short positions:**
+1. **Hard stop-loss: -3%** (wider than longs — short squeezes are violent). No exceptions. Cover immediately.
+2. **Profit target: +2%** (price dropped 2% from entry). Cover and move on.
+3. **Stagnation timeout:** same 6-cycle rule as longs.
+4. **Momentum death:** volume ratio drops below 0.5x → cover, no debate.
+5. **Oversold bounce risk:** RSI < 22 AND volume dropping while price still falling → cover (bounce incoming, don't round-trip).
+6. **VWAP regain** (if available): price closes above VWAP on a short you entered below VWAP → cover.
 
 **Enforcement note:** scan.py evaluates all 6 rules and returns `verdict: "EXIT"` with the `exit_reason` if any fired. When you see that, execute the close immediately — no further reasoning needed.
 
@@ -178,6 +187,7 @@ Consensus = momentum confirmation, a secondary filter, not a primary signal. Fet
 
 **Use scan.py output for entry decisions.** The scan checks all criteria automatically:
 
+**Long entries (upward momentum):**
 - RSI > 55 and rising
 - Volume ratio > 1.5x average
 - Price above SMA 20
@@ -188,6 +198,18 @@ Consensus = momentum confirmation, a secondary filter, not a primary signal. Fet
 - No OBV divergence (fake breakout filter)
 - Consolidation breakout bonus
 - Candle body conviction (full body vs doji)
+
+**Short entries (downward momentum):**
+- RSI < 50 and falling (bearish momentum zone, 35-50 is sweet spot)
+- Volume ratio > 1.5x average (same volume requirement as longs)
+- Price below SMA 20
+- MACD histogram negative
+- Price below VWAP (if available)
+- 1h return < -1%
+- BB width expanding
+- Price below Bollinger mid
+- Breaking support level
+- 5d return < -3% (recent bearish momentum)
 
 **Mandatory platform SL/TP on every entry (ATR-based):** Every `POST /api/signals/realtime` buy MUST include `stop_loss_price` and `take_profit_price` fields, computed from ATR14 at entry time:
 - **Stop-loss:** entry − (1.5 × ATR14) for longs, entry + (1.5 × ATR14) for shorts

@@ -1,7 +1,15 @@
 import json
 import math
+import os
 import secrets
+import sys
 from datetime import datetime, timedelta, timezone
+
+# Add agents directory to path so we can import scan_core for canonical strategy params
+_AGENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "agents")
+if _AGENTS_DIR not in sys.path:
+    sys.path.insert(0, _AGENTS_DIR)
+import scan_core
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket
 
@@ -1190,69 +1198,20 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     # ─── Strategy params endpoints (self-service) ─────────────────
 
-    DEFAULT_STRATEGY_PARAMS = {
-        'exit_rules': {
-            'stop_loss_pct': -2.0,
-            'take_profit_pct': 2.0,
-            'stagnation_cycles': 6,
-            'stagnation_threshold_pct': 0.3,
-            'momentum_death_vol_ratio': 0.5,
-            'ob_exhaustion_rsi': 75,
-        },
-        'entry_criteria': {
-            'min_signals': 4,
-            'min_signal_families': 2,
-            'min_vol_ratio': 1.5,
-            'bearish_macro_min_signals': 5,
-            'bearish_macro_threshold': 0.3,
-        },
-        'position_sizing': {
-            'max_positions': 1,
-            'normal_sizing_min_pct': 25,
-            'normal_sizing_max_pct': 40,
-            'approaching_sizing_min_pct': 15,
-            'approaching_sizing_max_pct': 25,
-            'final_stretch_tp_pct': 1.5,
-            'consecutive_loss_threshold': 3,
-            'consecutive_loss_size_cut_pct': 50,
-            'consecutive_loss_min_signals': 5,
-        },
-        'switch_logic': {
-            'switch_score_threshold_pct': 20,
-            'reentry_cooldown_cycles': 3,
-            'switch_require_profitable': True,
-        },
-        'scoring_weights': {
-            'signal_count_weight': 1.0,
-            'family_diversity_weight': 0.5,
-            'candle_quality_weight': 0.3,
-            'consolidation_bonus_weight': 0.2,
-        },
-        'indicators': {
-            'rsi_period': 14,
-            'rsi_bullish': 55,
-            'rsi_overbought': 75,
-            'rsi_oversold': 25,
-            'macd_fast': 12,
-            'macd_slow': 26,
-            'macd_signal': 9,
-            'ema_period': 20,
-            'stochastic_period': 14,
-            'atr_period': 14,
-            'vol_ratio_bullish': 1.5,
-            'vol_ratio_dead': 0.5,
-        },
-    }
+    DEFAULT_STRATEGY_PARAMS = scan_core.DEFAULT_PARAMS
 
     def _merge_strategy_defaults(stored: dict) -> dict:
         """Merge stored params over defaults so all fields are always populated."""
         result = {}
         for section, defaults in DEFAULT_STRATEGY_PARAMS.items():
-            stored_section = stored.get(section, {})
-            if isinstance(stored_section, dict):
+            stored_section = stored.get(section)
+            if stored_section is None:
+                result[section] = defaults
+            elif isinstance(stored_section, dict) and isinstance(defaults, dict):
                 result[section] = {**defaults, **stored_section}
             else:
-                result[section] = defaults
+                # Non-dict values (lists, strings, etc.) — use stored value if present
+                result[section] = stored_section if stored_section else defaults
         # Include any extra top-level keys that aren't in defaults
         for key, val in stored.items():
             if key not in result:

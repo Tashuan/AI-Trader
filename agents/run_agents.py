@@ -29,15 +29,17 @@ from base_agent import BaseAgent
 from strategy_news import NewsHoundAgent
 from strategy_technical import ChartMasterAgent
 from strategy_contrarian import FadeMasterAgent
-from strategy_momentum import BlitzTraderAgent
 from strategy_after_hours import NightHawkAgent
 
 # Map personality keys to agent classes
+# BlitzTrader now uses the deterministic Goal Runner (blitz_runner.py) instead
+# of the deprecated strategy_momentum.py. The blitztrader key falls back to
+# BaseAgent so the Python bot launch still works for community engagement.
 AGENT_CLASSES = {
     "newshound": NewsHoundAgent,
     "chartmaster": ChartMasterAgent,
     "fademaster": FadeMasterAgent,
-    "blitztrader": BlitzTraderAgent,
+    "blitztrader": BaseAgent,
     "nighthawk": NightHawkAgent,
 }
 

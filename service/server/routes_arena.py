@@ -55,6 +55,9 @@ from bot_manager import (
     get_bot_status,
     get_all_bot_statuses,
     disconnect_agent,
+    start_runner,
+    stop_runner,
+    get_runner_status,
 )
 
 
@@ -74,73 +77,85 @@ class ThoughtReport(BaseModel):
 
 
 def _compute_arena_stats(cursor, agent_id: int) -> dict[str, Any]:
-    """Compute live performance stats from signals and profit_history.
+    """Compute live performance stats from closed trades and profit_history.
 
-    signals.pnl is never populated by the trading system, so we derive
-    win rate and streaks from profit_history deltas (each snapshot where
-    profit increased = win, decreased = loss).
+    Trade counts, win rate, and streaks are derived from trading_decision_log
+    exit records (sell/cover) which have entry_price and exit price in metadata.
+    Total P&L and max drawdown come from profit_history snapshots.
     """
-    # Total trades = count of operation signals (buy/sell actions)
-    cursor.execute(
-        "SELECT COUNT(*) as cnt FROM signals WHERE agent_id = ? AND message_type = 'operation'",
-        (agent_id,),
-    )
-    total_trades = cursor.fetchone()["cnt"]
+    import json as _json
 
-    # Profit history — sorted chronologically
+    # ── Closed trades from trading_decision_log ──
     cursor.execute(
         """
-        SELECT total_value, profit, recorded_at
-        FROM profit_history WHERE agent_id = ?
+        SELECT action, metadata_json, created_at
+        FROM trading_decision_log
+        WHERE agent_id = ? AND action IN ('sell', 'cover') AND closing_log_id IS NOT NULL
+        ORDER BY created_at ASC
+        """,
+        (agent_id,),
+    )
+    exit_rows = cursor.fetchall()
+
+    winning_trades = 0
+    losing_trades = 0
+    current_streak = 0
+    best_streak = 0
+    streak = 0
+
+    for row in exit_rows:
+        meta = _json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        entry_price = meta.get("entry_price")
+        exit_price = meta.get("price")
+        quantity = meta.get("quantity", 0)
+        if entry_price is None or exit_price is None or not quantity:
+            continue
+
+        if row["action"] == "sell":
+            pnl = (exit_price - entry_price) * quantity
+        else:  # cover
+            pnl = (entry_price - exit_price) * quantity
+
+        if pnl > 0:
+            winning_trades += 1
+            streak = streak + 1 if streak > 0 else 1
+        elif pnl < 0:
+            losing_trades += 1
+            streak = streak - 1 if streak < 0 else -1
+        else:
+            streak = 0
+        best_streak = max(best_streak, abs(streak))
+
+    current_streak = streak
+    total_trades = winning_trades + losing_trades
+    win_rate = (winning_trades / total_trades) if total_trades > 0 else 0.0
+
+    # ── Total P&L and max drawdown from profit_history ──
+    cursor.execute(
+        """
+        SELECT profit FROM profit_history WHERE agent_id = ?
         ORDER BY recorded_at ASC
         """,
         (agent_id,),
     )
     ph_rows = cursor.fetchall()
 
-    # Compute win/loss streaks and total P&L from profit deltas
-    current_streak = 0
-    best_streak = 0
-    streak = 0
-    winning_periods = 0
-    losing_periods = 0
     max_profit_seen = 0.0
     max_drawdown = 0.0
-
-    for i, row in enumerate(ph_rows):
+    for row in ph_rows:
         profit = row["profit"] or 0
-        # Track max drawdown
         if profit > max_profit_seen:
             max_profit_seen = profit
         dd = max_profit_seen - profit
         if dd > max_drawdown:
             max_drawdown = dd
 
-        # Compare to previous snapshot for win/loss
-        if i > 0:
-            prev_profit = ph_rows[i - 1]["profit"] or 0
-            delta = profit - prev_profit
-            if delta > 0:
-                winning_periods += 1
-                streak = streak + 1 if streak > 0 else 1
-            elif delta < 0:
-                losing_periods += 1
-                streak = streak - 1 if streak < 0 else -1
-            else:
-                streak = 0
-            best_streak = max(best_streak, abs(streak))
-
-    current_streak = streak
-    total_periods = winning_periods + losing_periods
-    win_rate = (winning_periods / total_periods) if total_periods > 0 else 0.0
-
-    # Total P&L = latest profit value
     total_pnl = ph_rows[-1]["profit"] if ph_rows else 0.0
 
     return {
         "total_trades": total_trades,
-        "winning_trades": winning_periods,
-        "losing_trades": losing_periods,
+        "winning_trades": winning_trades,
+        "losing_trades": losing_trades,
         "win_rate": win_rate,
         "current_streak": current_streak,
         "best_streak": best_streak,
@@ -425,6 +440,25 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
     async def arena_bot_statuses():
         return {"bots": get_all_bot_statuses()}
 
+    # ── Deterministic Goal Runner endpoints ─────────────────────────
+
+    @app.post("/api/arena/runner/start")
+    async def arena_start_runner():
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        agents_dir = os.path.join(project_root, "agents")
+        result = start_runner(agents_dir)
+        status_code = 200 if result["success"] else 409
+        return result
+
+    @app.post("/api/arena/runner/stop")
+    async def arena_stop_runner():
+        result = stop_runner()
+        return result
+
+    @app.get("/api/arena/runner/status")
+    async def arena_runner_status():
+        return get_runner_status()
+
     @app.post("/api/arena/agent/{agent_id}/disconnect")
     async def arena_disconnect_agent(agent_id: int):
         result = disconnect_agent(agent_id)
@@ -673,16 +707,23 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         # Positions
         cursor.execute(
-            "SELECT symbol, market, side, quantity, entry_price, current_price, opened_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct, peak_favorable_price, trailing_activated FROM positions WHERE agent_id = ?",
+            "SELECT symbol, market, token_id, outcome, side, quantity, entry_price, current_price, opened_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct, peak_favorable_price, trailing_activated FROM positions WHERE agent_id = ?",
             (agent_id,),
         )
-        positions = [dict(row) for row in cursor.fetchall()]
+        pos_rows = cursor.fetchall()
+        now_str = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        resolved_prices = resolve_position_prices(list(pos_rows), now_str)
+        positions = []
+        for row in pos_rows:
+            pos = dict(row)
+            pos['current_price'] = resolved_prices.get(position_price_cache_key(row), row['current_price'])
+            positions.append(pos)
 
-        # Recent trades (operation signals)
+        # Recent trades (operation + auto-close signals)
         cursor.execute(
             """
             SELECT signal_id, symbol, side, signal_type, entry_price, exit_price, quantity, pnl, content, created_at
-            FROM signals WHERE agent_id = ? AND message_type = 'operation'
+            FROM signals WHERE agent_id = ? AND message_type IN ('operation', 'trade')
             ORDER BY created_at DESC LIMIT 30
             """,
             (agent_id,),
@@ -1152,6 +1193,11 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                     "action": last_trade.get("signal_type", ""),
                 }
 
+            # Check if this agent has a running bot or runner
+            is_bot_running = bot_statuses.get(name.lower(), {}).get("running", False)
+            if name == "BlitzRunner" and get_runner_status().get("running", False):
+                is_bot_running = True
+
             agents.append({
                 "agent_id": aid,
                 "name": name,
@@ -1177,7 +1223,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 "win_rate": round(win_rate, 2) if win_rate else 0,
                 "win_streak": win_streak,
                 "online": bool(state_info) or aid in recently_active,
-                "bot_running": bot_statuses.get(name.lower(), {}).get("running", False),
+                "bot_running": is_bot_running,
                 "watchlist": personality.get("watchlist", []),
                 "quirks": personality.get("quirks", []),
                 "relationship_focus": rel_focus,

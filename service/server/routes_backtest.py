@@ -34,6 +34,7 @@ class BacktestRequest(BaseModel):
     initial_capital: float = 100000.0
     interval: str = "1d"
     slippage_bps: float = 5.0
+    goal_target: Optional[float] = None  # Dollar profit target for goal-aware sizing
 
 
 def _get_strategy_registry() -> dict:
@@ -126,6 +127,40 @@ def _load_personality_from_db(agent_key: str, fallback_personality):
         return fallback_personality
 
 
+def _load_blitztrader_params() -> dict:
+    """Load BlitzTrader strategy params from DB agent_configs, merged over scan_core.DEFAULT_PARAMS.
+
+    This ensures the backtest uses the exact same params the live agent would use.
+    """
+    try:
+        import scan_core
+        params = dict(scan_core.DEFAULT_PARAMS)
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT c.config_json FROM agent_configs c "
+            "JOIN agents a ON a.id = c.agent_id "
+            "WHERE a.name = 'BlitzTrader'"
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if row and row['config_json']:
+            config = json.loads(row['config_json'])
+            stored = config.get('strategy_params', {})
+            params = scan_core.deep_merge(params, stored)
+
+        return params
+    except Exception as e:
+        logger.warning(f"Failed to load BlitzTrader params from DB: {e}")
+        try:
+            import scan_core
+            return dict(scan_core.DEFAULT_PARAMS)
+        except ImportError:
+            return {}
+
+
 def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     @app.get("/api/backtest/strategies")
@@ -162,17 +197,47 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
             )
 
         info = registry[req.agent_key]
-        agent_class = info["agent_class"]
 
         try:
             from personality import PERSONALITIES
-            from backtester import Backtester
         except ImportError as e:
-            raise HTTPException(status_code=500, detail=f"Backtester module not available: {e}")
+            raise HTTPException(status_code=500, detail=f"Agent modules not available: {e}")
 
         personality = _load_personality_from_db(req.agent_key, PERSONALITIES[req.agent_key])
         symbols = req.symbols or list(personality.watchlist)
 
+        # BlitzTrader uses the ScanBacktester which replays scan_core logic
+        # (15-indicator deep scan, Goal Runner state machine) with DB-stored
+        # strategy params — full parity with the live agent.
+        if req.agent_key == "blitztrader":
+            try:
+                import scan_core
+                from scan_backtester import ScanBacktester
+            except ImportError as e:
+                raise HTTPException(status_code=500, detail=f"ScanBacktester module not available: {e}")
+
+            params = _load_blitztrader_params()
+            bt = ScanBacktester(
+                symbols=symbols,
+                params=params,
+                start_date=req.start_date,
+                end_date=req.end_date,
+                initial_capital=req.initial_capital,
+                interval=req.interval,
+                slippage_bps=req.slippage_bps,
+                goal_target=req.goal_target,
+            )
+            import asyncio
+            report = await asyncio.to_thread(bt.run)
+            return {"report": report.to_dict()}
+
+        # Legacy path for other agents
+        try:
+            from backtester import Backtester
+        except ImportError as e:
+            raise HTTPException(status_code=500, detail=f"Backtester module not available: {e}")
+
+        agent_class = info["agent_class"]
         bt = Backtester(
             agent_class=agent_class,
             personality=personality,
@@ -184,7 +249,8 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
             slippage_bps=req.slippage_bps,
         )
 
-        report = bt.run()
+        import asyncio
+        report = await asyncio.to_thread(bt.run)
         return {"report": report.to_dict()}
 
     @app.post("/api/backtest/diagnose")

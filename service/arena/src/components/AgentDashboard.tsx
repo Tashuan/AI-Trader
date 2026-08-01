@@ -31,15 +31,23 @@ interface AgentDetail {
 }
 
 const DEFAULT_AGENT = 'BlitzTrader';
+const STORAGE_KEY = 'arena:selectedAgent';
 
 export function AgentDashboard({ agents }: AgentDashboardProps) {
-  const [selectedAgentName, setSelectedAgentName] = useState(DEFAULT_AGENT);
+  const [selectedAgentName, setSelectedAgentName] = useState(
+    () => localStorage.getItem(STORAGE_KEY) || DEFAULT_AGENT
+  );
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [showGoalSetter, setShowGoalSetter] = useState(false);
   const [showStrategySettings, setShowStrategySettings] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Persist selected agent to localStorage
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, selectedAgentName);
+  }, [selectedAgentName]);
 
   const selectedAgent = agents.find(a => a.name === selectedAgentName) || null;
   const agentId = selectedAgent?.agent_id;
@@ -275,7 +283,7 @@ export function AgentDashboard({ agents }: AgentDashboardProps) {
               <StatBox label="Best Streak" value={stats?.best_streak ?? 0} positive />
               <StatBox
                 label="Total P&L"
-                value={`${(stats?.total_profit ?? 0) >= 0 ? '+' : ''}$${Math.abs(stats?.total_profit ?? 0).toFixed(0)}`}
+                value={`${(stats?.total_profit ?? 0) >= 0 ? '+' : '-'}$${Math.abs(stats?.total_profit ?? 0).toFixed(0)}`}
                 positive={(stats?.total_profit ?? 0) >= 0}
               />
               <StatBox

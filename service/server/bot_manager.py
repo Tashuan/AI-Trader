@@ -11,6 +11,7 @@ class ManagedBot:
     thread: threading.Thread
     stop_event: threading.Event
     started_at: float
+    bot_type: str = "strategy"  # "strategy" (BaseAgent) or "runner" (deterministic Goal Runner)
 
 
 _bots: dict[str, ManagedBot] = {}
@@ -96,7 +97,12 @@ def get_all_bot_statuses() -> dict[str, dict]:
         dead = []
         for key, bot in _bots.items():
             if bot.thread.is_alive():
-                result[key] = {"running": True, "pid": None, "thread": bot.thread.name}
+                result[key] = {
+                    "running": True,
+                    "pid": None,
+                    "thread": bot.thread.name,
+                    "bot_type": bot.bot_type,
+                }
             else:
                 dead.append(key)
         for key in dead:
@@ -116,3 +122,59 @@ def disconnect_agent(agent_id: int) -> dict:
         return {"success": True, "message": "Agent disconnected (token rotated)"}
     except Exception as e:
         return {"success": False, "message": f"Failed to disconnect: {e}"}
+
+
+# ── Deterministic Goal Runner management ───────────────────────────────
+
+_RUNNER_KEY = "blitztrader-runner"
+
+
+def start_runner(agents_dir: str, poll_interval: int = 120) -> dict:
+    """Start the deterministic BlitzRunner Goal Runner agent in a thread."""
+    with _lock:
+        existing = _bots.get(_RUNNER_KEY)
+        if existing and existing.thread.is_alive():
+            return {"success": False, "message": "BlitzRunner is already running"}
+
+        try:
+            import time
+            _ensure_agents_path(agents_dir)
+            from blitz_runner import run_loop
+
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=run_loop,
+                args=(stop_event, poll_interval),
+                name="ManagedRunner-blitztrader",
+                daemon=True,
+            )
+            thread.start()
+            _bots[_RUNNER_KEY] = ManagedBot(
+                agent_key=_RUNNER_KEY,
+                thread=thread,
+                stop_event=stop_event,
+                started_at=time.time(),
+                bot_type="runner",
+            )
+            return {
+                "success": True,
+                "message": "Started BlitzRunner (deterministic Goal Runner)",
+                "thread": thread.name,
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed to start runner: {e}"}
+
+
+def stop_runner() -> dict:
+    """Stop the deterministic BlitzRunner agent."""
+    return stop_bot(_RUNNER_KEY)
+
+
+def get_runner_status() -> dict:
+    """Get the status of the BlitzRunner agent."""
+    with _lock:
+        bot = _bots.get(_RUNNER_KEY)
+        if not bot or not bot.thread.is_alive():
+            _bots.pop(_RUNNER_KEY, None)
+            return {"running": False, "pid": None, "thread": None, "bot_type": "runner"}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner"}

@@ -9,6 +9,7 @@ instruction markdown files and personality entries.
 import json
 import os
 import secrets
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,6 +25,9 @@ from utils import _extract_token, hash_password
 # Project root (two levels up from service/server)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _AGENTS_DIR = _PROJECT_ROOT / "agents"
+if str(_AGENTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENTS_DIR))
+import scan_core  # noqa: E402 — single source of truth for BlitzTrader strategy defaults
 
 STRATEGY_TEMPLATES = {
     "news_sentiment": {
@@ -1192,68 +1196,18 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     # ─── Admin Strategy Params ────────────────────────────────────
 
-    DEFAULT_STRATEGY_PARAMS = {
-        'exit_rules': {
-            'stop_loss_pct': -2.0,
-            'take_profit_pct': 2.0,
-            'stagnation_cycles': 6,
-            'stagnation_threshold_pct': 0.3,
-            'momentum_death_vol_ratio': 0.5,
-            'ob_exhaustion_rsi': 75,
-        },
-        'entry_criteria': {
-            'min_signals': 4,
-            'min_signal_families': 2,
-            'min_vol_ratio': 1.5,
-            'bearish_macro_min_signals': 5,
-            'bearish_macro_threshold': 0.3,
-        },
-        'position_sizing': {
-            'max_positions': 1,
-            'normal_sizing_min_pct': 25,
-            'normal_sizing_max_pct': 40,
-            'approaching_sizing_min_pct': 15,
-            'approaching_sizing_max_pct': 25,
-            'final_stretch_tp_pct': 1.5,
-            'consecutive_loss_threshold': 3,
-            'consecutive_loss_size_cut_pct': 50,
-            'consecutive_loss_min_signals': 5,
-        },
-        'switch_logic': {
-            'switch_score_threshold_pct': 20,
-            'reentry_cooldown_cycles': 3,
-            'switch_require_profitable': True,
-        },
-        'scoring_weights': {
-            'signal_count_weight': 1.0,
-            'family_diversity_weight': 0.5,
-            'candle_quality_weight': 0.3,
-            'consolidation_bonus_weight': 0.2,
-        },
-        'indicators': {
-            'rsi_period': 14,
-            'rsi_bullish': 55,
-            'rsi_overbought': 75,
-            'rsi_oversold': 25,
-            'macd_fast': 12,
-            'macd_slow': 26,
-            'macd_signal': 9,
-            'ema_period': 20,
-            'stochastic_period': 14,
-            'atr_period': 14,
-            'vol_ratio_bullish': 1.5,
-            'vol_ratio_dead': 0.5,
-        },
-    }
+    DEFAULT_STRATEGY_PARAMS = scan_core.DEFAULT_PARAMS
 
     def _merge_strategy_defaults(stored: dict) -> dict:
         result = {}
         for section, defaults in DEFAULT_STRATEGY_PARAMS.items():
-            stored_section = stored.get(section, {})
-            if isinstance(stored_section, dict):
+            stored_section = stored.get(section)
+            if stored_section is None:
+                result[section] = defaults
+            elif isinstance(stored_section, dict) and isinstance(defaults, dict):
                 result[section] = {**defaults, **stored_section}
             else:
-                result[section] = defaults
+                result[section] = stored_section if stored_section else defaults
         for key, val in stored.items():
             if key not in result:
                 result[key] = val

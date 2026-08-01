@@ -29,93 +29,23 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+# Shared, side-effect-free indicator/scoring/exit-rule logic. This is the
+# single source of truth for strategy defaults and math — both this live
+# agent script and the backend backtester (agents/scan_backtester.py) import
+# from here so backtests replay exactly what the live agent does.
+_AGENTS_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _AGENTS_DIR not in sys.path:
+    sys.path.insert(0, _AGENTS_DIR)
+import scan_core
+
 
 # ============================================================
-# Default Strategy Parameters
+# Default Strategy Parameters (re-exported from scan_core for
+# backwards compatibility with existing imports of scan.DEFAULT_PARAMS)
 # ============================================================
 
-DEFAULT_PARAMS: dict[str, Any] = {
-    "exit_rules": {
-        "stop_loss_pct": -2.0,
-        "take_profit_pct": 2.0,
-        "stagnation_cycles": 6,
-        "stagnation_threshold_pct": 0.3,
-        "momentum_death_vol_ratio": 0.5,
-        "ob_exhaustion_rsi": 75,
-    },
-    "entry_criteria": {
-        "min_signals": 4,
-        "min_signal_families": 2,
-        "min_vol_ratio": 1.5,
-        "bearish_macro_min_signals": 5,
-        "bearish_macro_threshold": 0.3,
-    },
-    "position_sizing": {
-        "max_positions": 1,
-        "normal_sizing_min_pct": 25,
-        "normal_sizing_max_pct": 40,
-        "approaching_sizing_min_pct": 15,
-        "approaching_sizing_max_pct": 25,
-        "final_stretch_tp_pct": 1.5,
-        "max_position_dollar_cap": None,
-        "slippage_buffer_pct": 0.1,
-        "daily_loss_size_cut_pct": 50,
-        "consecutive_loss_threshold": 3,
-        "consecutive_loss_size_cut_pct": 50,
-        "consecutive_loss_min_signals": 5,
-        "daily_pnl_reset_timezone": "UTC",
-    },
-    "switch_logic": {
-        "switch_score_threshold_pct": 20,
-        "switch_require_profitable": True,
-        "reentry_cooldown_cycles": 3,
-    },
-    "scoring_weights": {
-        "signal_count_weight": 0.35,
-        "family_diversity_weight": 0.25,
-        "candle_quality_weight": 0.20,
-        "consolidation_bonus_weight": 0.20,
-    },
-    "indicators": {
-        "candle_interval": "1h",
-        "lookback_period": "1mo",
-        "rsi_period": 14,
-        "rsi_bullish": 55,
-        "rsi_overbought": 75,
-        "rsi_oversold": 30,
-        "macd_fast": 12,
-        "macd_slow": 26,
-        "macd_signal": 9,
-        "sma_periods": [20, 50, 200],
-        "ema_period": 20,
-        "stochastic_period": 14,
-        "atr_period": 14,
-        "bb_squeeze_ratio": 0.6,
-        "candle_body_conviction": 0.6,
-        "candle_body_doji": 0.3,
-        "vol_ratio_bullish": 1.5,
-        "vol_ratio_dead": 0.5,
-    },
-    "watchlist": ["BTC", "ETH", "SOL", "AVAX", "NVDA", "TSLA", "META", "AMZN"],
-    "sweep": {
-        "enabled": True,
-        "sweep_min_vol_ratio": 1.5,
-        "sweep_min_price_change_pct": 1.0,
-        "sweep_max_qualifiers": 10,
-    },
-    "cycle_timing": {
-        "poll_interval_default": 120,
-        "poll_interval_min": 10,
-        "poll_interval_max": 3600,
-    },
-}
-
-# Symbols that need -USD suffix for yfinance
-_CRYPTO_SYMBOLS = {
-    "BTC", "ETH", "SOL", "DOGE", "AVAX", "ADA", "XRP", "LINK",
-    "MATIC", "DOT", "LTC", "BCH", "UNI", "ATOM", "NEAR", "APT",
-    "ARB", "OP", "INJ", "SUI", "SEI", "TIA", "PEPE", "SHIB",
-}
+DEFAULT_PARAMS: dict[str, Any] = scan_core.DEFAULT_PARAMS
+_CRYPTO_SYMBOLS = scan_core.CRYPTO_SYMBOLS
 
 # Default sweep universe (top crypto by market cap + top equities + commodities)
 _SWEEP_CRYPTO = ["BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "ADA", "LINK", "DOT", "LTC", "UNI", "ATOM", "NEAR", "ARB", "OP"]
@@ -129,13 +59,7 @@ _SWEEP_COMMODITIES = ["GC=F", "SI=F", "CL=F", "SPY", "^GSPC"]
 
 def _deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge override into base."""
-    result = dict(base)
-    for key, val in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
-            result[key] = _deep_merge(result[key], val)
-        else:
-            result[key] = val
-    return result
+    return scan_core.deep_merge(base, override)
 
 
 def _load_config(token: Optional[str], inline_config: Optional[str]) -> dict[str, Any]:
@@ -167,9 +91,7 @@ def _load_config(token: Optional[str], inline_config: Optional[str]) -> dict[str
 
 def _yf_ticker(symbol: str) -> str:
     """Convert symbol to yfinance ticker format."""
-    if symbol in _CRYPTO_SYMBOLS:
-        return f"{symbol}-USD"
-    return symbol
+    return scan_core.yf_ticker(symbol)
 
 
 # ============================================================
@@ -217,149 +139,13 @@ def _sweep_scan(params: dict[str, Any]) -> list[str]:
 # Tier 2: Deep Scan — 15 Indicators
 # ============================================================
 
-def _compute_rsi(df: pd.DataFrame, period: int = 14) -> float:
-    delta = df['Close'].diff()
-    gain = delta.clip(lower=0).rolling(period).mean()
-    loss = (-delta.clip(upper=0)).rolling(period).mean()
-    rs = gain / loss
-    rsi = (100 - (100 / (1 + rs))).iloc[-1]
-    return float(rsi) if not np.isnan(rsi) else 50.0
-
-
-def _compute_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[float, float]:
-    macd_line = df['Close'].ewm(span=fast).mean() - df['Close'].ewm(span=slow).mean()
-    signal_line = macd_line.ewm(span=signal).mean()
-    hist = (macd_line - signal_line).iloc[-1]
-    macd_val = macd_line.iloc[-1]
-    return float(hist) if not np.isnan(hist) else 0.0, float(macd_val) if not np.isnan(macd_val) else 0.0
-
-
-def _compute_sma(df: pd.DataFrame, period: int) -> float:
-    sma = df['Close'].rolling(period).mean().iloc[-1]
-    return float(sma) if not np.isnan(sma) else 0.0
-
-
-def _compute_ema(df: pd.DataFrame, period: int) -> float:
-    ema = df['Close'].ewm(span=period).mean().iloc[-1]
-    return float(ema) if not np.isnan(ema) else 0.0
-
-
-def _compute_atr(df: pd.DataFrame, period: int = 14) -> float:
-    high_low = df['High'] - df['Low']
-    high_close = (df['High'] - df['Close'].shift()).abs()
-    low_close = (df['Low'] - df['Close'].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    atr = tr.rolling(period).mean().iloc[-1]
-    return float(atr) if not np.isnan(atr) else 0.0
-
-
-def _compute_bollinger(df: pd.DataFrame, period: int = 20) -> tuple[float, float, float, float]:
-    """Returns (upper, lower, width, squeeze_ratio)."""
-    sma = df['Close'].rolling(period).mean()
-    std = df['Close'].rolling(period).std()
-    upper = sma + 2 * std
-    lower = sma - 2 * std
-    width = ((upper - lower) / sma).iloc[-1]
-    # Squeeze: current width vs average width
-    avg_width = ((upper - lower) / sma).rolling(50).mean().iloc[-1]
-    squeeze_ratio = float(width / avg_width) if avg_width and not np.isnan(avg_width) and avg_width > 0 else 1.0
-    return float(upper.iloc[-1]), float(lower.iloc[-1]), float(width) if not np.isnan(width) else 0.0, squeeze_ratio
-
-
-def _compute_stochastic(df: pd.DataFrame, period: int = 14) -> tuple[float, float]:
-    low_min = df['Low'].rolling(period).min()
-    high_max = df['High'].rolling(period).max()
-    k = ((df['Close'] - low_min) / (high_max - low_min)) * 100
-    d = k.rolling(3).mean()
-    k_val = k.iloc[-1]
-    d_val = d.iloc[-1]
-    return float(k_val) if not np.isnan(k_val) else 50.0, float(d_val) if not np.isnan(d_val) else 50.0
-
-
-def _compute_obv(df: pd.DataFrame) -> pd.Series:
-    obv = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-    return obv
-
-
-def _compute_vwap(df: pd.DataFrame) -> float:
-    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-    vwap = (typical_price * df['Volume']).cumsum() / df['Volume'].cumsum()
-    return float(vwap.iloc[-1]) if not np.isnan(vwap.iloc[-1]) else float(df['Close'].iloc[-1])
-
-
-def _detect_obv_divergence(df: pd.DataFrame, obv: pd.Series, lookback: int = 10) -> bool:
-    """Price up but OBV flat/down = fake breakout warning."""
-    if len(df) < lookback + 1:
-        return False
-    price_trend = df['Close'].iloc[-1] > df['Close'].iloc[-lookback]
-    obv_trend = obv.iloc[-1] < obv.iloc[-lookback]
-    return bool(price_trend and obv_trend)
-
-
-def _detect_consolidation_breakout(df: pd.DataFrame, lookback: int = 3) -> bool:
-    """Was ranging (tight spread) for last `lookback` candles, now breaking out."""
-    if len(df) < lookback + 2:
-        return False
-    recent = df.iloc[-lookback-1:-1]
-    current = df.iloc[-1]
-    recent_spread = (recent['High'] - recent['Low']).mean()
-    current_spread = current['High'] - current['Low']
-    recent_range = recent['High'].max() - recent['Low'].min()
-    # Was consolidating (tight range) and now candle is larger than average
-    was_tight = recent_range / recent['Close'].mean() < 0.03
-    breaking = current_spread > recent_spread * 1.5
-    return bool(was_tight and breaking)
-
-
-def _candle_body_ratio(df: pd.DataFrame) -> float:
-    """abs(close-open) / (high-low) for last candle."""
-    last = df.iloc[-1]
-    body = abs(last['Close'] - last['Open'])
-    range_ = last['High'] - last['Low']
-    return float(body / range_) if range_ and range_ > 0 else 0.0
-
-
-def _candle_quality(ratio: float, conviction: float = 0.6, doji: float = 0.3) -> str:
-    if ratio >= conviction:
-        return "full_body"
-    elif ratio <= doji:
-        return "doji"
-    else:
-        return "wicked"
-
-
-def _sma_alignment(sma20: float, sma50: float, sma200: float) -> str:
-    if sma20 > sma50 > sma200:
-        return "20>50>200"
-    elif sma20 < sma50 < sma200:
-        return "20<50<200"
-    elif sma20 > sma50:
-        return "20>50"
-    elif sma20 < sma50:
-        return "20<50"
-    return "mixed"
-
-
-def _bb_state(width: float, squeeze_ratio: float, squeeze_threshold: float = 0.6) -> str:
-    if squeeze_ratio < squeeze_threshold:
-        return "squeezing"
-    elif width > 0.05:
-        return "expanding"
-    else:
-        return "normal"
-
-
-def _market_state(vol_ratio: float, bb_state_str: str, candle_quality: str) -> str:
-    if vol_ratio > 1.5 and bb_state_str in ("expanding", "squeezing") and candle_quality == "full_body":
-        return "imbalance_bullish" if vol_ratio > 1.5 else "imbalance_bearish"
-    elif vol_ratio < 0.5:
-        return "dead"
-    else:
-        return "balanced"
-
-
 def _deep_scan_symbol(symbol: str, params: dict[str, Any]) -> dict[str, Any]:
-    """Run all 15 indicators on a single symbol."""
+    """Fetch live history for `symbol` and run the shared 15-indicator deep scan.
+
+    All indicator math, entry qualification, and composite scoring live in
+    scan_core.deep_scan_symbol_from_df — this function only does the live
+    yfinance I/O and hands off the resulting DataFrame.
+    """
     ind_cfg = params.get("indicators", {})
     interval = ind_cfg.get("candle_interval", "1h")
     lookback = ind_cfg.get("lookback_period", "1mo")
@@ -368,176 +154,7 @@ def _deep_scan_symbol(symbol: str, params: dict[str, Any]) -> dict[str, Any]:
     t = yf.Ticker(ticker)
     df = t.history(period=lookback, interval=interval)
 
-    if df is None or df.empty or len(df) < 30:
-        return {
-            "error": "no_data",
-            "error_detail": f"yfinance returned insufficient data ({len(df) if df is not None else 0} rows)",
-            "qualifies_for_entry": False,
-        }
-
-    last = df.iloc[-1]
-    price = float(last['Close'])
-
-    # Layer 1: Market State
-    prev_vol = df['Volume'].tail(20).mean()
-    vol_ratio = float(last['Volume'] / prev_vol) if prev_vol and prev_vol > 0 else 0.0
-    atr = _compute_atr(df, ind_cfg.get("atr_period", 14))
-    bb_upper, bb_lower, bb_width, bb_squeeze = _compute_bollinger(df, 20)
-    bb_state_str = _bb_state(bb_width, bb_squeeze, ind_cfg.get("bb_squeeze_ratio", 0.6))
-
-    # Layer 2: Trend Direction
-    sma_periods = ind_cfg.get("sma_periods", [20, 50, 200])
-    sma20 = _compute_sma(df, sma_periods[0] if len(sma_periods) > 0 else 20)
-    sma50 = _compute_sma(df, sma_periods[1] if len(sma_periods) > 1 else 50)
-    sma200 = _compute_sma(df, sma_periods[2] if len(sma_periods) > 2 else 200)
-    sma_align = _sma_alignment(sma20, sma50, sma200)
-    ema20 = _compute_ema(df, ind_cfg.get("ema_period", 20))
-    macd_hist, macd_line = _compute_macd(
-        df,
-        ind_cfg.get("macd_fast", 12),
-        ind_cfg.get("macd_slow", 26),
-        ind_cfg.get("macd_signal", 9),
-    )
-
-    # Layer 3: Momentum Quality
-    rsi = _compute_rsi(df, ind_cfg.get("rsi_period", 14))
-    stoch_k, stoch_d = _compute_stochastic(df, ind_cfg.get("stochastic_period", 14))
-    obv = _compute_obv(df)
-    obv_div = _detect_obv_divergence(df, obv)
-
-    # Layer 4: Entry Timing
-    vwap = _compute_vwap(df)
-    body_ratio = _candle_body_ratio(df)
-    candle_qual = _candle_quality(
-        body_ratio,
-        ind_cfg.get("candle_body_conviction", 0.6),
-        ind_cfg.get("candle_body_doji", 0.3),
-    )
-    consolidation_bo = _detect_consolidation_breakout(df)
-
-    # 1h return
-    ret_1h = float(((df['Close'].iloc[-1] - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100)
-
-    # Market state
-    mkt_state = _market_state(vol_ratio, bb_state_str, candle_qual)
-
-    # Signal scoring
-    rsi_bull = ind_cfg.get("rsi_bullish", 55)
-    rsi_ob = ind_cfg.get("rsi_overbought", 75)
-    vol_bull = ind_cfg.get("vol_ratio_bullish", 1.5)
-    vol_dead = ind_cfg.get("vol_ratio_dead", 0.5)
-
-    indicators = {}
-    bullish_count = 0
-    bearish_count = 0
-    neutral_count = 0
-    families = set()
-
-    def _add_indicator(name, value, signal, family):
-        nonlocal bullish_count, bearish_count, neutral_count
-        indicators[name] = {"value": value, "signal": signal, "family": family}
-        families.add(family)
-        if signal == "bullish":
-            bullish_count += 1
-        elif signal == "bearish":
-            bearish_count += 1
-        else:
-            neutral_count += 1
-
-    # 1. Volume ratio
-    vol_signal = "bullish" if vol_ratio > vol_bull else ("bearish" if vol_ratio < vol_dead else "neutral")
-    _add_indicator("vol_ratio", round(vol_ratio, 2), vol_signal, "volume")
-
-    # 2. ATR
-    atr_signal = "neutral"  # ATR is contextual
-    _add_indicator("atr", round(atr, 4), atr_signal, "volatility")
-
-    # 3. BB state
-    bb_signal = "bullish" if bb_state_str == "expanding" else ("neutral" if bb_state_str == "squeezing" else "neutral")
-    _add_indicator("bb_state", bb_state_str, bb_signal, "volatility")
-
-    # 4. SMA alignment
-    sma_signal = "bullish" if "20>50" in sma_align else ("bearish" if "20<50" in sma_align else "neutral")
-    _add_indicator("sma_alignment", sma_align, sma_signal, "trend")
-
-    # 5. EMA 20
-    ema_signal = "bullish" if price > ema20 else "bearish"
-    _add_indicator("ema20", round(ema20, 4), ema_signal, "trend")
-
-    # 6. MACD histogram
-    macd_signal = "bullish" if macd_hist > 0 else "bearish"
-    _add_indicator("macd_hist", round(macd_hist, 4), macd_signal, "trend")
-
-    # 7. RSI
-    rsi_signal = "bullish" if rsi > rsi_bull else ("bearish" if rsi < ind_cfg.get("rsi_oversold", 30) else "neutral")
-    _add_indicator("rsi", round(rsi, 1), rsi_signal, "momentum")
-
-    # 8. Stochastic
-    stoch_signal = "bullish" if stoch_k > stoch_d and stoch_k < 80 else ("bearish" if stoch_k < stoch_d and stoch_k > 20 else "neutral")
-    _add_indicator("stochastic", {"k": round(stoch_k, 1), "d": round(stoch_d, 1)}, stoch_signal, "momentum")
-
-    # 9. OBV divergence
-    obv_signal = "bearish" if obv_div else "neutral"
-    _add_indicator("obv_divergence", obv_div, obv_signal, "volume")
-
-    # 10. VWAP
-    vwap_signal = "bullish" if price > vwap else "bearish"
-    _add_indicator("vwap", round(vwap, 4), vwap_signal, "timing")
-
-    # 11. Candle body ratio
-    candle_signal = "bullish" if body_ratio >= ind_cfg.get("candle_body_conviction", 0.6) else ("bearish" if body_ratio <= ind_cfg.get("candle_body_doji", 0.3) else "neutral")
-    _add_indicator("candle_body_ratio", round(body_ratio, 3), candle_signal, "timing")
-
-    # 12. Consolidation breakout
-    cons_signal = "bullish" if consolidation_bo else "neutral"
-    _add_indicator("consolidation_breakout", consolidation_bo, cons_signal, "timing")
-
-    # 1h return as momentum indicator (not in the 12 scored indicators but used for sweep)
-    _add_indicator("return_1h", round(ret_1h, 2), "bullish" if ret_1h > 0 else "bearish", "momentum")
-
-    # Entry qualification
-    entry_cfg = params.get("entry_criteria", {})
-    min_signals = entry_cfg.get("min_signals", 4)
-    min_families = entry_cfg.get("min_signal_families", 2)
-    min_vol = entry_cfg.get("min_vol_ratio", 1.5)
-
-    qualifies = (
-        bullish_count >= min_signals
-        and len(families) >= min_families
-        and vol_ratio > min_vol
-        and not obv_div
-    )
-
-    # Direction: majority of bullish vs bearish
-    direction = "long" if bullish_count > bearish_count else "short"
-
-    # Composite score (0-10 scale)
-    weights = params.get("scoring_weights", {})
-    signal_count_score = bullish_count / 13.0  # 12 indicators + 1h return
-    family_diversity_score = len(families) / 5.0
-    candle_quality_score = min(body_ratio, 1.0)
-    consolidation_bonus = 1.0 if consolidation_bo else 0.0
-
-    composite_score = (
-        signal_count_score * weights.get("signal_count_weight", 0.35)
-        + family_diversity_score * weights.get("family_diversity_weight", 0.25)
-        + candle_quality_score * weights.get("candle_quality_weight", 0.20)
-        + consolidation_bonus * weights.get("consolidation_bonus_weight", 0.20)
-    ) * 10.0
-
-    return {
-        "price": round(price, 6),
-        "market_state": mkt_state,
-        "indicators": indicators,
-        "signal_count": {"bullish": bullish_count, "bearish": bearish_count, "neutral": neutral_count},
-        "families_represented": sorted(list(families)),
-        "qualifies_for_entry": qualifies,
-        "entry_direction": direction,
-        "candle_quality": candle_qual,
-        "obv_divergence": obv_div,
-        "consolidation_breakout": consolidation_bo,
-        "composite_score": round(composite_score, 2),
-    }
+    return scan_core.deep_scan_symbol_from_df(symbol, df, params)
 
 
 # ============================================================
@@ -575,91 +192,18 @@ def _fetch_current_price(symbol: str) -> Optional[float]:
 
 
 def _review_position(pos: dict[str, Any], params: dict[str, Any], cycles_flat: int) -> dict[str, Any]:
-    """Evaluate 6 exit rules for a position."""
-    exit_cfg = params.get("exit_rules", {})
+    """Evaluate the 6 exit rules for a position, fetching live indicator data.
 
+    Rule logic itself lives in scan_core.review_position_from_indicators —
+    this wrapper only fetches the live indicator snapshot needed to evaluate it.
+    """
     symbol = pos.get("symbol", "")
-    side = pos.get("side", "long")
     entry_price = float(pos.get("entry_price", 0))
     current_price = float(pos.get("current_price", 0)) or _fetch_current_price(symbol) or entry_price
+    pos = {**pos, "current_price": current_price}
 
-    if side == "long":
-        pnl_pct = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0
-    else:
-        pnl_pct = ((entry_price - current_price) / entry_price) * 100 if entry_price else 0
-
-    # Fetch indicator data for this symbol
     ind_data = _deep_scan_symbol(symbol, params)
-    vol_ratio = 0.0
-    rsi = 50.0
-    vwap = current_price
-    if "indicators" in ind_data:
-        vol_ratio = ind_data["indicators"].get("vol_ratio", {}).get("value", 0.0)
-        rsi = ind_data["indicators"].get("rsi", {}).get("value", 50.0)
-        vwap = ind_data["indicators"].get("vwap", {}).get("value", current_price)
-
-    # Evaluate exit rules
-    rules = {}
-    fired_rule = None
-
-    # Rule 1: Hard stop-loss
-    sl_pct = exit_cfg.get("stop_loss_pct", -2.0)
-    rules["rule_1_sl_neg2pct"] = "FIRED" if pnl_pct <= sl_pct else "NOT_FIRED"
-    if pnl_pct <= sl_pct and not fired_rule:
-        fired_rule = f"stop_loss_{sl_pct}%"
-
-    # Rule 2: Profit target
-    tp_pct = exit_cfg.get("take_profit_pct", 2.0)
-    rules["rule_2_tp_pos2pct"] = "FIRED" if pnl_pct >= tp_pct else "NOT_FIRED"
-    if pnl_pct >= tp_pct and not fired_rule:
-        fired_rule = f"take_profit_{tp_pct}%"
-
-    # Rule 3: Stagnation
-    stagnation_cycles = exit_cfg.get("stagnation_cycles", 6)
-    rules["rule_3_stagnation"] = "FIRED" if cycles_flat >= stagnation_cycles else "NOT_FIRED"
-    if cycles_flat >= stagnation_cycles and not fired_rule:
-        fired_rule = "stagnation_timeout"
-
-    # Rule 4: Momentum death
-    death_vol = exit_cfg.get("momentum_death_vol_ratio", 0.5)
-    rules["rule_4_momentum_death"] = "FIRED" if vol_ratio < death_vol else "NOT_FIRED"
-    if vol_ratio < death_vol and not fired_rule:
-        fired_rule = "momentum_death"
-
-    # Rule 5: OB exhaustion
-    ob_rsi = exit_cfg.get("ob_exhaustion_rsi", 75)
-    vol_dropping = vol_ratio < 1.0
-    price_rising = pnl_pct > 0
-    ob_exhausted = rsi > ob_rsi and vol_dropping and price_rising
-    rules["rule_5_ob_exhaustion"] = "FIRED" if ob_exhausted else "NOT_FIRED"
-    if ob_exhausted and not fired_rule:
-        fired_rule = "ob_exhaustion"
-
-    # Rule 6: VWAP loss
-    vwap_loss = False
-    if side == "long" and current_price < vwap and entry_price > vwap:
-        vwap_loss = True
-    elif side == "short" and current_price > vwap and entry_price < vwap:
-        vwap_loss = True
-    rules["rule_6_vwap_loss"] = "FIRED" if vwap_loss else "NOT_FIRED"
-    if vwap_loss and not fired_rule:
-        fired_rule = "vwap_loss"
-
-    verdict = "EXIT" if fired_rule else "HOLD"
-    action = "close" if fired_rule else None
-
-    return {
-        "symbol": symbol,
-        "side": side,
-        "entry_price": entry_price,
-        "current_price": round(current_price, 6),
-        "pnl_pct": round(pnl_pct, 2),
-        "cycles_flat": cycles_flat,
-        "exit_rules": rules,
-        "verdict": verdict,
-        "action": action,
-        "exit_reason": fired_rule,
-    }
+    return scan_core.review_position_from_indicators(pos, params, cycles_flat, ind_data)
 
 
 def _patch_position_state(token: str, position_id: int, cycles_flat: int, entry_score: float) -> None:
@@ -703,6 +247,63 @@ def _compute_daily_pnl(token: Optional[str]) -> dict[str, float]:
 
 
 # ============================================================
+# Auto-Execution Helpers (for --auto-exit / --auto-enter)
+# ============================================================
+
+_CRYPTO_SYMBOLS_SET = {"BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "ADA", "LINK", "DOT", "LTC",
+                       "UNI", "ATOM", "NEAR", "ARB", "OP"}
+
+
+def _classify_market(symbol: str) -> str:
+    """Classify symbol into market type for the API."""
+    if symbol.upper() in _CRYPTO_SYMBOLS_SET:
+        return "crypto"
+    return "us-stock"
+
+
+def _api_trade(token: str, action: str, symbol: str, quantity: float, market: str,
+               stop_loss_price: float = None, take_profit_price: float = None,
+               trailing_sl_pct: float = None, trailing_activation_pct: float = None,
+               content: str = "") -> dict:
+    """Execute a trade via POST /api/signals/realtime."""
+    body: dict[str, Any] = {
+        "market": market,
+        "action": action,
+        "symbol": symbol,
+        "price": 0,
+        "quantity": quantity,
+        "executed_at": "now",
+        "content": content,
+    }
+    if stop_loss_price is not None:
+        body["stop_loss_price"] = stop_loss_price
+    if take_profit_price is not None:
+        body["take_profit_price"] = take_profit_price
+    if trailing_sl_pct is not None:
+        body["trailing_sl_pct"] = trailing_sl_pct
+    if trailing_activation_pct is not None:
+        body["trailing_activation_pct"] = trailing_activation_pct
+
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        "http://localhost:8000/api/signals/realtime",
+        data=data,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}: {e.reason}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ============================================================
 # Main Scan
 # ============================================================
 
@@ -710,8 +311,18 @@ def run_scan(
     token: Optional[str] = None,
     inline_config: Optional[str] = None,
     single_symbol: Optional[str] = None,
+    auto_exit: bool = False,
+    auto_enter: bool = False,
 ) -> dict[str, Any]:
-    """Run the full scan and return JSON-serializable dict."""
+    """Run the full scan and return JSON-serializable dict.
+
+    When auto_exit=True, any position with verdict "EXIT" is automatically
+    closed via POST /api/signals/realtime — no LLM judgment required.
+
+    When auto_enter=True, the top-ranked qualifying setup is automatically
+    entered via POST /api/signals/realtime with ATR-based SL/TP and trailing
+    stop params — no LLM judgment required.
+    """
     params = _load_config(token, inline_config)
     watchlist = params.get("watchlist", ["BTC", "ETH", "SOL"])
 
@@ -782,6 +393,126 @@ def run_scan(
     # Daily P&L
     daily_pnl = _compute_daily_pnl(token)
 
+    # ── Auto-exit: close positions with verdict EXIT ──────────────
+    auto_exit_results: list[dict] = []
+    if auto_exit and token:
+        for pos_review in positions_output:
+            if pos_review.get("verdict") == "EXIT":
+                symbol = pos_review["symbol"]
+                side = pos_review.get("side", "long")
+                exit_reason = pos_review.get("exit_reason", "exit_rule")
+                qty = abs(float(pos_review.get("quantity", 0)))
+                if qty <= 0:
+                    continue
+                market = _classify_market(symbol)
+                action = "sell" if side == "long" else "cover"
+                result = _api_trade(token, action, symbol, qty, market,
+                                   content=f"[Auto-Exit] {exit_reason}")
+                auto_exit_results.append({
+                    "symbol": symbol,
+                    "action": action,
+                    "reason": exit_reason,
+                    "result": result,
+                })
+
+    # ── Auto-enter: enter top-ranked setup ────────────────────────
+    auto_enter_result: Optional[dict] = None
+    if auto_enter and token and not max_positions_reached and ranked:
+        # Check goal status before auto-entering
+        can_trade = True
+        try:
+            goal_url = "http://localhost:8000/api/claw/agents/me/goal"
+            goal_req = urllib.request.Request(goal_url, headers={"Authorization": f"Bearer {token}"})
+            with urllib.request.urlopen(goal_req, timeout=10) as resp:
+                goal_data = json.loads(resp.read())
+                can_trade = goal_data.get("can_trade", True)
+        except Exception:
+            pass
+
+        if can_trade:
+            best = ranked[0]
+            best_sym = best["symbol"]
+            # Skip if already holding this symbol
+            held_symbols = {p.get("symbol", "").upper() for p in positions_output}
+            if best_sym.upper() not in held_symbols:
+                sym_data = symbols_output.get(best_sym, {})
+                if sym_data and not sym_data.get("error"):
+                    entry_price = sym_data.get("price", 0)
+                    side = best.get("direction", "long")
+                    market = _classify_market(best_sym)
+
+                    # Compute ATR-based SL/TP
+                    indicators = sym_data.get("indicators", {})
+                    atr = indicators.get("atr_14", 0)
+                    if atr <= 0:
+                        atr = entry_price * 0.02
+
+                    sl_dist = 1.5 * atr
+                    tp_dist = 3.0 * atr
+                    if side == "long":
+                        sl_price = entry_price - sl_dist
+                        tp_price = entry_price + tp_dist
+                    else:
+                        sl_price = entry_price + sl_dist
+                        tp_price = entry_price - tp_dist
+
+                    trail_sl = params.get("exit_rules", {}).get("trailing_sl_pct", 1.0)
+                    trail_act = params.get("exit_rules", {}).get("trailing_activation_pct", 1.0)
+
+                    # Goal-aware sizing
+                    ps_cfg = params.get("position_sizing", {})
+                    progress = 0.0
+                    try:
+                        portfolio_url = "http://localhost:8000/api/positions"
+                        port_req = urllib.request.Request(portfolio_url, headers={"Authorization": f"Bearer {token}"})
+                        with urllib.request.urlopen(port_req, timeout=10) as port_resp:
+                            port_data = json.loads(port_resp.read())
+                            cash = float(port_data.get("cash", 100000.0))
+                            equity = cash
+                            for p in port_data.get("positions", []):
+                                pq = abs(float(p.get("quantity", 0)))
+                                pp = float(p.get("current_price", 0)) or float(p.get("entry_price", 0))
+                                ps = p.get("side", "long")
+                                if ps == "long":
+                                    equity += pq * pp
+                                else:
+                                    equity -= pq * pp
+                            if equity > 100000.0:
+                                progress = ((equity - 100000.0) / 1000.0) * 100
+                    except Exception:
+                        equity = 100000.0
+
+                    is_final = progress > 80.0
+                    if is_final:
+                        lo = ps_cfg.get("approaching_sizing_min_pct", 15)
+                        hi = ps_cfg.get("approaching_sizing_max_pct", 25)
+                    else:
+                        lo = ps_cfg.get("normal_sizing_min_pct", 25)
+                        hi = ps_cfg.get("normal_sizing_max_pct", 40)
+                    size_pct = (lo + hi) / 2.0
+
+                    notional = equity * (size_pct / 100.0)
+                    max_dollar = ps_cfg.get("max_position_dollar_cap")
+                    if max_dollar and notional > max_dollar:
+                        notional = max_dollar
+
+                    qty = notional / entry_price if entry_price > 0 else 0
+                    if qty > 0:
+                        action = "buy" if side == "long" else "short"
+                        result = _api_trade(
+                            token, action, best_sym, qty, market,
+                            stop_loss_price=round(sl_price, 6),
+                            take_profit_price=round(tp_price, 6),
+                            trailing_sl_pct=trail_sl,
+                            trailing_activation_pct=trail_act,
+                            content=f"[Auto-Enter] {side} {best_sym} score={best.get('score', 0):.1f} size={size_pct:.1f}%",
+                        )
+                        auto_enter_result = {
+                            "symbol": best_sym,
+                            "action": action,
+                            "result": result,
+                        }
+
     return {
         "scan_time": datetime.now(timezone.utc).isoformat() + "Z",
         "symbols": symbols_output,
@@ -790,6 +521,8 @@ def run_scan(
         "daily_pnl": daily_pnl,
         "open_position_count": open_position_count,
         "max_positions_reached": max_positions_reached,
+        "auto_exit_results": auto_exit_results if auto_exit else None,
+        "auto_enter_result": auto_enter_result if auto_enter else None,
     }
 
 
@@ -801,6 +534,8 @@ def main():
     parser.add_argument("--backtest", action="store_true", help="Backtest mode (historical replay)")
     parser.add_argument("--from", dest="from_date", help="Backtest start date (YYYY-MM-DD)")
     parser.add_argument("--to", dest="to_date", help="Backtest end date (YYYY-MM-DD)")
+    parser.add_argument("--auto-exit", action="store_true", help="Automatically close positions with EXIT verdict")
+    parser.add_argument("--auto-enter", action="store_true", help="Automatically enter top-ranked setup")
     args = parser.parse_args()
 
     if args.backtest:
@@ -811,6 +546,8 @@ def main():
         token=args.token,
         inline_config=args.config,
         single_symbol=args.symbol,
+        auto_exit=args.auto_exit,
+        auto_enter=args.auto_enter,
     )
     print(json.dumps(result, indent=2))
 

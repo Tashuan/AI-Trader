@@ -3,7 +3,7 @@ import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, BarChart, Bar, Cell,
 } from 'recharts';
-import { Play, Loader2, TrendingUp, TrendingDown, FlaskConical, Zap, Calendar, Stethoscope, AlertTriangle, CheckCircle, XCircle, Lightbulb, Copy, Check, Sparkles } from 'lucide-react';
+import { Play, Loader2, TrendingUp, TrendingDown, FlaskConical, Zap, Calendar, Stethoscope, AlertTriangle, CheckCircle, XCircle, Lightbulb, Copy, Check, Sparkles, Rocket } from 'lucide-react';
 
 interface Strategy {
   key: string;
@@ -77,6 +77,103 @@ export function BacktestPage() {
   const [llmAvailable, setLlmAvailable] = useState<boolean | null>(null);
   const [candleInterval, setCandleInterval] = useState('1d');
   const [slippageBps, setSlippageBps] = useState('5');
+  const [goalTarget, setGoalTarget] = useState('');
+  const [activeTestPreset, setActiveTestPreset] = useState('');
+
+  interface TestPreset {
+    id: string;
+    label: string;
+    description: string;
+    agentKey: string;
+    startDate: string;
+    endDate: string;
+    symbols: string;
+    capital: string;
+    interval: string;
+    slippage: string;
+    goalTarget: string;
+  }
+
+  const testPresets: TestPreset[] = [
+    {
+      id: 'blitz-1m',
+      label: 'BlitzTrader 1-Month',
+      description: 'Recent momentum on the default equity watchlist. 1-hour candles over the last 30 days — a quick sanity check that the strategy fires and captures short-term moves.',
+      agentKey: 'blitztrader',
+      startDate: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: '',
+      capital: '10000',
+      interval: '1h',
+      slippage: '5',
+      goalTarget: '1000',
+    },
+    {
+      id: 'blitz-3m',
+      label: 'BlitzTrader 3-Month',
+      description: 'Quarter-long backtest on the default equity watchlist with 1-hour candles. More trades for statistically meaningful win-rate and Sharpe readings.',
+      agentKey: 'blitztrader',
+      startDate: new Date(new Date().setMonth(new Date().getMonth() - 3)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: '',
+      capital: '10000',
+      interval: '1h',
+      slippage: '5',
+      goalTarget: '1000',
+    },
+    {
+      id: 'blitz-15m',
+      label: 'BlitzTrader 15m Scalp',
+      description: 'Fine-grained 15-minute candles over 60 days. Tests the scalp logic with tighter bars — expects higher trade frequency and shorter hold times.',
+      agentKey: 'blitztrader',
+      startDate: new Date(new Date().setDate(new Date().getDate() - 60)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: '',
+      capital: '10000',
+      interval: '15m',
+      slippage: '5',
+      goalTarget: '1000',
+    },
+    {
+      id: 'blitz-meta',
+      label: 'BlitzTrader META Focus',
+      description: 'Single-symbol isolation test on META with 1-hour candles over 30 days. Eliminates cross-symbol noise to evaluate entry/exit quality on one name.',
+      agentKey: 'blitztrader',
+      startDate: new Date(new Date().setMonth(new Date().getMonth() - 1)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: 'META',
+      capital: '10000',
+      interval: '1h',
+      slippage: '5',
+      goalTarget: '1000',
+    },
+    {
+      id: 'blitz-5m',
+      label: 'BlitzTrader 5m Hyper-Scalp',
+      description: 'Ultra-fast 5-minute candles over 60 days. Maximum trade frequency stress test — validates TP/SL tightness and slippage sensitivity at the fastest timeframe.',
+      agentKey: 'blitztrader',
+      startDate: new Date(new Date().setDate(new Date().getDate() - 60)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: '',
+      capital: '10000',
+      interval: '5m',
+      slippage: '5',
+      goalTarget: '1000',
+    },
+  ];
+
+  const applyTestPreset = (preset: TestPreset) => {
+    setActiveTestPreset(preset.id);
+    setSelectedKey(preset.agentKey);
+    setStartDate(preset.startDate);
+    setEndDate(preset.endDate);
+    setSymbolsInput(preset.symbols);
+    setCapital(preset.capital);
+    setCandleInterval(preset.interval);
+    setSlippageBps(preset.slippage);
+    setGoalTarget(preset.goalTarget);
+    setActivePreset('');
+  };
 
   const applyPreset = (preset: string) => {
     setActivePreset(preset);
@@ -92,7 +189,7 @@ export function BacktestPage() {
       default: return;
     }
     setStartDate(start.toISOString().split('T')[0]);
-    setEndDate('');
+    setEndDate(now.toISOString().split('T')[0]);
   };
 
   const fetchStrategies = useCallback(async () => {
@@ -154,6 +251,9 @@ export function BacktestPage() {
       }
       body.interval = candleInterval;
       body.slippage_bps = parseFloat(slippageBps) || 0;
+      if (goalTarget.trim()) {
+        body.goal_target = parseFloat(goalTarget) || undefined;
+      }
 
       const resp = await fetch('/api/backtest/run', {
         method: 'POST',
@@ -541,6 +641,45 @@ export function BacktestPage() {
 
       {/* Config Panel */}
       <div className="card-base p-4 mb-6">
+        {/* Test Scenarios */}
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Rocket size={11} className="text-arena-yellow" />
+            <span className="text-[10px] text-arena-text-dim uppercase tracking-wider">Test Scenarios</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {testPresets.map(p => (
+              <button
+                key={p.id}
+                onClick={() => applyTestPreset(p)}
+                className={`text-left p-3 rounded-lg transition-all border ${
+                  activeTestPreset === p.id
+                    ? 'bg-arena-yellow/10 border-arena-yellow/40 ring-1 ring-arena-yellow/20'
+                    : 'bg-white/5 border-white/6 hover:bg-white/8 hover:border-white/10'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`text-[11px] font-bold ${
+                    activeTestPreset === p.id ? 'text-arena-yellow' : 'text-white'
+                  }`}>
+                    {p.label}
+                  </span>
+                  <span className="text-[9px] text-arena-text-dim font-mono">
+                    {p.interval} · {p.capital === '10000' ? '$10K' : `$${p.capital}`}
+                  </span>
+                </div>
+                <p className="text-[10px] text-arena-text-dim leading-relaxed">
+                  {p.description}
+                </p>
+                <div className="flex items-center gap-2 mt-1.5 text-[9px] text-arena-text-dim/70">
+                  <span>{p.startDate} → {p.endDate}</span>
+                  {p.symbols && <span className="px-1 py-0.5 rounded bg-white/5 font-mono">{p.symbols}</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Quick Date Presets */}
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <span className="text-[10px] text-arena-text-dim uppercase tracking-wider flex items-center gap-1">
@@ -655,6 +794,21 @@ export function BacktestPage() {
               step="1"
             />
             <div className="mt-1 text-[9px] text-arena-text-dim">5 bps = 0.05% adverse fill per trade. Set 0 for idealized fills.</div>
+          </div>
+
+          {/* Goal Target */}
+          <div>
+            <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">Goal Target ($)</label>
+            <input
+              type="number"
+              className="form-input"
+              value={goalTarget}
+              onChange={e => setGoalTarget(e.target.value)}
+              min="0"
+              step="100"
+              placeholder="Default: 10% of capital"
+            />
+            <div className="mt-1 text-[9px] text-arena-text-dim">Dollar profit target for goal-aware position sizing. Leave empty for default.</div>
           </div>
         </div>
 
