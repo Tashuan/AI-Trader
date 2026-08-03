@@ -74,6 +74,7 @@ export function AgentsPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [editAgent, setEditAgent] = useState<{ id: number; name: string } | null>(null);
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
+  const [cryptoRunnerStatus, setCryptoRunnerStatus] = useState<RunnerStatus | null>(null);
 
   const fetchData = useCallback(() => {
     fetch('/api/arena/personalities')
@@ -93,6 +94,11 @@ export function AgentsPage() {
     fetch('/api/arena/runner/status')
       .then(r => r.json())
       .then(data => setRunnerStatus(data))
+      .catch(() => {});
+
+    fetch('/api/arena/crypto-runner/status')
+      .then(r => r.json())
+      .then(data => setCryptoRunnerStatus(data))
       .catch(() => {});
 
     fetch('/api/arena/full')
@@ -161,6 +167,30 @@ export function AgentsPage() {
       fetchData();
     } catch (e) {
       console.error('Failed to stop runner:', e);
+    }
+    setActionLoading(null);
+  };
+
+  const handleStartCryptoRunner = async () => {
+    setActionLoading('start-crypto-runner');
+    try {
+      await fetch('/api/arena/crypto-runner/start', { method: 'POST' });
+      await new Promise(r => setTimeout(r, 500));
+      fetchData();
+    } catch (e) {
+      console.error('Failed to start crypto runner:', e);
+    }
+    setActionLoading(null);
+  };
+
+  const handleStopCryptoRunner = async () => {
+    setActionLoading('stop-crypto-runner');
+    try {
+      await fetch('/api/arena/crypto-runner/stop', { method: 'POST' });
+      await new Promise(r => setTimeout(r, 500));
+      fetchData();
+    } catch (e) {
+      console.error('Failed to stop crypto runner:', e);
     }
     setActionLoading(null);
   };
@@ -265,6 +295,76 @@ export function AgentsPage() {
         {runnerStatus?.running && (
           <div className="mt-2 pt-2 border-t border-arena-border/50 text-[9px] text-arena-text-dim">
             Runs alongside the AI agent for A/B comparison. Trades use the same BlitzTrader account — positions are shared.
+          </div>
+        )}
+      </div>
+
+      {/* CryptoRunner — Deterministic Crypto Swing Runner */}
+      <div className="card-base p-4 mb-4 border-l-2 border-l-arena-blue/40">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <div className="w-9 h-9 rounded-full bg-arena-blue/15 flex items-center justify-center">
+                <Bot size={16} className="text-arena-blue" />
+              </div>
+              <div
+                className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-arena-card"
+                style={{ background: cryptoRunnerStatus?.running ? '#34D399' : '#8B92A5' }}
+              />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-white flex items-center gap-2">
+                CryptoRunner
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-arena-blue/15 text-arena-blue font-mono">
+                  DETERMINISTIC
+                </span>
+              </div>
+              <div className="text-[10px] text-arena-text-dim">
+                Deterministic crypto swing bot. Trend-following across 20+ crypto symbols with EMA-confirmed entries, ATR-based exits, and goal-aware sizing. No LLM in the loop.
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {cryptoRunnerStatus?.running ? (
+              <>
+                <div className="flex items-center gap-2 text-[10px] text-arena-green">
+                  <Circle size={8} className="fill-arena-green text-arena-green animate-pulse" />
+                  <span>Running</span>
+                </div>
+                <Tooltip text="Stop the deterministic CryptoRunner" side="left">
+                  <button
+                    onClick={handleStopCryptoRunner}
+                    disabled={actionLoading === 'stop-crypto-runner'}
+                    className="px-3 py-1.5 bg-arena-red/15 text-arena-red rounded-lg hover:bg-arena-red/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Square size={12} />
+                    <span className="text-[10px] font-semibold">{actionLoading === 'stop-crypto-runner' ? 'Stopping...' : 'Stop'}</span>
+                  </button>
+                </Tooltip>
+              </>
+            ) : (
+              <>
+                <div className="text-[10px] text-arena-text-dim">
+                  Not running — launch to start deterministic crypto strategy
+                </div>
+                <Tooltip text="Starts the deterministic CryptoRunner — trend-following crypto swing bot with zero LLM judgment" side="left">
+                  <button
+                    onClick={handleStartCryptoRunner}
+                    disabled={actionLoading === 'start-crypto-runner'}
+                    className="px-3 py-1.5 bg-arena-green/15 text-arena-green rounded-lg hover:bg-arena-green/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Play size={12} />
+                    <span className="text-[10px] font-semibold">{actionLoading === 'start-crypto-runner' ? 'Starting...' : 'Launch Runner'}</span>
+                  </button>
+                </Tooltip>
+              </>
+            )}
+          </div>
+        </div>
+        {cryptoRunnerStatus?.running && (
+          <div className="mt-2 pt-2 border-t border-arena-border/50 text-[9px] text-arena-text-dim">
+            Runs 24/7 alongside other agents. Executes trend-following strategy across BTC, ETH, SOL, and 20+ other crypto symbols.
           </div>
         )}
       </div>

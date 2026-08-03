@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-BlitzRunner — Deterministic Goal Runner Agent
+CryptoRunner — Deterministic Crypto Swing/Trend Bot
 
-Executes the exact same scan_core logic as the backtester, with zero LLM
-judgment in the loop.  Every cycle:
+Executes a crypto-specific swing/trend strategy with zero LLM judgment.
+Multi-position (up to 3), 4h candles with daily confirmation, EMA trend
+alignment, BTC regime filter for alts, liquidity floor, ATR-based SL/TP
+with clamping, and goal-aware sizing.
 
+Every cycle:
   1. Fetch config + strategy params from the API
-  2. Run scan.py run_scan() for indicators + ranked setups + position reviews
-  3. If any position has verdict "EXIT" → close it immediately via POST /signals/realtime
-  4. If no position and ranked_setups is non-empty → enter the top-ranked setup
-     with goal-aware sizing, ATR-based SL/TP, and trailing stop params
-  5. If holding a position and a new setup scores switch_threshold_pct higher → switch
-  6. Persist state (consecutive_losses, reentry_cooldown) to a JSON file
-
-This agent is launched from the Arena UI alongside the AI agent, giving a
-clean A/B comparison between deterministic strategy execution and AI-overlay.
+  2. Run crypto_scan.run_scan() for indicators + ranked setups + position reviews
+  3. Process exits (any position with verdict "EXIT" → close immediately)
+  4. Check max positions (3) — skip entries if at limit
+  5. Fill available slots from top-ranked setups with goal-aware sizing
+  6. Handle sector_concentration rejections (retry at half size)
+  7. Persist state (consecutive_losses, reentry_cooldown, position_entry_times)
 """
 
 import json
@@ -35,18 +35,14 @@ _AGENTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _AGENTS_DIR not in sys.path:
     sys.path.insert(0, _AGENTS_DIR)
 
-# workspace dir for scan.py
-_WORKSPACE_DIR = os.path.join(_AGENTS_DIR, "workspaces", "blitztrader")
-if _WORKSPACE_DIR not in sys.path:
-    sys.path.insert(0, _WORKSPACE_DIR)
-
-import scan_core
+import crypto_scan_core as scan_core
+import crypto_scan as scan_module
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
-logger = logging.getLogger("BlitzRunner")
+logger = logging.getLogger("CryptoRunner")
 handler = logging.StreamHandler()
-handler.setFormatter(logging.Formatter("[BlitzRunner] %(levelname)s: %(message)s"))
+handler.setFormatter(logging.Formatter("[CryptoRunner] %(levelname)s: %(message)s"))
 logger.handlers = [handler]
 logger.setLevel(logging.INFO)
 logger.propagate = False
@@ -54,8 +50,8 @@ logger.propagate = False
 
 # ── Constants ───────────────────────────────────────────────────────────
 API_BASE = "http://localhost:8000/api"
-STATE_FILE = os.path.join(_AGENTS_DIR, "blitz_runner_state.json")
-DEFAULT_POLL_INTERVAL = 120  # seconds
+STATE_FILE = os.path.join(_AGENTS_DIR, "crypto_runner_state.json")
+DEFAULT_POLL_INTERVAL = 1800  # 30 minutes
 
 
 # ============================================================
@@ -67,18 +63,19 @@ _DEFAULT_STATE = {
     "reentry_cooldown": {},  # symbol -> remaining cycles
     "last_cycle_time": None,
     "cycles_run": 0,
+    "position_entry_times": {},  # symbol -> ISO timestamp of entry
 }
 
 
 def load_state() -> dict:
-    """Load persisted state from JSON file."""
     try:
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 state = json.load(f)
-                # Merge with defaults to handle new fields
                 merged = dict(_DEFAULT_STATE)
                 merged.update(state)
+                if "position_entry_times" not in merged:
+                    merged["position_entry_times"] = {}
                 return merged
     except Exception as e:
         logger.warning(f"Could not load state file: {e}")
@@ -86,7 +83,6 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    """Persist state to JSON file."""
     try:
         with open(STATE_FILE, "w") as f:
             json.dump(state, f, indent=2)
@@ -99,7 +95,6 @@ def save_state(state: dict) -> None:
 # ============================================================
 
 def _api_get(token: str, path: str) -> dict:
-    """GET from API with auth token."""
     url = f"{API_BASE}{path}"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -107,7 +102,6 @@ def _api_get(token: str, path: str) -> dict:
 
 
 def _api_post(token: str, path: str, body: dict) -> dict:
-    """POST to API with auth token."""
     url = f"{API_BASE}{path}"
     data = json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method="POST", headers={
@@ -119,7 +113,6 @@ def _api_post(token: str, path: str, body: dict) -> dict:
 
 
 def _api_patch(token: str, path: str, body: dict) -> dict:
-    """PATCH to API with auth token."""
     url = f"{API_BASE}{path}"
     data = json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method="PATCH", headers={
@@ -157,8 +150,7 @@ def post_activity(token: str, text: str, market: str = "crypto", symbol: str = "
     post_discussion(token, text, market=market, symbol=symbol)
 
 
-def login(name: str = "BlitzRunner", password: str = "blitzrunner_pass_2026") -> Optional[str]:
-    """Login to the platform and return auth token."""
+def login(name: str = "CryptoRunner", password: str = "cryptorunner_pass_2026") -> Optional[str]:
     try:
         url = f"{API_BASE}/claw/agents/login"
         data = json.dumps({"name": name, "password": password, "client_type": "python_bot"}).encode()
@@ -173,13 +165,12 @@ def login(name: str = "BlitzRunner", password: str = "blitzrunner_pass_2026") ->
         return None
 
 
-def register(name: str = "BlitzRunner", password: str = "blitzrunner_pass_2026") -> Optional[str]:
-    """Register on the platform and return auth token."""
+def register(name: str = "CryptoRunner", password: str = "cryptorunner_pass_2026") -> Optional[str]:
     try:
         url = f"{API_BASE}/claw/agents/selfRegister"
         data = json.dumps({
             "name": name,
-            "email": "blitzrunner@agent.dev",
+            "email": "cryptorunner@agent.dev",
             "password": password,
         }).encode()
         req = urllib.request.Request(url, data=data, method="POST", headers={
@@ -194,15 +185,14 @@ def register(name: str = "BlitzRunner", password: str = "blitzrunner_pass_2026")
 
 
 def connect() -> Optional[str]:
-    """Try login first, then register as BlitzRunner."""
     token = login()
     if token:
-        logger.info("Logged in as BlitzRunner")
+        logger.info("Logged in as CryptoRunner")
         return token
     logger.info("Login failed, attempting registration...")
     token = register()
     if token:
-        logger.info("Registered as BlitzRunner")
+        logger.info("Registered as CryptoRunner")
     return token
 
 
@@ -211,7 +201,6 @@ def connect() -> Optional[str]:
 # ============================================================
 
 def fetch_goal_status(token: str) -> dict:
-    """Fetch goal status from API."""
     try:
         return _api_get(token, "/claw/agents/me/goal")
     except Exception as e:
@@ -220,16 +209,14 @@ def fetch_goal_status(token: str) -> dict:
 
 
 def fetch_config(token: str) -> dict:
-    """Fetch agent config (watchlist, poll_interval, max_positions)."""
     try:
         return _api_get(token, "/claw/agents/me/config")
     except Exception as e:
         logger.warning(f"Could not fetch config: {e}")
-        return {"watchlist": ["BTC", "ETH", "SOL"], "max_positions": 1, "poll_interval": DEFAULT_POLL_INTERVAL}
+        return {"watchlist": scan_core.CRYPTO_DEFAULT_PARAMS["watchlist"], "max_positions": 3, "poll_interval": DEFAULT_POLL_INTERVAL}
 
 
 def fetch_strategy_params(token: str) -> dict:
-    """Fetch strategy params from API."""
     try:
         data = _api_get(token, "/claw/agents/me/strategy-params")
         if isinstance(data, dict) and "strategy_params" in data:
@@ -241,7 +228,6 @@ def fetch_strategy_params(token: str) -> dict:
 
 
 def fetch_portfolio(token: str) -> dict:
-    """Fetch current portfolio (cash, positions, equity)."""
     try:
         return _api_get(token, "/positions")
     except Exception as e:
@@ -250,7 +236,6 @@ def fetch_portfolio(token: str) -> dict:
 
 
 def send_heartbeat(token: str) -> None:
-    """Send heartbeat to platform."""
     try:
         _api_post(token, "/claw/agents/heartbeat", {"status": "running"})
     except Exception:
@@ -258,11 +243,10 @@ def send_heartbeat(token: str) -> None:
 
 
 # ============================================================
-# Goal-Aware Sizing (ported from scan_backtester.py)
+# Goal-Aware Sizing
 # ============================================================
 
 def goal_progress(equity: float, initial_capital: float, goal_target: float) -> float:
-    """Return goal progress percentage (0-100+)."""
     if goal_target <= 0:
         return 0.0
     return ((equity - initial_capital) / goal_target) * 100
@@ -276,15 +260,14 @@ def sizing_pct(equity: float, initial_capital: float, goal_target: float,
     is_final_stretch = progress > 80.0
 
     if is_final_stretch:
-        lo = ps.get("approaching_sizing_min_pct", 15)
-        hi = ps.get("approaching_sizing_max_pct", 25)
+        lo = ps.get("approaching_sizing_min_pct", 8)
+        hi = ps.get("approaching_sizing_max_pct", 12)
     else:
-        lo = ps.get("normal_sizing_min_pct", 25)
-        hi = ps.get("normal_sizing_max_pct", 40)
+        lo = ps.get("normal_sizing_min_pct", 12)
+        hi = ps.get("normal_sizing_max_pct", 16)
 
     size_pct = (lo + hi) / 2.0
 
-    # Consecutive loss circuit breaker
     threshold = ps.get("consecutive_loss_threshold", 3)
     if consecutive_losses >= threshold:
         cut = ps.get("consecutive_loss_size_cut_pct", 50)
@@ -294,12 +277,11 @@ def sizing_pct(equity: float, initial_capital: float, goal_target: float,
 
 
 def min_signals_for_entry(consecutive_losses: int, params: dict) -> int:
-    """Return minimum signal count required for entry (raised after consecutive losses)."""
     ps = params.get("position_sizing", {})
     threshold = ps.get("consecutive_loss_threshold", 3)
     if consecutive_losses >= threshold:
-        return ps.get("consecutive_loss_min_signals", 5)
-    return params.get("entry_criteria", {}).get("min_signals", 4)
+        return ps.get("consecutive_loss_min_signals", 6)
+    return params.get("entry_criteria", {}).get("min_signals", 5)
 
 
 # ============================================================
@@ -308,7 +290,6 @@ def min_signals_for_entry(consecutive_losses: int, params: dict) -> int:
 
 def execute_close(token: str, symbol: str, side: str, quantity: float,
                   market: str, reason: str) -> bool:
-    """Close a position via POST /signals/realtime."""
     action = "sell" if side == "long" else "cover"
     try:
         body = {
@@ -318,11 +299,10 @@ def execute_close(token: str, symbol: str, side: str, quantity: float,
             "price": 0,
             "quantity": quantity,
             "executed_at": "now",
-            "content": f"[BlitzRunner] Auto-close: {reason}",
+            "content": f"[CryptoRunner] Auto-close: {reason}",
         }
         result = _api_post(token, "/signals/realtime", body)
         logger.info(f"CLOSED {symbol} ({side}) — {reason} — signal_id={result.get('signal_id')}")
-        post_activity(token, f"CLOSED {symbol} ({side}) — {reason}", symbol=symbol)
         return True
     except urllib.error.HTTPError as e:
         logger.error(f"Close failed for {symbol}: {e.code} {e.reason}")
@@ -335,8 +315,8 @@ def execute_close(token: str, symbol: str, side: str, quantity: float,
 def execute_entry(token: str, symbol: str, side: str, quantity: float,
                   market: str, stop_loss_price: float, take_profit_price: float,
                   trailing_sl_pct: float, trailing_activation_pct: float,
-                  reason: str) -> bool:
-    """Enter a new position via POST /signals/realtime with SL/TP/trailing."""
+                  reason: str) -> dict:
+    """Enter a new position. Returns result dict (may contain error)."""
     action = "buy" if side == "long" else "short"
     try:
         body = {
@@ -350,74 +330,53 @@ def execute_entry(token: str, symbol: str, side: str, quantity: float,
             "take_profit_price": round(take_profit_price, 6),
             "trailing_sl_pct": trailing_sl_pct,
             "trailing_activation_pct": trailing_activation_pct,
-            "content": f"[BlitzRunner] {reason}",
+            "content": f"[CryptoRunner] {reason}",
         }
         result = _api_post(token, "/signals/realtime", body)
         logger.info(f"ENTERED {symbol} ({side}) — qty={quantity:.6f} — SL={stop_loss_price:.4f} TP={take_profit_price:.4f} — signal_id={result.get('signal_id')}")
-        post_activity(token, f"ENTERED {symbol} ({side}) — qty={quantity:.4f} — SL={stop_loss_price:.4f} TP={take_profit_price:.4f}", symbol=symbol)
-        return True
+        return result
     except urllib.error.HTTPError as e:
-        logger.error(f"Entry failed for {symbol}: {e.code} {e.reason}")
-        return False
+        detail = ""
+        try:
+            detail = e.read().decode()
+        except Exception:
+            pass
+        logger.error(f"Entry failed for {symbol}: {e.code} {e.reason} — {detail}")
+        return {"error": f"HTTP {e.code}: {e.reason}", "detail": detail}
     except Exception as e:
         logger.error(f"Entry failed for {symbol}: {e}")
-        return False
+        return {"error": str(e)}
+
+
+def publish_strategy(token: str, symbol: str, side: str, action: str,
+                     score: float, signals: int, families: int, reason: str) -> None:
+    """Publish trade reasoning via POST /api/signals/strategy."""
+    try:
+        body = {
+            "symbol": symbol,
+            "side": side,
+            "action": action,
+            "content": f"[CryptoRunner] {reason} | score={score:.1f} signals={signals} families={families}",
+            "strategy_type": "crypto_swing",
+        }
+        _api_post(token, "/signals/strategy", body)
+    except Exception:
+        pass
 
 
 # ============================================================
-# ATR-based SL/TP computation
-# ============================================================
-
-def compute_atr_sl_tp(entry_price: float, side: str, scan_data: dict,
-                      params: dict) -> tuple[float, float, float, float]:
-    """Compute ATR-based stop-loss, take-profit, and trailing stop params.
-
-    Returns (stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct).
-    """
-    exit_cfg = params.get("exit_rules", {})
-    indicators = scan_data.get("indicators", {})
-    atr = indicators.get("atr_14", 0)
-
-    # Fallback: use 2% of entry price as ATR proxy
-    if atr <= 0:
-        atr = entry_price * 0.02
-
-    # SL = 1.5x ATR, TP = 3x ATR (2:1 reward/risk per INSTRUCTIONS.md)
-    sl_distance = 1.5 * atr
-    tp_distance = 3.0 * atr
-
-    if side == "long":
-        stop_loss_price = entry_price - sl_distance
-        take_profit_price = entry_price + tp_distance
-    else:
-        stop_loss_price = entry_price + sl_distance
-        take_profit_price = entry_price - tp_distance
-
-    # Trailing stop from strategy params
-    trail_sl_pct = exit_cfg.get("trailing_sl_pct", 1.0)
-    trail_act_pct = exit_cfg.get("trailing_activation_pct", 1.0)
-
-    return stop_loss_price, take_profit_price, trail_sl_pct, trail_act_pct
-
-
-# ============================================================
-# Market classification
+# Market Classification
 # ============================================================
 
 def _classify_market(symbol: str) -> str:
-    """Classify symbol into market type for the API."""
-    crypto_symbols = {"BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "ADA", "LINK", "DOT", "LTC",
-                      "UNI", "ATOM", "NEAR", "ARB", "OP"}
-    if symbol.upper() in crypto_symbols:
-        return "crypto"
-    return "us-stock"
+    return "crypto"
 
 
 # ============================================================
 # Main Cycle
 # ============================================================
 
-def run_cycle(token: str, state: dict, params: dict) -> dict:
+def run_cycle(token: str, state: dict, params: dict, poll_interval: int) -> dict:
     """Execute one deterministic trading cycle. Returns updated state."""
 
     # 1. Fetch goal status
@@ -425,7 +384,6 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     can_trade = goal.get("can_trade", True)
     goal_achieved = goal.get("goal_achieved", False)
     max_loss_hit = goal.get("max_loss_hit", False)
-    progress_pct = goal.get("progress_pct", 0)
 
     if max_loss_hit:
         logger.warning("Max loss hit — not trading. Waiting for user reset.")
@@ -437,7 +395,6 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     cash = float(portfolio.get("cash", 100000.0))
     positions = portfolio.get("positions", [])
 
-    # Compute current equity
     equity = cash
     for p in positions:
         qty = abs(float(p.get("quantity", 0)))
@@ -449,15 +406,15 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
             equity -= qty * price
 
     initial_capital = 100000.0
-    goal_target = 1000.0  # default; could fetch from goal config
+    goal_target = 1000.0
 
-    # 3. Run scan.py run_scan() for indicators + setups + position reviews
-    # Import here to avoid heavy yfinance import at module load
-    sys.path.insert(0, _WORKSPACE_DIR)
-    import scan as scan_module
-
-    post_activity(token, f"Cycle {state.get('cycles_run', 0) + 1}: scanning {len(params.get('watchlist', []))} symbols for setups...")
-    scan_result = scan_module.run_scan(token=token)
+    # 3. Run scan for indicators + setups + position reviews
+    post_activity(token, f"Cycle {state.get('cycles_run', 0) + 1}: scanning {len(params.get('watchlist', []))} crypto symbols for setups...")
+    scan_result = scan_module.run_scan(
+        token=token,
+        position_entry_times=state.get("position_entry_times", {}),
+        poll_interval=poll_interval,
+    )
 
     # 4. Process exits first (deterministic — no judgment)
     for pos_review in scan_result.get("positions", []):
@@ -474,17 +431,20 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
             success = execute_close(token, symbol, side, qty, market, exit_reason)
 
             if success:
-                # Update consecutive losses
                 pnl_pct = pos_review.get("pnl_pct", 0)
                 if pnl_pct > 0:
                     state["consecutive_losses"] = 0
                 else:
                     state["consecutive_losses"] = state.get("consecutive_losses", 0) + 1
 
-                # Set reentry cooldown
+                # Set reentry cooldown (convert hours to cycles)
                 switch_cfg = params.get("switch_logic", {})
-                cooldown_cycles = switch_cfg.get("reentry_cooldown_cycles", 3)
+                cooldown_hours = switch_cfg.get("reentry_cooldown_hours", 8)
+                cooldown_cycles = scan_core.hours_to_cycles(cooldown_hours, poll_interval)
                 state["reentry_cooldown"][symbol] = cooldown_cycles
+
+                # Clear entry time
+                state.get("position_entry_times", {}).pop(symbol, None)
                 post_activity(token, f"EXIT {symbol} ({side}) — {exit_reason} — pnl_pct={pnl_pct:.1f}%", symbol=symbol)
 
     # 5. Decrement reentry cooldowns
@@ -496,7 +456,7 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
 
     # 6. Check if we can enter new positions
     open_position_count = scan_result.get("open_position_count", len(positions))
-    max_positions = params.get("position_sizing", {}).get("max_positions", 1)
+    max_positions = params.get("position_sizing", {}).get("max_positions", 3)
     max_positions_reached = open_position_count >= max_positions
 
     if not can_trade or goal_achieved or max_positions_reached:
@@ -509,7 +469,6 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     min_signals = min_signals_for_entry(state.get("consecutive_losses", 0), params)
     post_activity(token, f"Scan complete: {len(ranked_setups)} ranked setups, {open_position_count} open positions, equity=${equity:.0f}")
 
-    # Filter by raised signal bar after consecutive losses
     filtered_setups = []
     for setup in ranked_setups:
         sym = setup["symbol"]
@@ -520,73 +479,26 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
                 continue
         filtered_setups.append(setup)
 
-    # 8. Switch logic (single-position model)
-    switch_cfg = params.get("switch_logic", {})
-    switch_threshold_pct = switch_cfg.get("switch_score_threshold_pct", 20)
-    switch_require_profitable = switch_cfg.get("switch_require_profitable", True)
-
-    if max_positions == 1 and open_position_count == 1 and switch_threshold_pct > 0 and filtered_setups:
-        current_pos = positions[0] if positions else None
-        if current_pos:
-            pos_sym = current_pos.get("symbol", "")
-            pos_side = current_pos.get("side", "long")
-            entry_price = float(current_pos.get("entry_price", 0))
-            current_price = float(current_pos.get("current_price", 0)) or entry_price
-            entry_score = float(current_pos.get("entry_score", 0))
-
-            best = filtered_setups[0]
-            if entry_score > 0 and best["symbol"] != pos_sym:
-                improvement = ((best["score"] - entry_score) / entry_score) * 100
-
-                can_switch = True
-                if switch_require_profitable:
-                    if pos_side == "long":
-                        can_switch = current_price > entry_price
-                    else:
-                        can_switch = current_price < entry_price
-
-                if improvement > switch_threshold_pct and can_switch:
-                    qty = abs(float(current_pos.get("quantity", 0)))
-                    market = _classify_market(pos_sym)
-                    logger.info(f"SWITCH: {pos_sym} → {best['symbol']} (improvement={improvement:.1f}%)")
-                    post_activity(token, f"SWITCH: {pos_sym} → {best['symbol']} (improvement={improvement:.1f}%)", symbol=best['symbol'])
-                    success = execute_close(token, pos_sym, pos_side, qty, market, f"switch_to_{best['symbol']}")
-
-                    if success:
-                        # Update consecutive losses for the switch close
-                        if pos_side == "long":
-                            pnl = (current_price - entry_price) * qty
-                        else:
-                            pnl = (entry_price - current_price) * qty
-                        if pnl > 0:
-                            state["consecutive_losses"] = 0
-                        else:
-                            state["consecutive_losses"] = state.get("consecutive_losses", 0) + 1
-
-                        cooldown_cycles = switch_cfg.get("reentry_cooldown_cycles", 3)
-                        state["reentry_cooldown"][pos_sym] = cooldown_cycles
-
-                        # Enter the new setup
-                        best_sym = best["symbol"]
-                        if best_sym not in state["reentry_cooldown"]:
-                            _enter_from_setup(token, best, scan_result, state, params, equity, initial_capital, goal_target)
-                    return state
-
-    # 9. Entry logic — fill available slots
+    # 8. Entry logic — fill available slots (up to 3)
     available_slots = max_positions - open_position_count
     if available_slots > 0:
+        held_symbols = {p.get("symbol", "").upper() for p in positions}
         for setup in filtered_setups:
             if available_slots <= 0:
                 break
             sym = setup["symbol"]
             if sym in state["reentry_cooldown"]:
                 continue
-            if any(p.get("symbol", "").upper() == sym.upper() for p in positions):
+            if sym.upper() in held_symbols:
                 continue
 
             entered = _enter_from_setup(token, setup, scan_result, state, params, equity, initial_capital, goal_target)
             if entered:
                 available_slots -= 1
+                # Record entry time for bars_held tracking
+                if "position_entry_times" not in state:
+                    state["position_entry_times"] = {}
+                state["position_entry_times"][sym] = datetime.now(timezone.utc).isoformat()
 
     if available_slots == max_positions - open_position_count:
         post_activity(token, f"No entries this cycle — {len(filtered_setups)} setups found but none eligible (cooldowns/already held)")
@@ -597,12 +509,14 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
 def _enter_from_setup(token: str, setup: dict, scan_result: dict, state: dict,
                       params: dict, equity: float, initial_capital: float,
                       goal_target: float) -> bool:
-    """Enter a position from a ranked setup. Returns True if entry succeeded."""
+    """Enter a position from a ranked setup. Returns True if entry succeeded.
+
+    Handles sector_concentration rejection by retrying once at half size.
+    """
     symbol = setup["symbol"]
     side = setup.get("direction", "long")
     market = _classify_market(symbol)
 
-    # Get scan data for this symbol (for ATR)
     sym_data = scan_result.get("symbols", {}).get(symbol, {})
     if not sym_data or sym_data.get("error"):
         logger.warning(f"Scan data missing for {symbol}, skipping entry")
@@ -617,39 +531,69 @@ def _enter_from_setup(token: str, setup: dict, scan_result: dict, state: dict,
     ps_cfg = params.get("position_sizing", {})
     notional = equity * (size_pct / 100.0)
 
-    # Apply dollar cap if configured
     max_dollar = ps_cfg.get("max_position_dollar_cap")
     if max_dollar is not None and notional > max_dollar:
         notional = max_dollar
 
-    # Get current price from scan data
     entry_price = sym_data.get("price", 0)
     if entry_price <= 0:
         logger.warning(f"No price for {symbol}, skipping entry")
         return False
 
-    # Compute quantity
     qty = notional / entry_price
     if qty <= 0:
         return False
 
-    # Compute ATR-based SL/TP and trailing params
-    sl_price, tp_price, trail_sl_pct, trail_act_pct = compute_atr_sl_tp(
+    # Compute ATR-based SL/TP with clamping
+    sl_price, tp_price, trail_sl_pct, trail_act_pct = scan_core.compute_atr_sl_tp(
         entry_price, side, sym_data, params
     )
 
-    # Build reason string
-    sig_count = sym_data.get("signal_count", {}).get("bullish", 0)
-    score = setup.get("score", 0)
-    reason = f"Auto-entry: {side} {symbol} | score={score:.1f} signals={sig_count} size={size_pct:.1f}%"
+    # Final stretch TP override
+    if is_final_stretch:
+        final_tp_pct = ps_cfg.get("final_stretch_tp_pct", 5.0)
+        if side == "long":
+            tp_price = entry_price * (1 + final_tp_pct / 100.0)
+        else:
+            tp_price = entry_price * (1 - final_tp_pct / 100.0)
 
-    success = execute_entry(
+    sig_count = sym_data.get("signal_count", {}).get("bullish", 0)
+    families_count = len(sym_data.get("families_represented", []))
+    score = setup.get("score", 0)
+    reason = f"Auto-entry: {side} {symbol} | score={score:.1f} signals={sig_count} families={families_count} size={size_pct:.1f}%"
+
+    result = execute_entry(
         token, symbol, side, qty, market,
         sl_price, tp_price, trail_sl_pct, trail_act_pct,
         reason
     )
 
-    return success
+    # Check for sector_concentration rejection — retry at half size
+    if isinstance(result, dict) and "error" in result:
+        detail = str(result.get("detail", "")).lower()
+        if "sector_concentration" in detail or "concentration" in detail:
+            logger.warning(f"Sector concentration rejected for {symbol}, retrying at half size...")
+            half_qty = qty / 2.0
+            if half_qty > 0:
+                result = execute_entry(
+                    token, symbol, side, half_qty, market,
+                    sl_price, tp_price, trail_sl_pct, trail_act_pct,
+                    reason + " (half-size retry)"
+                )
+                if isinstance(result, dict) and "error" not in result:
+                    logger.info(f"Half-size entry succeeded for {symbol}")
+                    publish_strategy(token, symbol, side, "buy" if side == "long" else "short",
+                                     score, sig_count, families_count, reason + " (half-size)")
+                    return True
+            logger.warning(f"Half-size retry also failed for {symbol}, skipping")
+            return False
+        return False
+
+    # Publish strategy reasoning
+    publish_strategy(token, symbol, side, "buy" if side == "long" else "short",
+                     score, sig_count, families_count, reason)
+    post_activity(token, f"ENTERED {symbol} ({side}) — qty={qty:.4f} — SL={sl_price:.4f} TP={tp_price:.4f} — score={score:.1f}", symbol=symbol)
+    return True
 
 
 # ============================================================
@@ -671,23 +615,23 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
     while not stop_event.is_set():
         cycle += 1
         cycle_start = time.time()
+        live_poll = poll_interval
 
         try:
             # Fetch live config for poll interval
             config = fetch_config(token)
             live_poll = config.get("poll_interval", poll_interval)
 
-            # Fetch strategy params
+            # Fetch strategy params and merge with defaults
             params = fetch_strategy_params(token)
-            # Merge with defaults
-            params = scan_core.deep_merge(dict(scan_core.DEFAULT_PARAMS), params)
+            params = scan_core.deep_merge(dict(scan_core.CRYPTO_DEFAULT_PARAMS), params)
 
             # Override watchlist from config if present
             if config.get("watchlist"):
                 params["watchlist"] = config["watchlist"]
 
             # Run the cycle
-            state = run_cycle(token, state, params)
+            state = run_cycle(token, state, params, live_poll)
 
             # Send heartbeat
             send_heartbeat(token)
@@ -704,13 +648,12 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
             logger.error(f"Cycle {cycle} error: {e}", exc_info=True)
 
         # Sleep in small increments so we can respond to stop signal
-        sleep_secs = live_poll if 'live_poll' in dir() else poll_interval
-        for _ in range(sleep_secs):
+        for _ in range(live_poll):
             if stop_event.is_set():
                 break
             time.sleep(1)
 
-    logger.info(f"BlitzRunner stopped after {cycle} cycles.")
+    logger.info(f"CryptoRunner stopped after {cycle} cycles.")
 
 
 # ============================================================
@@ -718,13 +661,13 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
 # ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="BlitzRunner — Deterministic Goal Runner Agent")
+    parser = argparse.ArgumentParser(description="CryptoRunner — Deterministic Crypto Swing/Trend Bot")
     parser.add_argument("--interval", type=int, default=DEFAULT_POLL_INTERVAL, help="Poll interval in seconds")
     parser.add_argument("--cycles", type=int, default=0, help="Max cycles (0 = infinite)")
     args = parser.parse_args()
 
     print(f"\n{'='*60}")
-    print(f"  BlitzRunner — Deterministic Goal Runner")
+    print(f"  CryptoRunner — Deterministic Crypto Swing/Trend Bot")
     print(f"{'='*60}")
     print(f"  API: {API_BASE}")
     print(f"  Poll interval: {args.interval}s")
@@ -734,7 +677,7 @@ def main():
     stop_event = threading.Event()
 
     def signal_handler(sig, frame):
-        print(f"\nStopping BlitzRunner...")
+        print(f"\nStopping CryptoRunner...")
         stop_event.set()
 
     import signal as _signal

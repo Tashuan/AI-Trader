@@ -178,3 +178,59 @@ def get_runner_status() -> dict:
             _bots.pop(_RUNNER_KEY, None)
             return {"running": False, "pid": None, "thread": None, "bot_type": "runner"}
         return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner"}
+
+
+# ── CryptoRunner management ────────────────────────────────────────────
+
+_CRYPTO_RUNNER_KEY = "cryptorunner-runner"
+
+
+def start_crypto_runner(agents_dir: str, poll_interval: int = 1800) -> dict:
+    """Start the deterministic CryptoRunner bot in a thread."""
+    with _lock:
+        existing = _bots.get(_CRYPTO_RUNNER_KEY)
+        if existing and existing.thread.is_alive():
+            return {"success": False, "message": "CryptoRunner is already running"}
+
+        try:
+            import time
+            _ensure_agents_path(agents_dir)
+            from crypto_runner import run_loop
+
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=run_loop,
+                args=(stop_event, poll_interval),
+                name="ManagedRunner-cryptorunner",
+                daemon=True,
+            )
+            thread.start()
+            _bots[_CRYPTO_RUNNER_KEY] = ManagedBot(
+                agent_key=_CRYPTO_RUNNER_KEY,
+                thread=thread,
+                stop_event=stop_event,
+                started_at=time.time(),
+                bot_type="runner",
+            )
+            return {
+                "success": True,
+                "message": "Started CryptoRunner (deterministic crypto swing bot)",
+                "thread": thread.name,
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed to start crypto runner: {e}"}
+
+
+def stop_crypto_runner() -> dict:
+    """Stop the deterministic CryptoRunner bot."""
+    return stop_bot(_CRYPTO_RUNNER_KEY)
+
+
+def get_crypto_runner_status() -> dict:
+    """Get the status of the CryptoRunner bot."""
+    with _lock:
+        bot = _bots.get(_CRYPTO_RUNNER_KEY)
+        if not bot or not bot.thread.is_alive():
+            _bots.pop(_CRYPTO_RUNNER_KEY, None)
+            return {"running": False, "pid": None, "thread": None, "bot_type": "runner"}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner"}

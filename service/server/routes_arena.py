@@ -58,6 +58,9 @@ from bot_manager import (
     start_runner,
     stop_runner,
     get_runner_status,
+    start_crypto_runner,
+    stop_crypto_runner,
+    get_crypto_runner_status,
 )
 
 
@@ -458,6 +461,25 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/arena/runner/status")
     async def arena_runner_status():
         return get_runner_status()
+
+    # ── CryptoRunner endpoints ──────────────────────────────────────
+
+    @app.post("/api/arena/crypto-runner/start")
+    async def arena_start_crypto_runner():
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        agents_dir = os.path.join(project_root, "agents")
+        result = start_crypto_runner(agents_dir)
+        status_code = 200 if result["success"] else 409
+        return result
+
+    @app.post("/api/arena/crypto-runner/stop")
+    async def arena_stop_crypto_runner():
+        result = stop_crypto_runner()
+        return result
+
+    @app.get("/api/arena/crypto-runner/status")
+    async def arena_crypto_runner_status():
+        return get_crypto_runner_status()
 
     @app.post("/api/arena/agent/{agent_id}/disconnect")
     async def arena_disconnect_agent(agent_id: int):
@@ -1196,6 +1218,8 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             # Check if this agent has a running bot or runner
             is_bot_running = bot_statuses.get(name.lower(), {}).get("running", False)
             if name == "BlitzRunner" and get_runner_status().get("running", False):
+                is_bot_running = True
+            if name == "CryptoRunner" and get_crypto_runner_status().get("running", False):
                 is_bot_running = True
 
             agents.append({

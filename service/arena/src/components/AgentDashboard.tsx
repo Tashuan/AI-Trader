@@ -358,7 +358,7 @@ export function AgentDashboard({ agents }: AgentDashboardProps) {
                     <div key={i} className="flex items-center justify-between text-[11px] py-1.5 px-2 rounded bg-arena-bg/50">
                       <div className="flex items-center gap-2">
                         <span className={`text-[9px] font-mono font-bold ${t.side === 'long' ? 'text-arena-green' : 'text-arena-red'}`}>
-                          {t.side.toUpperCase()}
+                          {(t.side || '—').toUpperCase()}
                         </span>
                         <span className="font-mono text-white">{t.symbol}</span>
                         <span className="text-[9px] text-arena-text-dim">{t.signal_type}</span>
