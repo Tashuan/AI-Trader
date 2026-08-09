@@ -133,3 +133,6 @@ change.md
 
 # Local agent config symlink
 .codex
+
+# Runtime data caches
+.data_cache/
