@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "RIOT",
+  "interval": "30m",
+  "start": "2025-07-30",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 3501,
+  "cached_at": "2026-08-09T14:40:21.617160+00:00"
+}

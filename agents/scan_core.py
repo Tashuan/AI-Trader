@@ -44,6 +44,7 @@ DEFAULT_PARAMS: dict[str, Any] = {
         "min_vol_ratio": 1.5,
         "bearish_macro_min_signals": 5,
         "bearish_macro_threshold": 0.3,
+        "block_on_obv_divergence": True,
     },
     "position_sizing": {
         "max_positions": 1,
@@ -533,6 +534,7 @@ def deep_scan_from_precomputed(symbol: str, pre: dict[str, Any], bar_idx: int, p
     min_signals = entry_cfg.get("min_signals", 4)
     min_families = entry_cfg.get("min_signal_families", 2)
     min_vol = entry_cfg.get("min_vol_ratio", 1.5)
+    block_on_obv_div = entry_cfg.get("block_on_obv_divergence", True)
 
     direction = "long" if bullish_count > bearish_count else "short"
     directional_count = max(bullish_count, bearish_count)
@@ -540,7 +542,7 @@ def deep_scan_from_precomputed(symbol: str, pre: dict[str, Any], bar_idx: int, p
         directional_count >= min_signals
         and len(families) >= min_families
         and vol_ratio > min_vol
-        and not obv_div
+        and not (block_on_obv_div and obv_div)
     )
 
     weights = params.get("scoring_weights", {})
@@ -712,15 +714,16 @@ def deep_scan_symbol_from_df(symbol: str, df: pd.DataFrame, params: dict[str, An
     min_signals = entry_cfg.get("min_signals", 4)
     min_families = entry_cfg.get("min_signal_families", 2)
     min_vol = entry_cfg.get("min_vol_ratio", 1.5)
-
-    qualifies = (
-        bullish_count >= min_signals
-        and len(families) >= min_families
-        and vol_ratio > min_vol
-        and not obv_div
-    )
+    block_on_obv_div = entry_cfg.get("block_on_obv_divergence", True)
 
     direction = "long" if bullish_count > bearish_count else "short"
+    directional_count = max(bullish_count, bearish_count)
+    qualifies = (
+        directional_count >= min_signals
+        and len(families) >= min_families
+        and vol_ratio > min_vol
+        and not (block_on_obv_div and obv_div)
+    )
 
     weights = params.get("scoring_weights", {})
     signal_count_score = max(bullish_count, bearish_count) / 13.0

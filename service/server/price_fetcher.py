@@ -896,6 +896,33 @@ def _get_alphavantage_fx_price(pair: str, executed_at: str) -> Optional[float]:
     return None
 
 
+def _get_schwab_stock_price(symbol: str) -> Optional[float]:
+    """Fetch real-time stock price from Schwab API (if configured).
+
+    Returns the last trade price, or None if Schwab is not configured
+    or the fetch fails. This is the preferred source for ScalpRunner
+    pending order fills because it's real-time (vs yfinance's 15-min delay).
+    """
+    if not os.environ.get("SCHWAB_CLIENT_ID"):
+        return None
+    try:
+        import sys
+        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "agents")
+        if agents_dir not in sys.path:
+            sys.path.insert(0, agents_dir)
+        from schwab_provider import get_schwab_provider
+
+        provider = get_schwab_provider()
+        if not provider.is_configured:
+            return None
+        quote = provider.quote(symbol)
+        if quote and quote.get("last", 0) > 0:
+            return float(quote["last"])
+    except Exception as e:
+        _price_log(f"[Price API] Schwab fetch failed for {symbol}: {e}")
+    return None
+
+
 def get_price_from_market(
     symbol: str,
     executed_at: str,
@@ -936,12 +963,16 @@ def get_price_from_market(
             price = _get_polymarket_mid_price(symbol, token_id=token_id, outcome=outcome)
         elif market == "us-stock":
             price = None
-            if ALPHA_VANTAGE_API_KEY and ALPHA_VANTAGE_API_KEY != "demo":
+            # Try Schwab first (real-time, if configured)
+            schwab_price = _get_schwab_stock_price(symbol)
+            if schwab_price is not None:
+                price = schwab_price
+            elif ALPHA_VANTAGE_API_KEY and ALPHA_VANTAGE_API_KEY != "demo":
                 price = _get_us_stock_price(symbol, executed_at)
             else:
                 _price_log("Warning: ALPHA_VANTAGE_API_KEY not set, trying yfinance fallback")
             if price is None:
-                _price_log(f"[Price API] Alpha Vantage unavailable for {symbol}; trying yfinance fallback")
+                _price_log(f"[Price API] Schwab/Alpha Vantage unavailable for {symbol}; trying yfinance fallback")
                 price = _get_yfinance_us_stock_price(symbol, executed_at)
         elif market == "forex":
             price = _get_forex_price(symbol, executed_at)

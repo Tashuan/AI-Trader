@@ -61,6 +61,9 @@ from bot_manager import (
     start_crypto_runner,
     stop_crypto_runner,
     get_crypto_runner_status,
+    start_scalp_runner,
+    stop_scalp_runner,
+    get_scalp_runner_status,
 )
 
 
@@ -489,6 +492,29 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/arena/crypto-runner/status")
     async def arena_crypto_runner_status():
         return get_crypto_runner_status()
+
+    # ── ScalpRunner endpoints ───────────────────────────────────────
+
+    @app.post("/api/arena/scalp-runner/start")
+    async def arena_start_scalp_runner():
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        agents_dir = os.path.join(project_root, "agents")
+        result = start_scalp_runner(agents_dir)
+        if result.get("success"):
+            await asyncio.sleep(0.5)
+            status = get_scalp_runner_status()
+            if not status["running"] and status.get("last_error"):
+                return {"success": False, "message": f"ScalpRunner crashed on startup", "error": status["last_error"]}
+        return result
+
+    @app.post("/api/arena/scalp-runner/stop")
+    async def arena_stop_scalp_runner():
+        result = stop_scalp_runner()
+        return result
+
+    @app.get("/api/arena/scalp-runner/status")
+    async def arena_scalp_runner_status():
+        return get_scalp_runner_status()
 
     @app.post("/api/arena/agent/{agent_id}/disconnect")
     async def arena_disconnect_agent(agent_id: int):

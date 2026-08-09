@@ -47,6 +47,10 @@ from crypto_data_providers import (  # noqa: E402
     CryptoFallbackProvider,
 )
 
+# Re-export Schwab provider for equities/futures real-time data:
+#   from market_data import SchwabProvider
+from schwab_provider import SchwabProvider, get_schwab_provider  # noqa: E402
+
 
 # ============================================================
 # Technical Analysis Data Structure

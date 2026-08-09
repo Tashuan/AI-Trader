@@ -1770,10 +1770,208 @@ async def limit_order_processor_loop():
         await asyncio.sleep(_env_int("LIMIT_ORDER_CHECK_INTERVAL", 15, minimum=5))
 
 
+async def pending_order_filler_loop():
+    """Background task to check pending stop-limit orders against live prices.
+
+    Every 5 seconds:
+    1. Fetch all PENDING orders that haven't expired
+    2. Fetch current prices for all unique symbols
+    3. For each order, check if stop_price has been touched
+    4. On fill: create position with SL/TP, mark as FILLED
+    5. On expiry: mark as EXPIRED
+    """
+    from database import get_db_connection
+    from services import _update_position_from_signal, _reserve_signal_id
+    from price_fetcher import get_price_from_market
+    from routes_shared import normalize_market
+    from fees import compute_fill_price, TRADE_FEE_RATE
+
+    await asyncio.sleep(_env_int("PENDING_ORDER_STARTUP_DELAY_SECONDS", 35, minimum=0))
+
+    while True:
+        try:
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, agent_id, symbol, market, side, order_type,
+                           stop_price, limit_price, quantity, stop_loss_price,
+                           take_profit_price, trailing_sl_pct,
+                           trailing_activation_pct, expires_at, entry_score
+                    FROM pending_orders
+                    WHERE status = 'PENDING'
+                      AND datetime(expires_at) > datetime('now')
+                """)
+                orders = cursor.fetchall()
+            finally:
+                conn.close()
+
+            if not orders:
+                await asyncio.sleep(_env_int("PENDING_ORDER_CHECK_INTERVAL", 5, minimum=3))
+                continue
+
+            # Batch fetch prices for all unique symbols
+            symbols = list({o["symbol"] for o in orders})
+            prices: dict[str, float] = {}
+            now_utc = datetime.now(timezone.utc)
+            executed_at_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+            for sym in symbols:
+                try:
+                    price = await asyncio.to_thread(
+                        get_price_from_market, sym, executed_at_str, "us-stock", None, None,
+                    )
+                    if price is not None:
+                        prices[sym] = float(price)
+                except Exception:
+                    pass
+
+            filled_count = 0
+            for order in orders:
+                symbol = order["symbol"]
+                current_price = prices.get(symbol)
+                if current_price is None:
+                    continue
+
+                stop_price = order["stop_price"]
+                side = order["side"]
+                order_type = order["order_type"]
+                limit_price = order["limit_price"]
+                qty = order["quantity"]
+
+                # Check if stop price has been touched
+                would_fill = False
+                if side == "long":
+                    would_fill = current_price >= stop_price
+                elif side == "short":
+                    would_fill = current_price <= stop_price
+
+                if not would_fill:
+                    continue
+
+                # Determine fill price
+                if order_type == "stop_limit" and limit_price is not None:
+                    if side == "long":
+                        fill_price = min(limit_price, current_price)
+                    else:
+                        fill_price = max(limit_price, current_price)
+                else:
+                    fill_price = current_price
+
+                # Compute realistic fill with fees
+                order_value = fill_price * qty
+                fill_price = compute_fill_price(
+                    mid_price=fill_price, action="buy" if side == "long" else "short",
+                    market=order["market"], symbol=symbol, order_value=order_value,
+                )
+                trade_value = fill_price * qty
+                fee = trade_value * TRADE_FEE_RATE
+
+                # Execute the fill
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    begin_write_transaction(cursor)
+
+                    action = "buy" if side == "long" else "short"
+                    # Check cash
+                    cursor.execute("SELECT cash FROM agents WHERE id = ?", (order["agent_id"],))
+                    row = cursor.fetchone()
+                    if row and row["cash"] < trade_value + fee:
+                        print(f"[Pending Order] Insufficient cash for {symbol} order {order['id']}")
+                        conn.rollback()
+                        continue
+
+                    _update_position_from_signal(
+                        agent_id=order["agent_id"],
+                        symbol=symbol,
+                        market=order["market"],
+                        action=action,
+                        quantity=qty,
+                        price=fill_price,
+                        executed_at=executed_at_str,
+                        cursor=cursor,
+                        token_id=None,
+                        outcome=None,
+                        stop_loss_price=order["stop_loss_price"],
+                        take_profit_price=order["take_profit_price"],
+                    )
+
+                    # Update cash
+                    cursor.execute(
+                        "UPDATE agents SET cash = cash - ? WHERE id = ?",
+                        (trade_value + fee, order["agent_id"]),
+                    )
+
+                    # Mark order as filled
+                    cursor.execute(
+                        """UPDATE pending_orders
+                           SET status = 'FILLED', filled_at = datetime('now'),
+                               filled_price = ?
+                           WHERE id = ?""",
+                        (fill_price, order["id"]),
+                    )
+
+                    # Log signal
+                    signal_id = _reserve_signal_id(cursor)
+                    cursor.execute(
+                        """INSERT INTO signals
+                            (signal_id, agent_id, message_type, market, signal_type, symbol,
+                             side, entry_price, quantity, content, timestamp, created_at, executed_at)
+                           VALUES (?, ?, 'operation', ?, 'pending_fill', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (signal_id, order["agent_id"], order["market"], symbol,
+                         side, fill_price, qty,
+                         f"[ScalpRunner] Pending order filled: {symbol} {side} @ {fill_price}",
+                         int(now_utc.timestamp()), now_utc.isoformat(), executed_at_str),
+                    )
+
+                    # Link signal to order
+                    cursor.execute(
+                        "UPDATE pending_orders SET signal_id = ? WHERE id = ?",
+                        (signal_id, order["id"]),
+                    )
+
+                    conn.commit()
+                    filled_count += 1
+                    print(f"[Pending Order] Filled {symbol} {side} {qty} @ {fill_price} (stop {stop_price})")
+                except Exception as exc:
+                    conn.rollback()
+                    print(f"[Pending Order] Fill failed for {symbol} order {order['id']}: {exc}")
+                finally:
+                    conn.close()
+
+            # Mark expired orders
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """UPDATE pending_orders
+                       SET status = 'EXPIRED'
+                       WHERE status = 'PENDING'
+                         AND datetime(expires_at) <= datetime('now')"""
+                )
+                expired_count = cursor.rowcount if cursor.rowcount > 0 else 0
+                conn.commit()
+            except Exception:
+                conn.rollback()
+            finally:
+                conn.close()
+
+            if filled_count:
+                print(f"[Pending Order] Processed {filled_count} fill(s) this cycle")
+            if expired_count:
+                print(f"[Pending Order] Expired {expired_count} order(s) this cycle")
+
+        except Exception as e:
+            print(f"[Pending Order Filler Error] {e}")
+
+        await asyncio.sleep(_env_int("PENDING_ORDER_CHECK_INTERVAL", 5, minimum=3))
+
+
 BACKGROUND_TASK_REGISTRY = {
     "prices": update_position_prices,
     "auto_close": auto_close_positions_loop,
     "limit_orders": limit_order_processor_loop,
+    "pending_orders": pending_order_filler_loop,
     "profit_history": record_profit_history,
     "polymarket_settlement": settle_polymarket_positions,
     "challenge_settlement": settle_challenges_loop,

@@ -1,0 +1,10 @@
+{
+  "provider": "YFinanceProvider",
+  "symbol": "ARB-USD",
+  "interval": "1h",
+  "start": "2025-06-25",
+  "end": "2026-08-10",
+  "period": "1mo",
+  "rows": 9718,
+  "cached_at": "2026-08-09T17:58:18.237298+00:00"
+}

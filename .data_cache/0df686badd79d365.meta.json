@@ -1,0 +1,10 @@
+{
+  "provider": "YFinanceProvider",
+  "symbol": "INJ-USD",
+  "interval": "1h",
+  "start": null,
+  "end": null,
+  "period": "3mo",
+  "rows": 2209,
+  "cached_at": "2026-08-09T17:55:58.278699+00:00"
+}

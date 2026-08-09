@@ -1,0 +1,10 @@
+{
+  "provider": "YFinanceProvider",
+  "symbol": "OP-USD",
+  "interval": "1h",
+  "start": "2025-06-25",
+  "end": "2026-08-10",
+  "period": "1mo",
+  "rows": 9822,
+  "cached_at": "2026-08-09T17:58:18.550916+00:00"
+}

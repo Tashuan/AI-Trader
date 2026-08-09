@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "RKLB",
+  "interval": "15m",
+  "start": "2025-08-04",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 6831,
+  "cached_at": "2026-08-09T14:36:28.543307+00:00"
+}

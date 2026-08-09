@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "AAPL",
+  "interval": "15m",
+  "start": "2025-08-04",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 7168,
+  "cached_at": "2026-08-09T14:34:28.280757+00:00"
+}

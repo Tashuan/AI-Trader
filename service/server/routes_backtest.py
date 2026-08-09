@@ -95,6 +95,11 @@ def _get_strategy_registry() -> dict:
             "strategy_type": "crypto_swing", "watchlist": ["BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "LINK"],
             "risk_tolerance": "moderate", "hold_period": "swing", "runner": True,
         },
+        "scalprunner": {
+            "name": "ScalpRunner", "tagline": "Deterministic 4-step scalp runner",
+            "strategy_type": "scalp_4step", "watchlist": ["NVDA", "TSLA", "AAPL", "AMD", "META"],
+            "risk_tolerance": "moderate", "hold_period": "scalp", "runner": True,
+        },
     })
     return registry
 
@@ -213,7 +218,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         info = registry[req.agent_key]
 
-        if req.agent_key in {"blitzrunner", "cryptorunner"}:
+        if req.agent_key in {"blitzrunner", "cryptorunner", "scalprunner"}:
             import asyncio
             if req.agent_key == "cryptorunner":
                 from crypto_scan_backtester import CryptoScanBacktester
@@ -223,6 +228,15 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                     start_date=req.start_date, end_date=req.end_date,
                     initial_capital=req.initial_capital, interval=req.interval or "4h",
                     slippage_bps=req.slippage_bps,
+                )
+            elif req.agent_key == "scalprunner":
+                from scalp_scan_backtester import ScalpScanBacktester
+                params = _load_runner_params("ScalpRunner", "scalp_4step")
+                bt = ScalpScanBacktester(
+                    symbols=req.symbols or info["watchlist"], params=params,
+                    start_date=req.start_date, end_date=req.end_date,
+                    initial_capital=req.initial_capital,
+                    slippage_bps=req.slippage_bps, goal_target=req.goal_target,
                 )
             else:
                 from scan_backtester import ScanBacktester
@@ -392,6 +406,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
         key_map = {
             "cryptorunner": ("CryptoRunner", "crypto_swing"),
             "blitzrunner": ("BlitzRunner", "equity_momentum"),
+            "scalprunner": ("ScalpRunner", "scalp_4step"),
         }
         if agent_key.lower() not in key_map:
             return None

@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "CLSK",
+  "interval": "15m",
+  "start": "2025-08-04",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 6980,
+  "cached_at": "2026-08-09T14:35:22.115835+00:00"
+}

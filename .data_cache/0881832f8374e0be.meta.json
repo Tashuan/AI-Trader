@@ -1,0 +1,10 @@
+{
+  "provider": "YFinanceProvider",
+  "symbol": "ATOM-USD",
+  "interval": "1h",
+  "start": null,
+  "end": null,
+  "period": "3mo",
+  "rows": 2209,
+  "cached_at": "2026-08-09T17:55:57.276677+00:00"
+}

@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "NFLX",
+  "interval": "15m",
+  "start": "2025-08-04",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 7080,
+  "cached_at": "2026-08-09T14:34:44.107958+00:00"
+}

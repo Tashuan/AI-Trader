@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "MSTR",
+  "interval": "5m",
+  "start": "2025-08-04",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 20454,
+  "cached_at": "2026-08-09T14:23:28.387702+00:00"
+}

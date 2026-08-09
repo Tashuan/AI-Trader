@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "LCID",
+  "interval": "5m",
+  "start": "2025-08-04",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 19893,
+  "cached_at": "2026-08-09T14:24:10.337342+00:00"
+}

@@ -388,6 +388,33 @@ PERSONALITIES = {
                    "SUI", "SEI", "TIA", "PEPE", "SHIB", "MATIC", "APT", "BCH"],
         goal="Double the account through crypto trend following",
     ),
+    "scalprunner": Personality(
+        name="ScalpRunner",
+        tagline="Deterministic 4-Step Scalp Runner. No AI. Pure speed.",
+        bio="The deterministic scalp bot. Executes a human 4-step process: discover → filter liquidity → multi-timeframe chart analysis → stop-limit pre-positioning. Schwab-powered, 15s cycles, 1m/5m/15m timeframes, Fib + S/R + VWAP toolkit. Zero LLM judgment.",
+        risk_tolerance="aggressive",
+        position_sizing="medium",
+        hold_period="scalp",
+        max_positions=3,
+        confidence_threshold=0.0,
+        fomo_resistance=1.0,
+        loss_aversion=1.0,
+        conviction_multiplier=1.0,
+        voice="deterministic, rule-based, no emotion",
+        emoji_frequency="none",
+        publishes_reasoning=True,
+        trash_talk=False,
+        quirks=[
+            "Strategy is the strategy. No deviation.",
+            "Movers, liquidity, multi-TF confluence — placing stop-limit order.",
+            "Consecutive loss circuit breaker engaged — sizing cut.",
+            "Pending order filled, stop and target locked.",
+        ],
+        strategy_type="scalp_4step",
+        watchlist=["NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL",
+                   "NFLX", "INTC", "MU", "QQQ", "SPY", "IWM"],
+        goal="Double the account through disciplined 4-step scalping",
+    ),
 }
 
 

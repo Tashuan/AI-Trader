@@ -220,6 +220,60 @@ def get_runner_status() -> dict:
         return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
 
 
+# ── ScalpRunner management ─────────────────────────────────────────────
+
+_SCALP_RUNNER_KEY = "scalprunner-runner"
+
+
+def start_scalp_runner(agents_dir: str, poll_interval: int = 15) -> dict:
+    """Start the deterministic ScalpRunner 4-step agent in a thread."""
+    with _lock:
+        existing = _bots.get(_SCALP_RUNNER_KEY)
+        if existing and existing.thread.is_alive():
+            return {"success": False, "message": "ScalpRunner is already running"}
+
+        try:
+            _ensure_agents_path(agents_dir)
+            from scalp_runner import run_loop
+
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=_wrap_target(_SCALP_RUNNER_KEY, run_loop, (stop_event, poll_interval)),
+                name="ManagedRunner-scalprunner",
+                daemon=True,
+            )
+            thread.start()
+            _bots[_SCALP_RUNNER_KEY] = ManagedBot(
+                agent_key=_SCALP_RUNNER_KEY,
+                thread=thread,
+                stop_event=stop_event,
+                started_at=time.time(),
+                bot_type="runner",
+            )
+            return {
+                "success": True,
+                "message": "Started ScalpRunner (deterministic 4-step scalp agent)",
+                "thread": thread.name,
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed to start ScalpRunner: {e}"}
+
+
+def stop_scalp_runner() -> dict:
+    """Stop the deterministic ScalpRunner agent."""
+    return stop_bot(_SCALP_RUNNER_KEY)
+
+
+def get_scalp_runner_status() -> dict:
+    """Get the status of the ScalpRunner agent."""
+    with _lock:
+        bot = _bots.get(_SCALP_RUNNER_KEY)
+        if not bot or not bot.thread.is_alive():
+            _bots.pop(_SCALP_RUNNER_KEY, None)
+            return {"running": False, "pid": None, "thread": None, "bot_type": "runner", "last_error": _get_dead_error(_SCALP_RUNNER_KEY)}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
+
+
 # ── CryptoRunner management ────────────────────────────────────────────
 
 _CRYPTO_RUNNER_KEY = "cryptorunner-runner"

@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "SOFI",
+  "interval": "30m",
+  "start": "2025-08-04",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 3726,
+  "cached_at": "2026-08-09T14:40:39.389801+00:00"
+}

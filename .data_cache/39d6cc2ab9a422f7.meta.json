@@ -1,0 +1,10 @@
+{
+  "provider": "YFinanceProvider",
+  "symbol": "AVAX-USD",
+  "interval": "1d",
+  "start": null,
+  "end": null,
+  "period": "1y",
+  "rows": 366,
+  "cached_at": "2026-08-09T17:55:55.858608+00:00"
+}

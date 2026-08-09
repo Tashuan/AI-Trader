@@ -2069,6 +2069,39 @@ def init_database():
         ON agent_memories(agent_id, created_at DESC)
     """)
 
+    # Pending orders table — stop-limit pre-positioning for ScalpRunner
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pending_orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            symbol TEXT NOT NULL,
+            market TEXT NOT NULL,
+            side TEXT NOT NULL,
+            order_type TEXT NOT NULL DEFAULT 'stop_limit',
+            stop_price REAL NOT NULL,
+            limit_price REAL,
+            quantity REAL NOT NULL,
+            stop_loss_price REAL,
+            take_profit_price REAL,
+            trailing_sl_pct REAL,
+            trailing_activation_pct REAL,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            created_at TEXT DEFAULT (datetime('now')),
+            expires_at TEXT NOT NULL,
+            filled_at TEXT,
+            filled_price REAL,
+            signal_id INTEGER,
+            entry_score REAL,
+            scan_data TEXT,
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_pending_orders_agent_status
+        ON pending_orders(agent_id, status)
+    """)
+
     if previous_autocommit is not None:
         conn.autocommit = previous_autocommit
     conn.close()

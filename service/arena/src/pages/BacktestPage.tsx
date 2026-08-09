@@ -205,6 +205,33 @@ export function BacktestPage() {
       slippage: '5',
       goalTarget: '',
     },
+    // ---- ScalpRunner (1m candles, 4-step scalp) ----
+    {
+      id: 'scalp-runner-1w',
+      label: 'ScalpRunner 1-Week',
+      description: 'Fast 1m replay over the last 7 days on the default equity watchlist. Exercises the full 4-step pipeline: discovery, liquidity filter, multi-TF analysis, and stop-limit fills.',
+      agentKey: 'scalprunner',
+      startDate: new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: '',
+      capital: '10000',
+      interval: '1m',
+      slippage: '2',
+      goalTarget: '',
+    },
+    {
+      id: 'scalp-runner-nvda',
+      label: 'ScalpRunner NVDA Focus',
+      description: 'Single-name isolation on NVDA over 3 days at 1m resolution. Removes cross-symbol noise to grade entry/exit quality on a high-volume scalp name.',
+      agentKey: 'scalprunner',
+      startDate: new Date(new Date().setDate(new Date().getDate() - 3)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: 'NVDA',
+      capital: '10000',
+      interval: '1m',
+      slippage: '2',
+      goalTarget: '',
+    },
   ];
 
   const applyTestPreset = (preset: TestPreset) => {
@@ -281,7 +308,7 @@ export function BacktestPage() {
       let list = data.strategies || [];
       // Sort: blitztrader first, then alphabetical
       list = list.sort((a: Strategy, b: Strategy) => {
-        const order = ['blitzrunner', 'cryptorunner', 'blitztrader'];
+        const order = ['blitzrunner', 'scalprunner', 'cryptorunner', 'blitztrader'];
         const ai = order.indexOf(a.key);
         const bi = order.indexOf(b.key);
         if (ai !== -1 || bi !== -1) return (ai === -1 ? order.length : ai) - (bi === -1 ? order.length : bi);
@@ -312,6 +339,10 @@ export function BacktestPage() {
     }
     if (selectedKey === 'blitzrunner') {
       setCandleInterval('1h');
+      return;
+    }
+    if (selectedKey === 'scalprunner') {
+      setCandleInterval('1m');
       return;
     }
     const hp = selectedStrategy.hold_period;

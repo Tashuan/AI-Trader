@@ -16,6 +16,7 @@ from typing import Any
 
 import crypto_scan_core
 import scan_core
+import scalp_scan_core
 
 
 # ============================================================
@@ -184,6 +185,7 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "min_vol_ratio": _field("Min Vol Ratio", "number", minimum=0, maximum=10, default=1.5),
                 "bearish_macro_min_signals": _field("Bearish Macro Min Signals", "number", minimum=1, maximum=15, default=5),
                 "bearish_macro_threshold": _field("Bearish Macro Threshold", "number", minimum=0, maximum=1, default=0.3),
+                "block_on_obv_divergence": _field("Block Entry on OBV Divergence", "bool", default=True),
             },
             "position_sizing": {
                 "max_positions": _field("Max Positions", "number", minimum=1, maximum=50, default=1),
@@ -201,12 +203,108 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "scalp_4step": {
+        "display_name": "ScalpRunner — 4-Step Scalp Process",
+        "strategy_type": "scalp_4step",
+        "parity_status": "live_backtest_matched",
+        "defaults": scalp_scan_core.SCALP_DEFAULT_PARAMS,
+        "shared_fields": {
+            "watchlist": _field("Watchlist", "list", default=[]),
+            "poll_interval": _field("Poll Interval (s)", "number", minimum=5, maximum=300, default=15),
+        },
+        "strategy_fields": {
+            "exit_rules": {
+                "stop_loss_pct": _field("Stop Loss %", "number", minimum=-10, maximum=0, default=-1.0),
+                "take_profit_pct": _field("Take Profit %", "number", minimum=0, maximum=20, default=1.5),
+                "trailing_sl_pct": _field("Trailing SL %", "number", minimum=0, maximum=10, default=0.5),
+                "trailing_activation_pct": _field("Trailing Activation %", "number", minimum=0, maximum=10, default=0.8),
+                "stagnation_minutes": _field("Stagnation Minutes", "number", minimum=1, maximum=120, default=10),
+                "stagnation_threshold_pct": _field("Stagnation Threshold %", "number", minimum=0, maximum=5, default=0.1),
+                "momentum_death_vol_ratio": _field("Momentum Death Vol Ratio", "number", minimum=0, maximum=2, default=0.5),
+                "momentum_death_grace_bars": _field("Momentum Death Grace Bars", "number", minimum=0, maximum=30, default=5),
+                "ob_exhaustion_rsi": _field("OB Exhaustion RSI", "number", minimum=50, maximum=100, default=78),
+                "exit_mode": _field("Exit Mode", "enum", choices=["set_and_forget", "active"], default="set_and_forget"),
+            },
+            "entry_criteria": {
+                "min_signals": _field("Min Signals", "number", minimum=1, maximum=15, default=3),
+                "min_signal_families": _field("Min Signal Families", "number", minimum=1, maximum=6, default=2),
+                "min_vol_ratio": _field("Min Vol Ratio", "number", minimum=0, maximum=10, default=2.0),
+                "max_spread_pct": _field("Max Spread %", "number", minimum=0, maximum=5, default=0.15),
+                "min_dollar_volume": _field("Min Dollar Volume", "number", minimum=0, maximum=1e9, default=1_000_000),
+                "min_depth_dollars": _field("Min Depth $", "number", minimum=0, maximum=1e7, default=50_000),
+                "require_trend_agreement": _field("Require Trend Agreement", "bool", default=True),
+                "block_on_obv_divergence": _field("Block Entry on OBV Divergence", "bool", default=True),
+            },
+            "position_sizing": {
+                "max_positions": _field("Max Positions", "number", minimum=1, maximum=20, default=3),
+                "max_pending_orders": _field("Max Pending Orders", "number", minimum=1, maximum=20, default=5),
+                "normal_sizing_min_pct": _field("Normal Sizing Min %", "number", minimum=1, maximum=100, default=5),
+                "normal_sizing_max_pct": _field("Normal Sizing Max %", "number", minimum=1, maximum=100, default=10),
+                "risk_per_trade_pct": _field("Risk Per Trade %", "number", minimum=0.01, maximum=5, default=0.25),
+                "consecutive_loss_threshold": _field("Consecutive Loss Threshold", "number", minimum=1, maximum=20, default=3),
+                "consecutive_loss_size_cut_pct": _field("Consecutive Loss Size Cut %", "number", minimum=0, maximum=100, default=50),
+            },
+            "timeframes": {
+                "entry_interval": _field("Entry Interval", "enum", choices=["1m", "5m", "15m"], default="1m"),
+                "pattern_interval": _field("Pattern Interval", "enum", choices=["1m", "5m", "15m"], default="5m"),
+                "trend_interval": _field("Trend Interval", "enum", choices=["5m", "15m", "30m"], default="15m"),
+                "lookback_bars": _field("Lookback Bars", "number", minimum=50, maximum=500, default=200),
+            },
+            "levels": {
+                "fib_retracement": _field("Fib Retracement Levels", "list", default=[0.382, 0.5, 0.618, 0.786]),
+                "fib_extension": _field("Fib Extension Levels", "list", default=[1.272, 1.618]),
+                "sr_lookback_bars": _field("S/R Lookback Bars", "number", minimum=10, maximum=200, default=50),
+                "sr_min_touches": _field("S/R Min Touches", "number", minimum=1, maximum=10, default=2),
+                "sr_tolerance_pct": _field("S/R Tolerance %", "number", minimum=0, maximum=5, default=0.15),
+                "breakout_confirm_bars": _field("Breakout Confirm Bars", "number", minimum=1, maximum=20, default=3),
+            },
+            "discovery": {
+                "movers_enabled": _field("Movers Enabled", "bool", default=True),
+                "movers_indices": _field("Movers Indices", "list", default=["$COMPX", "$DJI", "$SPX"]),
+                "news_enabled": _field("News Enabled", "bool", default=True),
+                "news_lookback_hours": _field("News Lookback Hours", "number", minimum=1, maximum=48, default=4),
+                "scanner_enabled": _field("Scanner Enabled", "bool", default=True),
+                "scanner_min_vol_ratio": _field("Scanner Min Vol Ratio", "number", minimum=0, maximum=10, default=2.0),
+                "scanner_min_price_change_pct": _field("Scanner Min Price Change %", "number", minimum=0, maximum=50, default=0.5),
+                "scanner_universe_size": _field("Scanner Universe Size", "number", minimum=10, maximum=500, default=100),
+                "max_shortlist": _field("Max Shortlist", "number", minimum=5, maximum=50, default=15),
+            },
+            "order": {
+                "stop_limit_offset_pct": _field("Stop-Limit Offset %", "number", minimum=0, maximum=1, default=0.02),
+                "order_expiry_minutes": _field("Order Expiry Minutes", "number", minimum=1, maximum=120, default=30),
+                "sl_atr_multiple": _field("SL ATR Multiple", "number", minimum=0.1, maximum=5, default=1.0),
+                "tp_atr_multiple": _field("TP ATR Multiple", "number", minimum=0.1, maximum=10, default=1.5),
+            },
+            "indicators": {
+                "rsi_period": _field("RSI Period", "number", minimum=2, maximum=50, default=14),
+                "rsi_bullish": _field("RSI Bullish", "number", minimum=0, maximum=100, default=55),
+                "rsi_overbought": _field("RSI Overbought", "number", minimum=50, maximum=100, default=75),
+                "rsi_oversold": _field("RSI Oversold", "number", minimum=0, maximum=50, default=25),
+                "macd_fast": _field("MACD Fast", "number", minimum=2, maximum=50, default=12),
+                "macd_slow": _field("MACD Slow", "number", minimum=5, maximum=100, default=26),
+                "macd_signal": _field("MACD Signal", "number", minimum=2, maximum=50, default=9),
+                "ema_periods": _field("EMA Periods", "list", default=[9, 21, 55]),
+                "atr_period": _field("ATR Period", "number", minimum=2, maximum=50, default=14),
+                "bb_squeeze_ratio": _field("BB Squeeze Ratio", "number", minimum=0, maximum=2, default=0.6),
+                "candle_body_conviction": _field("Candle Body Conviction", "number", minimum=0, maximum=1, default=0.6),
+                "candle_body_doji": _field("Candle Body Doji", "number", minimum=0, maximum=1, default=0.3),
+                "vol_ratio_bullish": _field("Vol Ratio Bullish", "number", minimum=0, maximum=10, default=2.0),
+                "vol_ratio_dead": _field("Vol Ratio Dead", "number", minimum=0, maximum=2, default=0.5),
+            },
+            "cycle_timing": {
+                "poll_interval_default": _field("Default Poll Interval", "number", minimum=5, maximum=300, default=15),
+                "poll_interval_min": _field("Min Poll Interval", "number", minimum=5, maximum=60, default=5),
+                "poll_interval_max": _field("Max Poll Interval", "number", minimum=15, maximum=600, default=60),
+            },
+        },
+    },
 }
 
 # Legacy alias for backward compat
 _PROFILE_DEFAULTS = {
     "equity_momentum": scan_core.DEFAULT_PARAMS,
     "crypto_swing": crypto_scan_core.CRYPTO_DEFAULT_PARAMS,
+    "scalp_4step": scalp_scan_core.SCALP_DEFAULT_PARAMS,
 }
 
 
@@ -230,6 +328,8 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
 
 def profile_for(agent_name: str = "", strategy_type: str = "") -> str:
     identity = f"{agent_name} {strategy_type}".lower()
+    if "scalp_4step" in identity or "scalprunner" in identity:
+        return "scalp_4step"
     return "crypto_swing" if "crypto" in identity else "equity_momentum"
 
 

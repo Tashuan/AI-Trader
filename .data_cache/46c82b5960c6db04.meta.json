@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "SMCI",
+  "interval": "30m",
+  "start": "2025-07-30",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 3573,
+  "cached_at": "2026-08-09T14:40:03.969885+00:00"
+}

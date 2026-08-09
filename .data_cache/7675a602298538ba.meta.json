@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "AFRM",
+  "interval": "5m",
+  "start": "2025-08-04",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 19628,
+  "cached_at": "2026-08-09T14:23:59.783919+00:00"
+}

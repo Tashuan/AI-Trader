@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "ARM",
+  "interval": "30m",
+  "start": "2025-07-30",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 3381,
+  "cached_at": "2026-08-09T14:39:59.736762+00:00"
+}

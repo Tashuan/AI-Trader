@@ -1,0 +1,10 @@
+{
+  "provider": "YFinanceProvider",
+  "symbol": "ETH-USD",
+  "interval": "1d",
+  "start": null,
+  "end": null,
+  "period": "1y",
+  "rows": 366,
+  "cached_at": "2026-08-09T17:55:55.119766+00:00"
+}

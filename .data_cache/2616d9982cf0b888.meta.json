@@ -1,0 +1,10 @@
+{
+  "provider": "AlpacaProvider",
+  "symbol": "AMZN",
+  "interval": "30m",
+  "start": "2025-07-30",
+  "end": "2026-08-09",
+  "period": "1mo",
+  "rows": 3476,
+  "cached_at": "2026-08-09T14:39:34.966367+00:00"
+}

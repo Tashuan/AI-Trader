@@ -104,20 +104,26 @@ class ScanBacktester:
     # ─── Historical data fetching ──────────────────────────────────
 
     def _fetch_historical_data(self, symbol: str) -> Optional[pd.DataFrame]:
-        """Fetch historical OHLCV for a symbol via yfinance, reset_index'd."""
+        """Fetch historical OHLCV for a symbol via the configured provider."""
         try:
             yf_symbol = scan_core.yf_ticker(symbol)
             is_intraday = self.interval != "1d"
+            # yfinance clamps intraday history to ~60d; non-yfinance providers
+            # (Alpaca, crypto exchanges) don't have this limit, so skip clamping.
+            is_yfinance = type(self.provider).__name__ == "YFinanceProvider"
 
             if is_intraday:
-                max_lookback = _INTRADAY_MAX_LOOKBACK_DAYS.get(self.interval, 60)
                 now = datetime.now()
-                requested_start = (
-                    datetime.fromisoformat(self.start_date) - timedelta(days=5)
-                    if self.start_date else now - timedelta(days=max_lookback)
-                )
-                earliest_allowed = now - timedelta(days=max_lookback - 1)
-                fetch_start_dt = max(requested_start, earliest_allowed)
+                if self.start_date:
+                    requested_start = datetime.fromisoformat(self.start_date) - timedelta(days=5)
+                else:
+                    requested_start = now - timedelta(days=60)
+                if is_yfinance:
+                    max_lookback = _INTRADAY_MAX_LOOKBACK_DAYS.get(self.interval, 60)
+                    earliest_allowed = now - timedelta(days=max_lookback - 1)
+                    fetch_start_dt = max(requested_start, earliest_allowed)
+                else:
+                    fetch_start_dt = requested_start
                 start = fetch_start_dt.strftime("%Y-%m-%d")
                 end_dt = (
                     datetime.fromisoformat(self.end_date) + timedelta(days=1)

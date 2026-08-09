@@ -1,0 +1,125 @@
+{
+  "agent_name": "ScalpRunner",
+  "display_name": "ScalpRunner \u2014 4-Step Scalp Process",
+  "schema_name": "scalp_4step",
+  "parity_status": "live_backtest_matched",
+  "effective_strategy_params": {
+    "exit_rules": {
+      "stop_loss_pct": -1.0,
+      "take_profit_pct": 1.5,
+      "trailing_sl_pct": 0.5,
+      "trailing_activation_pct": 0.8,
+      "stagnation_minutes": 10,
+      "stagnation_threshold_pct": 0.1,
+      "momentum_death_vol_ratio": 0.5,
+      "momentum_death_grace_bars": 5,
+      "ob_exhaustion_rsi": 78,
+      "exit_mode": "set_and_forget"
+    },
+    "entry_criteria": {
+      "min_signals": 3,
+      "min_signal_families": 2,
+      "min_vol_ratio": 2.0,
+      "max_spread_pct": 0.15,
+      "min_dollar_volume": 1000000,
+      "min_depth_dollars": 50000,
+      "require_trend_agreement": true,
+      "block_on_obv_divergence": true
+    },
+    "position_sizing": {
+      "max_positions": 3,
+      "max_pending_orders": 5,
+      "normal_sizing_min_pct": 5,
+      "normal_sizing_max_pct": 10,
+      "risk_per_trade_pct": 0.25,
+      "consecutive_loss_threshold": 3,
+      "consecutive_loss_size_cut_pct": 50
+    },
+    "timeframes": {
+      "entry_interval": "1m",
+      "pattern_interval": "5m",
+      "trend_interval": "15m",
+      "lookback_bars": 200
+    },
+    "levels": {
+      "fib_retracement": [
+        0.382,
+        0.5,
+        0.618,
+        0.786
+      ],
+      "fib_extension": [
+        1.272,
+        1.618
+      ],
+      "sr_lookback_bars": 50,
+      "sr_min_touches": 2,
+      "sr_tolerance_pct": 0.15,
+      "breakout_confirm_bars": 3
+    },
+    "discovery": {
+      "movers_enabled": true,
+      "movers_indices": [
+        "$COMPX",
+        "$DJI",
+        "$SPX"
+      ],
+      "news_enabled": true,
+      "news_lookback_hours": 4,
+      "scanner_enabled": true,
+      "scanner_min_vol_ratio": 2.0,
+      "scanner_min_price_change_pct": 0.5,
+      "scanner_universe_size": 100,
+      "max_shortlist": 15
+    },
+    "order": {
+      "stop_limit_offset_pct": 0.02,
+      "order_expiry_minutes": 30,
+      "sl_atr_multiple": 1.0,
+      "tp_atr_multiple": 1.5
+    },
+    "indicators": {
+      "rsi_period": 14,
+      "rsi_bullish": 55,
+      "rsi_overbought": 75,
+      "rsi_oversold": 25,
+      "macd_fast": 12,
+      "macd_slow": 26,
+      "macd_signal": 9,
+      "ema_periods": [
+        9,
+        21,
+        55
+      ],
+      "atr_period": 14,
+      "bb_squeeze_ratio": 0.6,
+      "candle_body_conviction": 0.6,
+      "candle_body_doji": 0.3,
+      "vol_ratio_bullish": 2.0,
+      "vol_ratio_dead": 0.5
+    },
+    "cycle_timing": {
+      "poll_interval_default": 15,
+      "poll_interval_min": 5,
+      "poll_interval_max": 60
+    },
+    "watchlist": [],
+    "risk_controls": {
+      "paper_only": true,
+      "paper_account_budget": 10000.0,
+      "sizing_mode": "risk_based",
+      "risk_per_trade_pct": 0.5,
+      "max_trade_notional_pct": 25.0,
+      "max_open_risk_pct": 1.5,
+      "max_gross_exposure_pct": 100.0,
+      "max_position_dollar_cap": null,
+      "daily_loss_halt_pct": 3.0,
+      "loss_streak_size_cut_pct": 50.0,
+      "max_positions": 3
+    },
+    "profile": "scalp_4step",
+    "schema_version": 2
+  },
+  "shared_config": {},
+  "exported_at": "2026-08-09T22:27:37.743556+00:00"
+}
