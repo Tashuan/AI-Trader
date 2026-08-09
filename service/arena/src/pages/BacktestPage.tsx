@@ -45,6 +45,7 @@ interface BacktestReport {
   winning_trades: number;
   losing_trades: number;
   avg_hold_days: number;
+  avg_hold_hours?: number;
   profit_factor: number;
   equity_curve: { date: string; equity: number }[];
   trades: TradeRecord[];
@@ -57,6 +58,7 @@ interface BacktestReport {
   }>;
   interval: string;
   slippage_bps: number;
+  activation_gate?: { eligible: boolean; checks: Record<string, boolean> };
 }
 
 export function BacktestPage() {
@@ -65,7 +67,7 @@ export function BacktestPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [symbolsInput, setSymbolsInput] = useState('');
-  const [capital, setCapital] = useState('100000');
+  const [capital, setCapital] = useState('10000');
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<BacktestReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +97,32 @@ export function BacktestPage() {
   }
 
   const testPresets: TestPreset[] = [
+    {
+      id: 'crypto-3m',
+      label: 'CryptoRunner 3-Month',
+      description: 'Crypto-specific 4-hour replay with daily confirmation and ATR exits on the liquid crypto watchlist.',
+      agentKey: 'cryptorunner',
+      startDate: new Date(new Date().setMonth(new Date().getMonth() - 3)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: '',
+      capital: '10000',
+      interval: '4h',
+      slippage: '5',
+      goalTarget: '',
+    },
+    {
+      id: 'runner-equity-3m',
+      label: 'BlitzRunner 3-Month',
+      description: 'Equity-focused 1-hour replay using the deterministic runner profile and paper-account budget.',
+      agentKey: 'blitzrunner',
+      startDate: new Date(new Date().setMonth(new Date().getMonth() - 3)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: '',
+      capital: '10000',
+      interval: '1h',
+      slippage: '5',
+      goalTarget: '',
+    },
     {
       id: 'blitz-1m',
       label: 'BlitzTrader 1-Month',
@@ -200,13 +228,15 @@ export function BacktestPage() {
       let list = data.strategies || [];
       // Sort: blitztrader first, then alphabetical
       list = list.sort((a: Strategy, b: Strategy) => {
-        if (a.key === 'blitztrader') return -1;
-        if (b.key === 'blitztrader') return 1;
+        const order = ['blitzrunner', 'cryptorunner', 'blitztrader'];
+        const ai = order.indexOf(a.key);
+        const bi = order.indexOf(b.key);
+        if (ai !== -1 || bi !== -1) return (ai === -1 ? order.length : ai) - (bi === -1 ? order.length : bi);
         return a.name.localeCompare(b.name);
       });
       setStrategies(list);
       if (list.length > 0 && !selectedKey) {
-        setSelectedKey('blitztrader');
+        setSelectedKey('blitzrunner');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load strategies');
@@ -223,6 +253,14 @@ export function BacktestPage() {
 
   useEffect(() => {
     if (!selectedStrategy) return;
+    if (selectedKey === 'cryptorunner') {
+      setCandleInterval('4h');
+      return;
+    }
+    if (selectedKey === 'blitzrunner') {
+      setCandleInterval('1h');
+      return;
+    }
     const hp = selectedStrategy.hold_period;
     if (hp === 'scalp') {
       setCandleInterval('15m');
@@ -897,9 +935,15 @@ export function BacktestPage() {
               <MetricCard label="Max Drawdown" value={fmtPct(report.max_drawdown_pct)} valueClass="text-arena-red" />
               <MetricCard label="Win Rate" value={`${(report.win_rate * 100).toFixed(1)}%`} subValue={`${report.winning_trades}W / ${report.losing_trades}L`} />
               <MetricCard label="Profit Factor" value={report.profit_factor.toFixed(3)} />
-              <MetricCard label="Avg Hold" value={`${report.avg_hold_days.toFixed(1)}d`} />
+              <MetricCard label="Avg Hold" value={`${(report.avg_hold_hours ?? report.avg_hold_days * 24).toFixed(1)}h`} />
               <MetricCard label="Total Trades" value={String(report.total_trades)} />
             </div>
+            {report.activation_gate && (
+              <div className={`mt-4 rounded-lg border px-3 py-2 text-[10px] ${report.activation_gate.eligible ? 'border-arena-green/30 bg-arena-green/5 text-arena-green' : 'border-arena-yellow/30 bg-arena-yellow/5 text-arena-yellow'}`}>
+                <strong>{report.activation_gate.eligible ? 'Activation eligible' : 'Paper-only: quantitative gate not passed'}</strong>
+                {' · '}{Object.entries(report.activation_gate.checks).filter(([, passed]) => !passed).map(([key]) => key.split('_').join(' ')).join(', ') || 'all checks passed'}
+              </div>
+            )}
           </div>
 
           {/* Strategy Diagnosis */}

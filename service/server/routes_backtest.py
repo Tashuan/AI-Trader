@@ -69,6 +69,18 @@ def _get_strategy_registry() -> dict:
                 "hold_period": personality.hold_period,
                 "agent_class": agent_class,
             }
+    registry.update({
+        "blitzrunner": {
+            "name": "BlitzRunner", "tagline": "Deterministic equity momentum runner",
+            "strategy_type": "momentum_scalp", "watchlist": ["NVDA", "TSLA", "META", "AMZN"],
+            "risk_tolerance": "moderate", "hold_period": "swing", "runner": True,
+        },
+        "cryptorunner": {
+            "name": "CryptoRunner", "tagline": "Deterministic crypto swing runner",
+            "strategy_type": "crypto_swing", "watchlist": ["BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "LINK"],
+            "risk_tolerance": "moderate", "hold_period": "swing", "runner": True,
+        },
+    })
     return registry
 
 
@@ -127,38 +139,26 @@ def _load_personality_from_db(agent_key: str, fallback_personality):
         return fallback_personality
 
 
-def _load_blitztrader_params() -> dict:
-    """Load BlitzTrader strategy params from DB agent_configs, merged over scan_core.DEFAULT_PARAMS.
+def _load_runner_params(name: str, strategy_type: str) -> dict:
+    """Resolve stored overrides with the runner's agent-specific defaults."""
+    from strategy_registry import effective_params
 
-    This ensures the backtest uses the exact same params the live agent would use.
-    """
+    stored = {}
     try:
-        import scan_core
-        params = dict(scan_core.DEFAULT_PARAMS)
-
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "SELECT c.config_json FROM agent_configs c "
-            "JOIN agents a ON a.id = c.agent_id "
-            "WHERE a.name = 'BlitzTrader'"
+            "JOIN agents a ON a.id = c.agent_id WHERE a.name = ?",
+            (name,),
         )
         row = cursor.fetchone()
         conn.close()
-
-        if row and row['config_json']:
-            config = json.loads(row['config_json'])
-            stored = config.get('strategy_params', {})
-            params = scan_core.deep_merge(params, stored)
-
-        return params
-    except Exception as e:
-        logger.warning(f"Failed to load BlitzTrader params from DB: {e}")
-        try:
-            import scan_core
-            return dict(scan_core.DEFAULT_PARAMS)
-        except ImportError:
-            return {}
+        if row and row["config_json"]:
+            stored = json.loads(row["config_json"]).get("strategy_params", {})
+    except Exception as exc:
+        logger.warning(f"Failed to load {name} params from DB: {exc}")
+    return effective_params(name, strategy_type, stored)
 
 
 def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
@@ -198,6 +198,29 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         info = registry[req.agent_key]
 
+        if req.agent_key in {"blitzrunner", "cryptorunner"}:
+            import asyncio
+            if req.agent_key == "cryptorunner":
+                from crypto_scan_backtester import CryptoScanBacktester
+                params = _load_runner_params("CryptoRunner", "crypto_swing")
+                bt = CryptoScanBacktester(
+                    symbols=req.symbols or info["watchlist"], params=params,
+                    start_date=req.start_date, end_date=req.end_date,
+                    initial_capital=req.initial_capital, interval=req.interval or "4h",
+                    slippage_bps=req.slippage_bps,
+                )
+            else:
+                from scan_backtester import ScanBacktester
+                params = _load_runner_params("BlitzRunner", "momentum_scalp")
+                bt = ScanBacktester(
+                    symbols=req.symbols or info["watchlist"], params=params,
+                    start_date=req.start_date, end_date=req.end_date,
+                    initial_capital=req.initial_capital, interval=req.interval or "1h",
+                    slippage_bps=req.slippage_bps, goal_target=req.goal_target,
+                )
+            report = await asyncio.to_thread(bt.run)
+            return {"report": report.to_dict()}
+
         try:
             from personality import PERSONALITIES
         except ImportError as e:
@@ -216,7 +239,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
             except ImportError as e:
                 raise HTTPException(status_code=500, detail=f"ScanBacktester module not available: {e}")
 
-            params = _load_blitztrader_params()
+            params = _load_runner_params("BlitzTrader", "momentum_scalp")
             bt = ScanBacktester(
                 symbols=symbols,
                 params=params,

@@ -37,6 +37,7 @@ if _AGENTS_DIR not in sys.path:
 
 import crypto_scan_core as scan_core
 import crypto_scan as scan_module
+from strategy_registry import effective_params, position_notional
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
@@ -84,8 +85,12 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     try:
-        with open(STATE_FILE, "w") as f:
+        temp_file = f"{STATE_FILE}.tmp"
+        with open(temp_file, "w") as f:
             json.dump(state, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_file, STATE_FILE)
     except Exception as e:
         logger.warning(f"Could not save state file: {e}")
 
@@ -150,7 +155,11 @@ def post_activity(token: str, text: str, market: str = "crypto", symbol: str = "
     post_discussion(token, text, market=market, symbol=symbol)
 
 
-def login(name: str = "CryptoRunner", password: str = "cryptorunner_pass_2026") -> Optional[str]:
+def login(name: str = "CryptoRunner", password: Optional[str] = None) -> Optional[str]:
+    password = password or os.getenv("CRYPTO_RUNNER_PASSWORD")
+    if not password:
+        logger.warning("CRYPTO_RUNNER_PASSWORD not configured; using dev fallback")
+        password = "cryptorunner"
     try:
         url = f"{API_BASE}/claw/agents/login"
         data = json.dumps({"name": name, "password": password, "client_type": "python_bot"}).encode()
@@ -165,7 +174,11 @@ def login(name: str = "CryptoRunner", password: str = "cryptorunner_pass_2026") 
         return None
 
 
-def register(name: str = "CryptoRunner", password: str = "cryptorunner_pass_2026") -> Optional[str]:
+def register(name: str = "CryptoRunner", password: Optional[str] = None) -> Optional[str]:
+    password = password or os.getenv("CRYPTO_RUNNER_PASSWORD")
+    if not password:
+        logger.warning("CRYPTO_RUNNER_PASSWORD not configured; using dev fallback")
+        password = "cryptorunner"
     try:
         url = f"{API_BASE}/claw/agents/selfRegister"
         data = json.dumps({
@@ -205,7 +218,7 @@ def fetch_goal_status(token: str) -> dict:
         return _api_get(token, "/claw/agents/me/goal")
     except Exception as e:
         logger.warning(f"Could not fetch goal status: {e}")
-        return {"can_trade": True, "goal_achieved": False, "max_loss_hit": False, "progress_pct": 0}
+        return {"can_trade": False, "goal_achieved": False, "max_loss_hit": False, "progress_pct": 0, "_unavailable": True}
 
 
 def fetch_config(token: str) -> dict:
@@ -213,7 +226,7 @@ def fetch_config(token: str) -> dict:
         return _api_get(token, "/claw/agents/me/config")
     except Exception as e:
         logger.warning(f"Could not fetch config: {e}")
-        return {"watchlist": scan_core.CRYPTO_DEFAULT_PARAMS["watchlist"], "max_positions": 3, "poll_interval": DEFAULT_POLL_INTERVAL}
+        return {"watchlist": [], "poll_interval": DEFAULT_POLL_INTERVAL, "_unavailable": True}
 
 
 def fetch_strategy_params(token: str) -> dict:
@@ -221,18 +234,19 @@ def fetch_strategy_params(token: str) -> dict:
         data = _api_get(token, "/claw/agents/me/strategy-params")
         if isinstance(data, dict) and "strategy_params" in data:
             return data["strategy_params"]
-        return data if isinstance(data, dict) else {}
+        return data if isinstance(data, dict) else {"_unavailable": True}
     except Exception as e:
         logger.warning(f"Could not fetch strategy params: {e}")
-        return {}
+        return {"_unavailable": True}
 
 
 def fetch_portfolio(token: str) -> dict:
     try:
-        return _api_get(token, "/positions")
+        data = _api_get(token, "/positions")
+        return data if isinstance(data, dict) else {"_unavailable": True}
     except Exception as e:
         logger.warning(f"Could not fetch portfolio: {e}")
-        return {"cash": 100000.0, "positions": [], "portfolio_value": 100000.0}
+        return {"cash": 0.0, "positions": [], "portfolio_value": 0.0, "_unavailable": True}
 
 
 def send_heartbeat(token: str) -> None:
@@ -315,7 +329,8 @@ def execute_close(token: str, symbol: str, side: str, quantity: float,
 def execute_entry(token: str, symbol: str, side: str, quantity: float,
                   market: str, stop_loss_price: float, take_profit_price: float,
                   trailing_sl_pct: float, trailing_activation_pct: float,
-                  reason: str) -> dict:
+                  reason: str, stop_loss_pct: float = 0.0,
+                  take_profit_pct: float = 0.0) -> dict:
     """Enter a new position. Returns result dict (may contain error)."""
     action = "buy" if side == "long" else "short"
     try:
@@ -328,6 +343,8 @@ def execute_entry(token: str, symbol: str, side: str, quantity: float,
             "executed_at": "now",
             "stop_loss_price": round(stop_loss_price, 6),
             "take_profit_price": round(take_profit_price, 6),
+            "stop_loss_pct": stop_loss_pct,
+            "take_profit_pct": take_profit_pct,
             "trailing_sl_pct": trailing_sl_pct,
             "trailing_activation_pct": trailing_activation_pct,
             "content": f"[CryptoRunner] {reason}",
@@ -381,7 +398,10 @@ def run_cycle(token: str, state: dict, params: dict, poll_interval: int) -> dict
 
     # 1. Fetch goal status
     goal = fetch_goal_status(token)
-    can_trade = goal.get("can_trade", True)
+    if goal.get("_unavailable"):
+        post_activity(token, "Cycle skipped: goal service unavailable")
+        return state
+    can_trade = goal.get("can_trade", goal.get("status") == "no_goal")
     goal_achieved = goal.get("goal_achieved", False)
     max_loss_hit = goal.get("max_loss_hit", False)
 
@@ -392,13 +412,18 @@ def run_cycle(token: str, state: dict, params: dict, poll_interval: int) -> dict
 
     # 2. Fetch portfolio for equity calculation
     portfolio = fetch_portfolio(token)
-    cash = float(portfolio.get("cash", 100000.0))
+    if portfolio.get("_unavailable"):
+        post_activity(token, "Cycle skipped: portfolio service unavailable")
+        return state
+    cash = float(portfolio.get("cash", 0.0))
     positions = portfolio.get("positions", [])
 
     equity = cash
+    gross_exposure = 0.0
     for p in positions:
         qty = abs(float(p.get("quantity", 0)))
         price = float(p.get("current_price", 0)) or float(p.get("entry_price", 0))
+        gross_exposure += qty * price
         side = p.get("side", "long")
         if side == "long":
             equity += qty * price
@@ -406,7 +431,7 @@ def run_cycle(token: str, state: dict, params: dict, poll_interval: int) -> dict
             equity -= qty * price
 
     initial_capital = 100000.0
-    goal_target = 1000.0
+    goal_target = goal.get("goal", {}).get("target_amount", 0) if isinstance(goal.get("goal"), dict) else 0
 
     # 3. Run scan for indicators + setups + position reviews
     post_activity(token, f"Cycle {state.get('cycles_run', 0) + 1}: scanning {len(params.get('watchlist', []))} crypto symbols for setups...")
@@ -473,7 +498,7 @@ def run_cycle(token: str, state: dict, params: dict, poll_interval: int) -> dict
     for setup in ranked_setups:
         sym = setup["symbol"]
         sym_data = scan_result.get("symbols", {}).get(sym, {})
-        sig_count = sym_data.get("signal_count", {}).get("bullish", 0)
+        sig_count = max(sym_data.get("signal_count", {}).get("bullish", 0), sym_data.get("signal_count", {}).get("bearish", 0))
         if state.get("consecutive_losses", 0) >= params.get("position_sizing", {}).get("consecutive_loss_threshold", 3):
             if sig_count < min_signals:
                 continue
@@ -492,9 +517,10 @@ def run_cycle(token: str, state: dict, params: dict, poll_interval: int) -> dict
             if sym.upper() in held_symbols:
                 continue
 
-            entered = _enter_from_setup(token, setup, scan_result, state, params, equity, initial_capital, goal_target)
+            entered = _enter_from_setup(token, setup, scan_result, state, params, equity, initial_capital, goal_target, gross_exposure)
             if entered:
                 available_slots -= 1
+                gross_exposure += float(state.pop("last_entry_notional", 0.0))
                 # Record entry time for bars_held tracking
                 if "position_entry_times" not in state:
                     state["position_entry_times"] = {}
@@ -508,7 +534,7 @@ def run_cycle(token: str, state: dict, params: dict, poll_interval: int) -> dict
 
 def _enter_from_setup(token: str, setup: dict, scan_result: dict, state: dict,
                       params: dict, equity: float, initial_capital: float,
-                      goal_target: float) -> bool:
+                      goal_target: float, gross_exposure: float) -> bool:
     """Enter a position from a ranked setup. Returns True if entry succeeded.
 
     Handles sector_concentration rejection by retrying once at half size.
@@ -522,72 +548,40 @@ def _enter_from_setup(token: str, setup: dict, scan_result: dict, state: dict,
         logger.warning(f"Scan data missing for {symbol}, skipping entry")
         return False
 
-    # Goal-aware sizing
-    size_pct, is_final_stretch = sizing_pct(
-        equity, initial_capital, goal_target,
-        state.get("consecutive_losses", 0), params
-    )
-
-    ps_cfg = params.get("position_sizing", {})
-    notional = equity * (size_pct / 100.0)
-
-    max_dollar = ps_cfg.get("max_position_dollar_cap")
-    if max_dollar is not None and notional > max_dollar:
-        notional = max_dollar
-
     entry_price = sym_data.get("price", 0)
     if entry_price <= 0:
         logger.warning(f"No price for {symbol}, skipping entry")
         return False
 
-    qty = notional / entry_price
-    if qty <= 0:
-        return False
-
-    # Compute ATR-based SL/TP with clamping
+    # Compute ATR-based SL/TP with clamping, then size from actual stop risk.
     sl_price, tp_price, trail_sl_pct, trail_act_pct = scan_core.compute_atr_sl_tp(
         entry_price, side, sym_data, params
     )
+    stop_distance_pct = abs((sl_price - entry_price) / entry_price) * 100
+    notional = position_notional(equity, stop_distance_pct, gross_exposure, params)
+    qty = notional / entry_price if notional > 0 else 0
+    if qty <= 0:
+        return False
 
-    # Final stretch TP override
-    if is_final_stretch:
-        final_tp_pct = ps_cfg.get("final_stretch_tp_pct", 5.0)
-        if side == "long":
-            tp_price = entry_price * (1 + final_tp_pct / 100.0)
-        else:
-            tp_price = entry_price * (1 - final_tp_pct / 100.0)
-
-    sig_count = sym_data.get("signal_count", {}).get("bullish", 0)
+    sig_count = max(sym_data.get("signal_count", {}).get("bullish", 0), sym_data.get("signal_count", {}).get("bearish", 0))
     families_count = len(sym_data.get("families_represented", []))
     score = setup.get("score", 0)
-    reason = f"Auto-entry: {side} {symbol} | score={score:.1f} signals={sig_count} families={families_count} size={size_pct:.1f}%"
+    risk_pct = params.get("risk_controls", {}).get("risk_per_trade_pct", 0.5)
+    reason = f"Auto-entry: {side} {symbol} | score={score:.1f} signals={sig_count} families={families_count} risk={risk_pct:.2f}% notional=${notional:.2f}"
 
     result = execute_entry(
         token, symbol, side, qty, market,
         sl_price, tp_price, trail_sl_pct, trail_act_pct,
-        reason
+        reason,
+        abs((sl_price - entry_price) / entry_price) * 100,
+        abs((tp_price - entry_price) / entry_price) * 100,
     )
 
-    # Check for sector_concentration rejection — retry at half size
     if isinstance(result, dict) and "error" in result:
-        detail = str(result.get("detail", "")).lower()
-        if "sector_concentration" in detail or "concentration" in detail:
-            logger.warning(f"Sector concentration rejected for {symbol}, retrying at half size...")
-            half_qty = qty / 2.0
-            if half_qty > 0:
-                result = execute_entry(
-                    token, symbol, side, half_qty, market,
-                    sl_price, tp_price, trail_sl_pct, trail_act_pct,
-                    reason + " (half-size retry)"
-                )
-                if isinstance(result, dict) and "error" not in result:
-                    logger.info(f"Half-size entry succeeded for {symbol}")
-                    publish_strategy(token, symbol, side, "buy" if side == "long" else "short",
-                                     score, sig_count, families_count, reason + " (half-size)")
-                    return True
-            logger.warning(f"Half-size retry also failed for {symbol}, skipping")
-            return False
+        logger.warning(f"Entry rejected for {symbol}: {result.get('detail', result.get('error'))}")
         return False
+
+    state["last_entry_notional"] = notional
 
     # Publish strategy reasoning
     publish_strategy(token, symbol, side, "buy" if side == "long" else "short",
@@ -620,15 +614,23 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
         try:
             # Fetch live config for poll interval
             config = fetch_config(token)
+            if config.get("_unavailable"):
+                raise RuntimeError("config service unavailable")
             live_poll = config.get("poll_interval", poll_interval)
 
-            # Fetch strategy params and merge with defaults
-            params = fetch_strategy_params(token)
-            params = scan_core.deep_merge(dict(scan_core.CRYPTO_DEFAULT_PARAMS), params)
+            # Fetch strategy params through the agent-specific profile resolver.
+            stored_params = fetch_strategy_params(token)
+            if stored_params.get("_unavailable"):
+                raise RuntimeError("strategy parameter service unavailable")
+            params = effective_params("CryptoRunner", "crypto_swing", stored_params)
+            logger.info("Effective profile=%s interval=%s budget=$%.2f risk=%.2f%%", params["profile"], params["indicators"].get("candle_interval"), params["risk_controls"]["paper_account_budget"], params["risk_controls"]["risk_per_trade_pct"])
 
             # Override watchlist from config if present
             if config.get("watchlist"):
                 params["watchlist"] = config["watchlist"]
+            if config.get("max_positions") is not None:
+                params["position_sizing"]["max_positions"] = int(config["max_positions"])
+                params["risk_controls"]["max_positions"] = int(config["max_positions"])
 
             # Run the cycle
             state = run_cycle(token, state, params, live_poll)

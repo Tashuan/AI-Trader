@@ -27,8 +27,6 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
-
 # Shared, side-effect-free indicator/scoring/exit-rule logic. This is the
 # single source of truth for strategy defaults and math — both this live
 # agent script and the backend backtester (agents/scan_backtester.py) import
@@ -37,6 +35,9 @@ _AGENTS_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 if _AGENTS_DIR not in sys.path:
     sys.path.insert(0, _AGENTS_DIR)
 import scan_core
+from market_data import MarketDataProvider, YFinanceProvider
+
+_DATA_PROVIDER: MarketDataProvider = YFinanceProvider()
 
 
 # ============================================================
@@ -118,8 +119,7 @@ def _sweep_scan(params: dict[str, Any]) -> list[str]:
     for symbol in sweep_universe:
         try:
             ticker = _yf_ticker(symbol)
-            t = yf.Ticker(ticker)
-            df = t.history(period="5d", interval="1h")
+            df = _DATA_PROVIDER.history(ticker, period="5d", interval="1h")
             if df is None or df.empty or len(df) < 22:
                 continue
 
@@ -151,8 +151,7 @@ def _deep_scan_symbol(symbol: str, params: dict[str, Any]) -> dict[str, Any]:
     lookback = ind_cfg.get("lookback_period", "1mo")
 
     ticker = _yf_ticker(symbol)
-    t = yf.Ticker(ticker)
-    df = t.history(period=lookback, interval=interval)
+    df = _DATA_PROVIDER.history(ticker, period=lookback, interval=interval)
 
     return scan_core.deep_scan_symbol_from_df(symbol, df, params)
 
@@ -182,8 +181,7 @@ def _fetch_current_price(symbol: str) -> Optional[float]:
     """Fetch current price via yfinance."""
     try:
         ticker = _yf_ticker(symbol)
-        t = yf.Ticker(ticker)
-        df = t.history(period="1d", interval="1m")
+        df = _DATA_PROVIDER.history(ticker, period="1d", interval="1m")
         if df is not None and not df.empty:
             return float(df['Close'].iloc[-1])
     except Exception:
@@ -191,19 +189,34 @@ def _fetch_current_price(symbol: str) -> Optional[float]:
     return None
 
 
-def _review_position(pos: dict[str, Any], params: dict[str, Any], cycles_flat: int) -> dict[str, Any]:
-    """Evaluate the 6 exit rules for a position, fetching live indicator data.
+def _interval_seconds(interval: str) -> int:
+    return {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400}.get(interval, 3600)
 
-    Rule logic itself lives in scan_core.review_position_from_indicators —
-    this wrapper only fetches the live indicator snapshot needed to evaluate it.
-    """
+
+def _bars_held(pos: dict[str, Any], params: dict[str, Any]) -> int:
+    opened_at = pos.get("opened_at")
+    if not opened_at:
+        return 0
+    try:
+        opened = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+        elapsed = (datetime.now(timezone.utc) - opened).total_seconds()
+        interval = params.get("indicators", {}).get("candle_interval", "1h")
+        return max(0, int(elapsed / _interval_seconds(interval)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _review_position(pos: dict[str, Any], params: dict[str, Any], cycles_flat: int) -> dict[str, Any]:
+    """Evaluate the 6 exit rules using the live indicator snapshot."""
     symbol = pos.get("symbol", "")
     entry_price = float(pos.get("entry_price", 0))
     current_price = float(pos.get("current_price", 0)) or _fetch_current_price(symbol) or entry_price
     pos = {**pos, "current_price": current_price}
 
     ind_data = _deep_scan_symbol(symbol, params)
-    return scan_core.review_position_from_indicators(pos, params, cycles_flat, ind_data)
+    return scan_core.review_position_from_indicators(
+        pos, params, cycles_flat, ind_data, _bars_held(pos, params)
+    )
 
 
 def _patch_position_state(token: str, position_id: int, cycles_flat: int, entry_score: float) -> None:
@@ -549,7 +562,7 @@ def main():
         auto_exit=args.auto_exit,
         auto_enter=args.auto_enter,
     )
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, default=lambda o: bool(o) if isinstance(o, (np.bool_,)) else float(o) if isinstance(o, (np.floating,)) else int(o) if isinstance(o, (np.integer,)) else str(o)))
 
 
 if __name__ == "__main__":

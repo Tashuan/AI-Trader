@@ -9,8 +9,28 @@ fundamental (news/sentiment) and technical (charts/indicators) data.
 import os
 import requests
 import time
-from typing import Optional
+from typing import Optional, Protocol
 from dataclasses import dataclass, field
+
+
+class MarketDataProvider(Protocol):
+    def history(self, symbol: str, *, period: str = "1mo", interval: str = "1d", **kwargs): ...
+
+    def quote(self, symbol: str): ...
+
+
+class YFinanceProvider:
+    """Development market-data provider with a stable scanner-facing contract."""
+
+    def history(self, symbol: str, *, period: str = "1mo", interval: str = "1d", **kwargs):
+        import yfinance as yf
+        return yf.Ticker(symbol).history(period=period, interval=interval, **kwargs)
+
+    def quote(self, symbol: str):
+        frame = self.history(symbol, period="1d", interval="1m")
+        if frame is None or frame.empty:
+            return None
+        return float(frame["Close"].iloc[-1])
 
 
 # ============================================================

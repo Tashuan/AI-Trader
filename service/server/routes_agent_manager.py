@@ -27,7 +27,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _AGENTS_DIR = _PROJECT_ROOT / "agents"
 if str(_AGENTS_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENTS_DIR))
-import scan_core  # noqa: E402 — single source of truth for BlitzTrader strategy defaults
+from strategy_registry import effective_params  # noqa: E402
 
 STRATEGY_TEMPLATES = {
     "news_sentiment": {
@@ -1196,22 +1196,12 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     # ─── Admin Strategy Params ────────────────────────────────────
 
-    DEFAULT_STRATEGY_PARAMS = scan_core.DEFAULT_PARAMS
-
-    def _merge_strategy_defaults(stored: dict) -> dict:
-        result = {}
-        for section, defaults in DEFAULT_STRATEGY_PARAMS.items():
-            stored_section = stored.get(section)
-            if stored_section is None:
-                result[section] = defaults
-            elif isinstance(stored_section, dict) and isinstance(defaults, dict):
-                result[section] = {**defaults, **stored_section}
-            else:
-                result[section] = stored_section if stored_section else defaults
-        for key, val in stored.items():
-            if key not in result:
-                result[key] = val
-        return result
+    def _effective_for_agent(agent: dict, stored: dict | None = None) -> dict:
+        return effective_params(
+            agent_name=agent.get('name', ''),
+            strategy_type=agent.get('strategy_type', ''),
+            stored=stored or {},
+        )
 
     @app.get('/api/agents/manage/{agent_id}/strategy-params')
     async def admin_get_strategy_params(
@@ -1229,14 +1219,14 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
         conn.close()
 
         if not row or not row['config_json']:
-            return {'agent_id': agent_id, 'strategy_params': _merge_strategy_defaults({})}
+            return {'agent_id': agent_id, 'strategy_params': _effective_for_agent(agent, {})}
 
         try:
             config = json.loads(row['config_json'])
         except (json.JSONDecodeError, TypeError):
-            return {'agent_id': agent_id, 'strategy_params': _merge_strategy_defaults({})}
+            return {'agent_id': agent_id, 'strategy_params': _effective_for_agent(agent, {})}
 
-        return {'agent_id': agent_id, 'strategy_params': _merge_strategy_defaults(config.get('strategy_params', {}))}
+        return {'agent_id': agent_id, 'strategy_params': _effective_for_agent(agent, config.get('strategy_params', {}))}
 
     @app.put('/api/agents/manage/{agent_id}/strategy-params')
     async def admin_replace_strategy_params(
@@ -1261,7 +1251,13 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
         else:
             config = {}
 
-        config['strategy_params'] = data.model_dump(exclude_none=True)
+        raw_params = data.model_dump(exclude_none=True)
+        try:
+            effective = _effective_for_agent(agent, raw_params)
+        except ValueError as exc:
+            conn.close()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        config['strategy_params'] = raw_params
 
         if row:
             cursor.execute(
@@ -1276,7 +1272,7 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
         conn.commit()
         conn.close()
 
-        return {'success': True, 'agent_id': agent_id, 'strategy_params': config['strategy_params']}
+        return {'success': True, 'agent_id': agent_id, 'strategy_params': effective}
 
     @app.patch('/api/agents/manage/{agent_id}/strategy-params')
     async def admin_update_strategy_params(
@@ -1309,6 +1305,11 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
             else:
                 params[key] = value
 
+        try:
+            effective = _effective_for_agent(agent, params)
+        except ValueError as exc:
+            conn.close()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         config['strategy_params'] = params
 
         if row:
@@ -1324,4 +1325,4 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
         conn.commit()
         conn.close()
 
-        return {'success': True, 'agent_id': agent_id, 'strategy_params': params}
+        return {'success': True, 'agent_id': agent_id, 'strategy_params': effective}

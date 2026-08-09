@@ -58,11 +58,23 @@ class BacktestReport:
     losing_trades: int
     avg_hold_days: float
     profit_factor: float
+    avg_hold_hours: float = 0.0
     equity_curve: list[dict] = field(default_factory=list)
     trades: list[dict] = field(default_factory=list)
     per_symbol_stats: dict = field(default_factory=dict)
     interval: str = "1d"
     slippage_bps: float = 0.0
+    out_of_sample: bool = False
+
+    def activation_gate(self) -> dict:
+        checks = {
+            "positive_return": self.total_return_pct > 0,
+            "profit_factor": self.profit_factor > 1.15,
+            "max_drawdown": self.max_drawdown_pct < 8.0,
+            "trade_coverage": self.total_trades >= 100,
+            "out_of_sample": self.out_of_sample,
+        }
+        return {"eligible": all(checks.values()), "checks": checks}
 
     def to_dict(self) -> dict:
         return {
@@ -80,12 +92,15 @@ class BacktestReport:
             "winning_trades": self.winning_trades,
             "losing_trades": self.losing_trades,
             "avg_hold_days": round(self.avg_hold_days, 1),
+            "avg_hold_hours": round(self.avg_hold_hours, 1),
             "profit_factor": round(self.profit_factor, 3),
             "equity_curve": self.equity_curve,
             "trades": self.trades,
             "per_symbol_stats": self.per_symbol_stats,
             "interval": self.interval,
             "slippage_bps": self.slippage_bps,
+            "out_of_sample": self.out_of_sample,
+            "activation_gate": self.activation_gate(),
         }
 
     @staticmethod
@@ -147,6 +162,7 @@ class BacktestReport:
         profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else float("inf") if gross_profit > 0 else 0.0
 
         avg_hold = (sum(t.hold_days for t in trades) / total_trades) if total_trades > 0 else 0.0
+        avg_hold_hours = (sum(t.hold_hours for t in trades) / total_trades) if total_trades > 0 else 0.0
 
         # Per-symbol stats
         per_symbol: dict[str, dict] = {}
@@ -178,6 +194,7 @@ class BacktestReport:
             losing_trades=len(losing),
             avg_hold_days=avg_hold,
             profit_factor=profit_factor if profit_factor != float("inf") else 999.0,
+            avg_hold_hours=avg_hold_hours,
             equity_curve=equity_curve,
             trades=[t.to_dict() for t in trades],
             per_symbol_stats=per_symbol,

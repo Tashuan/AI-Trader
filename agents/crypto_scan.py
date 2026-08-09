@@ -28,13 +28,14 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
-
 # Shared, side-effect-free indicator/scoring/exit-rule logic
 _AGENTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _AGENTS_DIR not in sys.path:
     sys.path.insert(0, _AGENTS_DIR)
 import crypto_scan_core as core
+from market_data import MarketDataProvider, YFinanceProvider
+
+_DATA_PROVIDER: MarketDataProvider = YFinanceProvider()
 
 
 # ============================================================
@@ -104,8 +105,7 @@ def _sweep_scan(params: dict[str, Any]) -> list[str]:
     for symbol in sweep_universe:
         try:
             ticker = _yf_ticker(symbol)
-            t = yf.Ticker(ticker)
-            df = t.history(period="5d", interval="1h")
+            df = _DATA_PROVIDER.history(ticker, period="5d", interval="1h")
             if df is None or df.empty or len(df) < 22:
                 continue
 
@@ -143,8 +143,7 @@ def check_daily_trend_agreement(symbol: str, direction: str, params: dict[str, A
 
     try:
         ticker = _yf_ticker(symbol)
-        t = yf.Ticker(ticker)
-        df = t.history(period="6mo", interval="1d")
+        df = _DATA_PROVIDER.history(ticker, period="6mo", interval="1d")
         if df is None or df.empty or len(df) < 20:
             return True  # can't verify, don't block
 
@@ -176,8 +175,7 @@ def check_btc_regime_ok(params: dict[str, Any]) -> str:
         return _btc_regime_cache
 
     try:
-        t = yf.Ticker("BTC-USD")
-        df = t.history(period="6mo", interval="1d")
+        df = _DATA_PROVIDER.history("BTC-USD", period="6mo", interval="1d")
         if df is None or df.empty or len(df) < 21:
             _btc_regime_cache = "neutral"
             return _btc_regime_cache
@@ -230,8 +228,7 @@ def _deep_scan_symbol(symbol: str, params: dict[str, Any]) -> dict[str, Any]:
     lookback = ind_cfg.get("lookback_period", "3mo")
 
     ticker = _yf_ticker(symbol)
-    t = yf.Ticker(ticker)
-    df = t.history(period=lookback, interval=interval)
+    df = _DATA_PROVIDER.history(ticker, period=lookback, interval=interval)
 
     result = core.deep_scan_symbol_from_df(symbol, df, params)
 
@@ -288,8 +285,7 @@ def _fetch_current_price(symbol: str) -> Optional[float]:
     """Fetch current price via yfinance."""
     try:
         ticker = _yf_ticker(symbol)
-        t = yf.Ticker(ticker)
-        df = t.history(period="1d", interval="1m")
+        df = _DATA_PROVIDER.history(ticker, period="1d", interval="1m")
         if df is not None and not df.empty:
             return float(df['Close'].iloc[-1])
     except Exception:

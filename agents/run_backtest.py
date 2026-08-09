@@ -22,6 +22,9 @@ from strategy_technical import ChartMasterAgent
 from strategy_contrarian import FadeMasterAgent
 from strategy_momentum import BlitzTraderAgent
 from backtester import Backtester
+from strategy_registry import effective_params
+from scan_backtester import ScanBacktester
+from crypto_scan_backtester import CryptoScanBacktester
 
 AGENT_CLASSES = {
     "newshound": NewsHoundAgent,
@@ -46,7 +49,7 @@ def print_report(report_dict: dict) -> None:
     print(f"  Max Drawdown:    {r['max_drawdown_pct']:.2f}%")
     print(f"  Win Rate:        {r['win_rate']:.1%} ({r['winning_trades']}/{r['total_trades']})")
     print(f"  Profit Factor:   {r['profit_factor']:.3f}")
-    print(f"  Avg Hold Days:   {r['avg_hold_days']:.1f}")
+    print(f"  Avg Hold Hours:  {r.get('avg_hold_hours', r['avg_hold_days'] * 24):.1f}")
     print(f"  Total Trades:    {r['total_trades']}")
 
     if r.get("per_symbol_stats"):
@@ -67,11 +70,15 @@ def main():
     parser.add_argument("--start", type=str, default="", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, default="", help="End date (YYYY-MM-DD)")
     parser.add_argument("--capital", type=float, default=100000.0, help="Initial capital (default: $100,000)")
+    parser.add_argument("--interval", type=str, default="", help="Candle interval override for runner backtests")
+    parser.add_argument("--slippage", type=float, default=5.0, help="Slippage in basis points")
     parser.add_argument("--json", type=str, default="", help="Save full report as JSON to this path")
     args = parser.parse_args()
 
     if args.list:
         print("\nAvailable strategies for backtesting:")
+        print("  blitzrunner      — BlitzRunner: deterministic equity momentum")
+        print("  cryptorunner    — CryptoRunner: deterministic crypto swing")
         for key, info in list_personalities().items():
             if key in AGENT_CLASSES:
                 print(f"  {key:15s} — {info['name']}: {info['tagline']} [{info['strategy']}]")
@@ -79,6 +86,30 @@ def main():
 
     if not args.agent:
         parser.error("agent key is required (or use --list)")
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
+
+    if args.agent in {"blitzrunner", "cryptorunner"}:
+        defaults = {
+            "blitzrunner": (["NVDA", "TSLA", "META", "AMZN"], "1h", "BlitzRunner", "momentum_scalp"),
+            "cryptorunner": (["BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "LINK"], "4h", "CryptoRunner", "crypto_swing"),
+        }
+        default_symbols, default_interval, display_name, strategy_type = defaults[args.agent]
+        params = effective_params(display_name, strategy_type)
+        selected_symbols = symbols or default_symbols
+        interval = args.interval if hasattr(args, "interval") and args.interval else default_interval
+        print(f"\nRunning backtest: {display_name} ({args.agent})")
+        print(f"  Symbols: {', '.join(selected_symbols)}")
+        print(f"  Period:  {args.start or '2y'} → {args.end or 'now'}")
+        print(f"  Capital: ${args.capital:,.2f}")
+        bt = CryptoScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage) if args.agent == "cryptorunner" else ScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage)
+        report_dict = bt.run().to_dict()
+        print_report(report_dict)
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(report_dict, f, indent=2)
+            print(f"Full report saved to: {args.json}")
+        return
 
     if args.agent not in PERSONALITIES:
         print(f"Unknown agent: {args.agent}")

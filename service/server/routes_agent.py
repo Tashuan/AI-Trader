@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 _AGENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "agents")
 if _AGENTS_DIR not in sys.path:
     sys.path.insert(0, _AGENTS_DIR)
-import scan_core
+from strategy_registry import effective_params
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket
 
@@ -1198,25 +1198,12 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     # ─── Strategy params endpoints (self-service) ─────────────────
 
-    DEFAULT_STRATEGY_PARAMS = scan_core.DEFAULT_PARAMS
-
-    def _merge_strategy_defaults(stored: dict) -> dict:
-        """Merge stored params over defaults so all fields are always populated."""
-        result = {}
-        for section, defaults in DEFAULT_STRATEGY_PARAMS.items():
-            stored_section = stored.get(section)
-            if stored_section is None:
-                result[section] = defaults
-            elif isinstance(stored_section, dict) and isinstance(defaults, dict):
-                result[section] = {**defaults, **stored_section}
-            else:
-                # Non-dict values (lists, strings, etc.) — use stored value if present
-                result[section] = stored_section if stored_section else defaults
-        # Include any extra top-level keys that aren't in defaults
-        for key, val in stored.items():
-            if key not in result:
-                result[key] = val
-        return result
+    def _effective_for_agent(agent: dict, stored: dict | None = None) -> dict:
+        return effective_params(
+            agent_name=agent.get('name', ''),
+            strategy_type=agent.get('strategy_type', ''),
+            stored=stored or {},
+        )
 
     @app.get('/api/claw/agents/me/strategy-params')
     async def get_agent_strategy_params(authorization: str = Header(None)):
@@ -1232,14 +1219,14 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
         conn.close()
 
         if not row or not row['config_json']:
-            return {'strategy_params': _merge_strategy_defaults({})}
+            return {'strategy_params': _effective_for_agent(agent, {})}
 
         try:
             config = json.loads(row['config_json'])
         except (json.JSONDecodeError, TypeError):
-            return {'strategy_params': _merge_strategy_defaults({})}
+            return {'strategy_params': _effective_for_agent(agent, {})}
 
-        return {'strategy_params': _merge_strategy_defaults(config.get('strategy_params', {}))}
+        return {'strategy_params': _effective_for_agent(agent, config.get('strategy_params', {}))}
 
     @app.patch('/api/claw/agents/me/strategy-params')
     async def update_agent_strategy_params(data: StrategyParamsUpdate, authorization: str = Header(None)):
@@ -1270,6 +1257,12 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
             else:
                 params[key] = value
 
+        try:
+            effective = _effective_for_agent(agent, params)
+        except ValueError as exc:
+            conn.close()
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
         config['strategy_params'] = params
 
         if row:
@@ -1285,7 +1278,7 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
         conn.commit()
         conn.close()
 
-        return {'success': True, 'strategy_params': params}
+        return {'success': True, 'strategy_params': effective}
 
     # ─── Position state endpoint (self-service) ───────────────────
 

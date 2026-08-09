@@ -517,7 +517,8 @@ def deep_scan_symbol_from_df(symbol: str, df: pd.DataFrame, params: dict[str, An
     def _add_indicator(name, value, signal, family):
         nonlocal bullish_count, bearish_count, neutral_count
         indicators[name] = {"value": value, "signal": signal, "family": family}
-        families.add(family)
+        if signal != "neutral":
+            families.add(family)
         if signal == "bullish":
             bullish_count += 1
         elif signal == "bearish":
@@ -572,17 +573,18 @@ def deep_scan_symbol_from_df(symbol: str, df: pd.DataFrame, params: dict[str, An
     min_families = entry_cfg.get("min_signal_families", 3)
     min_vol = entry_cfg.get("min_vol_ratio", 1.3)
 
+    direction = "long" if bullish_count > bearish_count else "short"
+    directional_count = max(bullish_count, bearish_count)
     qualifies = (
-        bullish_count >= min_signals
+        directional_count >= min_signals
         and len(families) >= min_families
         and vol_ratio > min_vol
         and not obv_div
     )
-    direction = "long" if bullish_count > bearish_count else "short"
 
     # Composite score (6 families now)
     weights = params.get("scoring_weights", {})
-    signal_count_score = bullish_count / 15.0
+    signal_count_score = max(bullish_count, bearish_count) / 15.0
     family_diversity_score = len(families) / 6.0
     candle_quality_score = min(body_ratio, 1.0)
     consolidation_bonus = 1.0 if consolidation_bo else 0.0

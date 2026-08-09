@@ -30,6 +30,13 @@ interface AgentEditData {
   auto_start: boolean;
   poll_interval: number;
   api_base: string;
+  risk_controls: {
+    paper_account_budget: number;
+    risk_per_trade_pct: number;
+    max_trade_notional_pct: number;
+    max_open_risk_pct: number;
+    daily_loss_halt_pct: number;
+  };
 }
 
 const STRATEGY_OPTIONS = [
@@ -69,9 +76,14 @@ export function AgentEditorModal({ agentId, agentName, onClose, onSaved }: Agent
 
   const fetchDetail = useCallback(async () => {
     try {
-      const res = await fetch(`/api/agents/manage/${agentId}`, { headers: authHeaders() });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const [res, strategyRes] = await Promise.all([
+        fetch(`/api/agents/manage/${agentId}`, { headers: authHeaders() }),
+        fetch(`/api/agents/manage/${agentId}/strategy-params`, { headers: authHeaders() }),
+      ]);
+      if (!res.ok || !strategyRes.ok) throw new Error(`HTTP ${!res.ok ? res.status : strategyRes.status}`);
       const d = await res.json();
+      const strategy = await strategyRes.json();
+      const risk = strategy.strategy_params?.risk_controls || {};
       setData({
         tagline: d.tagline || '',
         bio: d.bio || '',
@@ -94,6 +106,13 @@ export function AgentEditorModal({ agentId, agentName, onClose, onSaved }: Agent
         auto_start: d.auto_start ?? false,
         poll_interval: d.poll_interval || 300,
         api_base: d.api_base || 'http://localhost:8000/api',
+        risk_controls: {
+          paper_account_budget: risk.paper_account_budget ?? 10000,
+          risk_per_trade_pct: risk.risk_per_trade_pct ?? 0.5,
+          max_trade_notional_pct: risk.max_trade_notional_pct ?? 25,
+          max_open_risk_pct: risk.max_open_risk_pct ?? 1.5,
+          daily_loss_halt_pct: risk.daily_loss_halt_pct ?? 3,
+        },
       });
     } catch (e: any) {
       setError(e.message || 'Failed to load agent config');
@@ -134,20 +153,34 @@ export function AgentEditorModal({ agentId, agentName, onClose, onSaved }: Agent
     if (data) update('quirks', data.quirks.filter((_, i) => i !== idx));
   };
 
+  const updateRisk = (field: keyof AgentEditData['risk_controls'], value: number) => {
+    setData(prev => prev ? { ...prev, risk_controls: { ...prev.risk_controls, [field]: value } } : prev);
+  };
+
   const handleSave = async () => {
     if (!data) return;
     setSaving(true);
     setError(null);
     setSuccess(null);
     try {
+      const { risk_controls, ...agentConfig } = data;
       const res = await fetch(`/api/agents/manage/${agentId}`, {
         method: 'PUT',
         headers: authHeaders(),
-        body: JSON.stringify(data),
+        body: JSON.stringify(agentConfig),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
         throw new Error(err.detail || 'Failed to save');
+      }
+      const strategyRes = await fetch(`/api/agents/manage/${agentId}/strategy-params`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ risk_controls }),
+      });
+      if (!strategyRes.ok) {
+        const err = await strategyRes.json().catch(() => ({ detail: `HTTP ${strategyRes.status}` }));
+        throw new Error(err.detail || 'Failed to save risk controls');
       }
       setSuccess('Saved successfully');
       setTimeout(() => {
@@ -251,6 +284,28 @@ export function AgentEditorModal({ agentId, agentName, onClose, onSaved }: Agent
                   <input type="number" className="form-input" value={data.max_positions} min={1} max={50} onChange={e => update('max_positions', parseInt(e.target.value) || 1)} />
                 </FormField>
               </div>
+            </FormSection>
+
+            {/* Risk & Budget */}
+            <FormSection title="Risk & Budget">
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="Paper Budget ($)">
+                  <input type="number" className="form-input" value={data.risk_controls.paper_account_budget} min={100} max={1000000} onChange={e => updateRisk('paper_account_budget', parseFloat(e.target.value) || 0)} />
+                </FormField>
+                <FormField label="Risk / Trade (%)">
+                  <input type="number" className="form-input" value={data.risk_controls.risk_per_trade_pct} min={0.01} max={5} step={0.05} onChange={e => updateRisk('risk_per_trade_pct', parseFloat(e.target.value) || 0)} />
+                </FormField>
+                <FormField label="Max Notional (%)">
+                  <input type="number" className="form-input" value={data.risk_controls.max_trade_notional_pct} min={0.1} max={100} step={1} onChange={e => updateRisk('max_trade_notional_pct', parseFloat(e.target.value) || 0)} />
+                </FormField>
+                <FormField label="Max Open Risk (%)">
+                  <input type="number" className="form-input" value={data.risk_controls.max_open_risk_pct} min={0.01} max={20} step={0.1} onChange={e => updateRisk('max_open_risk_pct', parseFloat(e.target.value) || 0)} />
+                </FormField>
+                <FormField label="Daily Loss Halt (%)">
+                  <input type="number" className="form-input" value={data.risk_controls.daily_loss_halt_pct} min={0.1} max={100} step={0.25} onChange={e => updateRisk('daily_loss_halt_pct', parseFloat(e.target.value) || 0)} />
+                </FormField>
+              </div>
+              <p className="text-[10px] text-arena-text-dim">Existing positions are preserved; new entries are capped by remaining paper budget and risk.</p>
             </FormSection>
 
             {/* Behavioral Parameters */}

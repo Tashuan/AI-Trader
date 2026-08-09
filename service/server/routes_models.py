@@ -63,6 +63,8 @@ class RealtimeSignalRequest(BaseModel):
     outcome: Optional[str] = None
     stop_loss_price: Optional[float] = None
     take_profit_price: Optional[float] = None
+    stop_loss_pct: Optional[float] = None
+    take_profit_pct: Optional[float] = None
     trailing_sl_pct: Optional[float] = None
     trailing_activation_pct: Optional[float] = None
     order_type: Optional[str] = "market"
@@ -396,6 +398,7 @@ class StrategyParamsUpdate(BaseModel):
     watchlist: Optional[List[str]] = None
     sweep: Optional[Dict[str, Any]] = None
     cycle_timing: Optional[Dict[str, Any]] = None
+    risk_controls: Optional[Dict[str, Any]] = None
 
 
 class PositionStateUpdate(BaseModel):

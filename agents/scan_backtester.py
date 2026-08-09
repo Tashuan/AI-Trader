@@ -19,6 +19,7 @@ import pandas as pd
 
 import scan_core
 from backtest_report import BacktestReport, TradeRecord
+from market_data import MarketDataProvider, YFinanceProvider
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class ScanBacktester:
         interval: str = "1h",
         slippage_bps: float = 0.0,
         goal_target: Optional[float] = None,
+        provider: MarketDataProvider | None = None,
     ):
         self.symbols = symbols
         self.params = params
@@ -94,19 +96,14 @@ class ScanBacktester:
         self.interval = interval or "1h"
         self.slippage_bps = slippage_bps
         self.goal_target = goal_target if goal_target is not None else initial_capital * 0.10
+        self.provider = provider or YFinanceProvider()
 
     # ─── Historical data fetching ──────────────────────────────────
 
     def _fetch_historical_data(self, symbol: str) -> Optional[pd.DataFrame]:
         """Fetch historical OHLCV for a symbol via yfinance, reset_index'd."""
         try:
-            import yfinance as yf
-        except ImportError:
-            return None
-
-        try:
             yf_symbol = scan_core.yf_ticker(symbol)
-            ticker = yf.Ticker(yf_symbol)
             is_intraday = self.interval != "1d"
 
             if is_intraday:
@@ -124,15 +121,15 @@ class ScanBacktester:
                     if self.end_date else now
                 )
                 end = min(end_dt, now).strftime("%Y-%m-%d")
-                df = ticker.history(start=start, end=end, interval=self.interval, auto_adjust=False, raise_errors=False)
+                df = self.provider.history(yf_symbol, start=start, end=end, interval=self.interval, auto_adjust=False, raise_errors=False)
             elif not self.start_date:
-                df = ticker.history(period="2y", interval="1d", auto_adjust=False, raise_errors=False)
+                df = self.provider.history(yf_symbol, period="2y", interval="1d", auto_adjust=False, raise_errors=False)
             else:
                 fetch_start_dt = datetime.fromisoformat(self.start_date) - timedelta(days=365)
                 start = fetch_start_dt.strftime("%Y-%m-%d")
                 end_dt = datetime.fromisoformat(self.end_date) + timedelta(days=1) if self.end_date else datetime.now()
                 end = end_dt.strftime("%Y-%m-%d")
-                df = ticker.history(start=start, end=end, interval="1d", auto_adjust=False, raise_errors=False)
+                df = self.provider.history(yf_symbol, start=start, end=end, interval="1d", auto_adjust=False, raise_errors=False)
         except Exception:
             return None
 
@@ -558,7 +555,7 @@ class ScanBacktester:
             if not data.get("qualifies_for_entry"):
                 continue
             # Apply raised bar after consecutive losses
-            sig_count = data.get("signal_count", {}).get("bullish", 0)
+            sig_count = max(data.get("signal_count", {}).get("bullish", 0), data.get("signal_count", {}).get("bearish", 0))
             if consecutive_losses >= self.params.get("position_sizing", {}).get("consecutive_loss_threshold", 3):
                 if sig_count < min_signals:
                     continue

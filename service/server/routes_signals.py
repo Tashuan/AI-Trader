@@ -47,6 +47,8 @@ from routes_shared import (
 )
 from services import _add_agent_points, _get_agent_by_token, _reserve_signal_id, _update_position_from_signal
 from signal_quality import score_signal_quality
+from scalp_guardrails import GuardrailViolation, validate_entry
+from portfolio_risk_engine import evaluate_portfolio_risk
 from team_missions import TeamMissionError, record_team_message_from_signal, record_team_reply_from_parent_signal
 from utils import _extract_token
 
@@ -284,6 +286,14 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         fill_price = apply_slippage(price, action_lower)
         trade_value = fill_price * qty
         fee = trade_value * TRADE_FEE_RATE
+        stop_loss_price = data.stop_loss_price
+        take_profit_price = data.take_profit_price
+        if data.stop_loss_pct is not None:
+            distance = abs(float(data.stop_loss_pct)) / 100.0
+            stop_loss_price = fill_price * (1 - distance if action_lower == 'buy' else 1 + distance)
+        if data.take_profit_pct is not None:
+            distance = abs(float(data.take_profit_pct)) / 100.0
+            take_profit_price = fill_price * (1 + distance if action_lower == 'buy' else 1 - distance)
         position_entry_price = None
         reward_points = SIGNAL_PUBLISH_REWARD
         reward_context = experiment_contexts[0] if experiment_contexts else None
@@ -293,6 +303,32 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         cursor = conn.cursor()
         try:
             begin_write_transaction(cursor)
+            if action_lower in ('buy', 'short'):
+                try:
+                    validate_entry(
+                        cursor,
+                        agent_id=agent_id,
+                        market=market,
+                        symbol=symbol,
+                        action=action_lower,
+                        trade_value=trade_value,
+                        now=now,
+                    )
+                except GuardrailViolation as exc:
+                    raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+                portfolio_check = evaluate_portfolio_risk(
+                    cursor,
+                    agent_id=agent_id,
+                    market=market,
+                    symbol=symbol,
+                    side=action_lower,
+                    trade_value=trade_value,
+                    now=now,
+                )
+                if not portfolio_check.get('approved'):
+                    raise HTTPException(status_code=403, detail=portfolio_check.get('reason', 'Portfolio risk rejected entry'))
+
             signal_id = _reserve_signal_id(cursor)
 
             if action_lower in ('sell', 'cover'):
@@ -358,8 +394,8 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 cursor=cursor,
                 token_id=polymarket_token_id,
                 outcome=polymarket_outcome,
-                stop_loss_price=data.stop_loss_price,
-                take_profit_price=data.take_profit_price,
+                stop_loss_price=stop_loss_price,
+                take_profit_price=take_profit_price,
                 trailing_sl_pct=data.trailing_sl_pct,
                 trailing_activation_pct=data.trailing_activation_pct,
             )
@@ -459,6 +495,30 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                     follower_position = None
 
                     if action_lower in ['buy', 'short']:
+                        try:
+                            validate_entry(
+                                cursor,
+                                agent_id=follower_id,
+                                market=market,
+                                symbol=symbol,
+                                action=action_lower,
+                                trade_value=trade_value,
+                                now=now,
+                            )
+                            follower_risk = evaluate_portfolio_risk(
+                                cursor,
+                                agent_id=follower_id,
+                                market=market,
+                                symbol=symbol,
+                                side=action_lower,
+                                trade_value=trade_value,
+                                now=now,
+                            )
+                            if not follower_risk.get('approved'):
+                                raise GuardrailViolation(follower_risk.get('reason', 'Follower portfolio risk rejected entry'))
+                        except GuardrailViolation:
+                            cursor.execute(f'ROLLBACK TO SAVEPOINT follower_{follower_id}')
+                            continue
                         follower_fee = trade_value * TRADE_FEE_RATE
                         follower_total = trade_value + follower_fee
                         cursor.execute('SELECT cash FROM agents WHERE id = ?', (follower_id,))

@@ -41,6 +41,7 @@ if _WORKSPACE_DIR not in sys.path:
     sys.path.insert(0, _WORKSPACE_DIR)
 
 import scan_core
+from strategy_registry import effective_params, position_notional
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
@@ -86,10 +87,14 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    """Persist state to JSON file."""
+    """Persist state atomically so an interrupted cycle cannot corrupt it."""
     try:
-        with open(STATE_FILE, "w") as f:
+        temp_file = f"{STATE_FILE}.tmp"
+        with open(temp_file, "w") as f:
             json.dump(state, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_file, STATE_FILE)
     except Exception as e:
         logger.warning(f"Could not save state file: {e}")
 
@@ -157,8 +162,12 @@ def post_activity(token: str, text: str, market: str = "crypto", symbol: str = "
     post_discussion(token, text, market=market, symbol=symbol)
 
 
-def login(name: str = "BlitzRunner", password: str = "blitzrunner_pass_2026") -> Optional[str]:
-    """Login to the platform and return auth token."""
+def login(name: str = "BlitzRunner", password: Optional[str] = None) -> Optional[str]:
+    """Login using an explicitly supplied or environment-backed password."""
+    password = password or os.getenv("BLITZ_RUNNER_PASSWORD")
+    if not password:
+        logger.warning("BLITZ_RUNNER_PASSWORD not configured; using dev fallback")
+        password = "blitzrunner"
     try:
         url = f"{API_BASE}/claw/agents/login"
         data = json.dumps({"name": name, "password": password, "client_type": "python_bot"}).encode()
@@ -173,8 +182,12 @@ def login(name: str = "BlitzRunner", password: str = "blitzrunner_pass_2026") ->
         return None
 
 
-def register(name: str = "BlitzRunner", password: str = "blitzrunner_pass_2026") -> Optional[str]:
-    """Register on the platform and return auth token."""
+def register(name: str = "BlitzRunner", password: Optional[str] = None) -> Optional[str]:
+    """Register using an explicitly supplied or environment-backed password."""
+    password = password or os.getenv("BLITZ_RUNNER_PASSWORD")
+    if not password:
+        logger.warning("BLITZ_RUNNER_PASSWORD not configured; using dev fallback")
+        password = "blitzrunner"
     try:
         url = f"{API_BASE}/claw/agents/selfRegister"
         data = json.dumps({
@@ -216,7 +229,7 @@ def fetch_goal_status(token: str) -> dict:
         return _api_get(token, "/claw/agents/me/goal")
     except Exception as e:
         logger.warning(f"Could not fetch goal status: {e}")
-        return {"can_trade": True, "goal_achieved": False, "max_loss_hit": False, "progress_pct": 0}
+        return {"can_trade": False, "goal_achieved": False, "max_loss_hit": False, "progress_pct": 0, "_unavailable": True}
 
 
 def fetch_config(token: str) -> dict:
@@ -225,7 +238,7 @@ def fetch_config(token: str) -> dict:
         return _api_get(token, "/claw/agents/me/config")
     except Exception as e:
         logger.warning(f"Could not fetch config: {e}")
-        return {"watchlist": ["BTC", "ETH", "SOL"], "max_positions": 1, "poll_interval": DEFAULT_POLL_INTERVAL}
+        return {"watchlist": [], "poll_interval": DEFAULT_POLL_INTERVAL, "_unavailable": True}
 
 
 def fetch_strategy_params(token: str) -> dict:
@@ -234,19 +247,20 @@ def fetch_strategy_params(token: str) -> dict:
         data = _api_get(token, "/claw/agents/me/strategy-params")
         if isinstance(data, dict) and "strategy_params" in data:
             return data["strategy_params"]
-        return data if isinstance(data, dict) else {}
+        return data if isinstance(data, dict) else {"_unavailable": True}
     except Exception as e:
         logger.warning(f"Could not fetch strategy params: {e}")
-        return {}
+        return {"_unavailable": True}
 
 
 def fetch_portfolio(token: str) -> dict:
     """Fetch current portfolio (cash, positions, equity)."""
     try:
-        return _api_get(token, "/positions")
+        data = _api_get(token, "/positions")
+        return data if isinstance(data, dict) else {"_unavailable": True}
     except Exception as e:
         logger.warning(f"Could not fetch portfolio: {e}")
-        return {"cash": 100000.0, "positions": [], "portfolio_value": 100000.0}
+        return {"cash": 0.0, "positions": [], "portfolio_value": 0.0, "_unavailable": True}
 
 
 def send_heartbeat(token: str) -> None:
@@ -335,7 +349,8 @@ def execute_close(token: str, symbol: str, side: str, quantity: float,
 def execute_entry(token: str, symbol: str, side: str, quantity: float,
                   market: str, stop_loss_price: float, take_profit_price: float,
                   trailing_sl_pct: float, trailing_activation_pct: float,
-                  reason: str) -> bool:
+                  reason: str, stop_loss_pct: float = 0.0,
+                  take_profit_pct: float = 0.0) -> bool:
     """Enter a new position via POST /signals/realtime with SL/TP/trailing."""
     action = "buy" if side == "long" else "short"
     try:
@@ -348,6 +363,8 @@ def execute_entry(token: str, symbol: str, side: str, quantity: float,
             "executed_at": "now",
             "stop_loss_price": round(stop_loss_price, 6),
             "take_profit_price": round(take_profit_price, 6),
+            "stop_loss_pct": stop_loss_pct,
+            "take_profit_pct": take_profit_pct,
             "trailing_sl_pct": trailing_sl_pct,
             "trailing_activation_pct": trailing_activation_pct,
             "content": f"[BlitzRunner] {reason}",
@@ -376,7 +393,7 @@ def compute_atr_sl_tp(entry_price: float, side: str, scan_data: dict,
     """
     exit_cfg = params.get("exit_rules", {})
     indicators = scan_data.get("indicators", {})
-    atr = indicators.get("atr_14", 0)
+    atr = scan_data.get("atr", 0) or indicators.get("atr", {}).get("value", 0)
 
     # Fallback: use 2% of entry price as ATR proxy
     if atr <= 0:
@@ -422,7 +439,10 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
 
     # 1. Fetch goal status
     goal = fetch_goal_status(token)
-    can_trade = goal.get("can_trade", True)
+    if goal.get("_unavailable"):
+        post_activity(token, "Cycle skipped: goal service unavailable")
+        return state
+    can_trade = goal.get("can_trade", goal.get("status") == "no_goal")
     goal_achieved = goal.get("goal_achieved", False)
     max_loss_hit = goal.get("max_loss_hit", False)
     progress_pct = goal.get("progress_pct", 0)
@@ -434,14 +454,19 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
 
     # 2. Fetch portfolio for equity calculation
     portfolio = fetch_portfolio(token)
-    cash = float(portfolio.get("cash", 100000.0))
+    if portfolio.get("_unavailable"):
+        post_activity(token, "Cycle skipped: portfolio service unavailable")
+        return state
+    cash = float(portfolio.get("cash", 0.0))
     positions = portfolio.get("positions", [])
 
     # Compute current equity
     equity = cash
+    gross_exposure = 0.0
     for p in positions:
         qty = abs(float(p.get("quantity", 0)))
         price = float(p.get("current_price", 0)) or float(p.get("entry_price", 0))
+        gross_exposure += qty * price
         side = p.get("side", "long")
         if side == "long":
             equity += qty * price
@@ -449,7 +474,7 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
             equity -= qty * price
 
     initial_capital = 100000.0
-    goal_target = 1000.0  # default; could fetch from goal config
+    goal_target = goal.get("goal", {}).get("target_amount", 0) if isinstance(goal.get("goal"), dict) else 0
 
     # 3. Run scan.py run_scan() for indicators + setups + position reviews
     # Import here to avoid heavy yfinance import at module load
@@ -514,7 +539,7 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     for setup in ranked_setups:
         sym = setup["symbol"]
         sym_data = scan_result.get("symbols", {}).get(sym, {})
-        sig_count = sym_data.get("signal_count", {}).get("bullish", 0)
+        sig_count = max(sym_data.get("signal_count", {}).get("bullish", 0), sym_data.get("signal_count", {}).get("bearish", 0))
         if state.get("consecutive_losses", 0) >= params.get("position_sizing", {}).get("consecutive_loss_threshold", 3):
             if sig_count < min_signals:
                 continue
@@ -569,7 +594,7 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
                         # Enter the new setup
                         best_sym = best["symbol"]
                         if best_sym not in state["reentry_cooldown"]:
-                            _enter_from_setup(token, best, scan_result, state, params, equity, initial_capital, goal_target)
+                            _enter_from_setup(token, best, scan_result, state, params, equity, initial_capital, goal_target, gross_exposure)
                     return state
 
     # 9. Entry logic — fill available slots
@@ -584,7 +609,7 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
             if any(p.get("symbol", "").upper() == sym.upper() for p in positions):
                 continue
 
-            entered = _enter_from_setup(token, setup, scan_result, state, params, equity, initial_capital, goal_target)
+            entered = _enter_from_setup(token, setup, scan_result, state, params, equity, initial_capital, goal_target, gross_exposure)
             if entered:
                 available_slots -= 1
 
@@ -596,7 +621,7 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
 
 def _enter_from_setup(token: str, setup: dict, scan_result: dict, state: dict,
                       params: dict, equity: float, initial_capital: float,
-                      goal_target: float) -> bool:
+                      goal_target: float, gross_exposure: float) -> bool:
     """Enter a position from a ranked setup. Returns True if entry succeeded."""
     symbol = setup["symbol"]
     side = setup.get("direction", "long")
@@ -608,45 +633,34 @@ def _enter_from_setup(token: str, setup: dict, scan_result: dict, state: dict,
         logger.warning(f"Scan data missing for {symbol}, skipping entry")
         return False
 
-    # Goal-aware sizing
-    size_pct, is_final_stretch = sizing_pct(
-        equity, initial_capital, goal_target,
-        state.get("consecutive_losses", 0), params
-    )
-
-    ps_cfg = params.get("position_sizing", {})
-    notional = equity * (size_pct / 100.0)
-
-    # Apply dollar cap if configured
-    max_dollar = ps_cfg.get("max_position_dollar_cap")
-    if max_dollar is not None and notional > max_dollar:
-        notional = max_dollar
-
     # Get current price from scan data
     entry_price = sym_data.get("price", 0)
     if entry_price <= 0:
         logger.warning(f"No price for {symbol}, skipping entry")
         return False
 
-    # Compute quantity
-    qty = notional / entry_price
-    if qty <= 0:
-        return False
-
-    # Compute ATR-based SL/TP and trailing params
+    # Compute ATR-based SL/TP and risk-based quantity.
     sl_price, tp_price, trail_sl_pct, trail_act_pct = compute_atr_sl_tp(
         entry_price, side, sym_data, params
     )
+    stop_distance_pct = abs((sl_price - entry_price) / entry_price) * 100
+    notional = position_notional(equity, stop_distance_pct, gross_exposure, params)
+    qty = notional / entry_price if notional > 0 else 0
+    if qty <= 0:
+        return False
 
     # Build reason string
-    sig_count = sym_data.get("signal_count", {}).get("bullish", 0)
+    sig_count = max(sym_data.get("signal_count", {}).get("bullish", 0), sym_data.get("signal_count", {}).get("bearish", 0))
     score = setup.get("score", 0)
-    reason = f"Auto-entry: {side} {symbol} | score={score:.1f} signals={sig_count} size={size_pct:.1f}%"
+    risk_pct = params.get("risk_controls", {}).get("risk_per_trade_pct", 0.5)
+    reason = f"Auto-entry: {side} {symbol} | score={score:.1f} signals={sig_count} risk={risk_pct:.2f}% notional=${notional:.2f}"
 
     success = execute_entry(
         token, symbol, side, qty, market,
         sl_price, tp_price, trail_sl_pct, trail_act_pct,
-        reason
+        reason,
+        abs((sl_price - entry_price) / entry_price) * 100,
+        abs((tp_price - entry_price) / entry_price) * 100,
     )
 
     return success
@@ -675,16 +689,23 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
         try:
             # Fetch live config for poll interval
             config = fetch_config(token)
+            if config.get("_unavailable"):
+                raise RuntimeError("config service unavailable")
             live_poll = config.get("poll_interval", poll_interval)
 
-            # Fetch strategy params
-            params = fetch_strategy_params(token)
-            # Merge with defaults
-            params = scan_core.deep_merge(dict(scan_core.DEFAULT_PARAMS), params)
+            # Fetch strategy params through the agent-specific profile resolver.
+            stored_params = fetch_strategy_params(token)
+            if stored_params.get("_unavailable"):
+                raise RuntimeError("strategy parameter service unavailable")
+            params = effective_params("BlitzRunner", "momentum_scalp", stored_params)
+            logger.info("Effective profile=%s interval=%s budget=$%.2f risk=%.2f%%", params["profile"], params["indicators"].get("candle_interval"), params["risk_controls"]["paper_account_budget"], params["risk_controls"]["risk_per_trade_pct"])
 
             # Override watchlist from config if present
             if config.get("watchlist"):
                 params["watchlist"] = config["watchlist"]
+            if config.get("max_positions") is not None:
+                params["position_sizing"]["max_positions"] = int(config["max_positions"])
+                params["risk_controls"]["max_positions"] = int(config["max_positions"])
 
             # Run the cycle
             state = run_cycle(token, state, params)
