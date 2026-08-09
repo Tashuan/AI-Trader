@@ -346,8 +346,12 @@ export function BacktestPage() {
   const generateDiagnosis = (r: BacktestReport): DiagnosisItem[] => {
     const findings: DiagnosisItem[] = [];
     const winRatePct = r.win_rate * 100;
-    const days = r.equity_curve.length;
-    const tradesPerDay = days > 0 ? r.total_trades / days : 0;
+    const startMs = Date.parse(r.start_date);
+    const endMs = Date.parse(r.end_date);
+    const days = Number.isFinite(startMs) && Number.isFinite(endMs)
+      ? Math.max(1, Math.ceil((endMs - startMs) / 86400000))
+      : Math.max(1, r.equity_curve.length);
+    const tradesPerDay = r.total_trades / days;
     const avgWinPnl = r.winning_trades > 0
       ? r.trades.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0) / r.winning_trades : 0;
     const avgLossPnl = r.losing_trades > 0

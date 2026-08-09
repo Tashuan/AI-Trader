@@ -10,6 +10,8 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 from base_agent import BaseAgent, TradeDecision
 from market_data import MarketDataClient, TechnicalSnapshot
 from personality import Personality
@@ -330,10 +332,13 @@ class Backtester:
                 end_dt = datetime.fromisoformat(self.end_date) + timedelta(days=1) if self.end_date else datetime.now()
                 end = end_dt.strftime("%Y-%m-%d")
                 df = ticker.history(start=start, end=end, interval="1d", auto_adjust=False, raise_errors=False)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to fetch historical data for %s: %s", symbol, exc)
             return None
 
         if df is None or getattr(df, "empty", True):
+            logger.warning("No historical data returned for %s (interval=%s, start=%s, end=%s)",
+                           symbol, self.interval, self.start_date, self.end_date)
             return None
 
         df = df.reset_index()
@@ -509,8 +514,9 @@ class Backtester:
                 decisions = agent.analyze()
                 for decision in decisions:
                     agent.execute_trade(decision)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("analyze() failed for %s at %s: %s",
+                               self.personality.name, sim_ts, exc)
 
             # Restore original method
             agent.market_data.fetch_technical = original_fetch

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import math
 from datetime import datetime, timedelta
 from typing import Optional
@@ -13,6 +14,8 @@ import crypto_scan_core as core
 from backtest_report import BacktestReport, TradeRecord
 from strategy_registry import position_notional
 from market_data import MarketDataProvider, YFinanceProvider
+
+logger = logging.getLogger(__name__)
 
 
 class CryptoScanBacktester:
@@ -52,9 +55,12 @@ class CryptoScanBacktester:
             if end:
                 kwargs["end"] = end.strftime("%Y-%m-%d")
             df = self.provider.history(core.yf_ticker(symbol), interval=self.interval, **kwargs)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to fetch historical data for %s: %s", symbol, exc)
             return None
         if df is None or df.empty:
+            logger.warning("No historical data returned for %s (interval=%s, start=%s, end=%s)",
+                           symbol, self.interval, self.start_date, self.end_date)
             return None
         df = df.reset_index()
         col = "Datetime" if "Datetime" in df.columns else "Date"
@@ -233,7 +239,7 @@ class CryptoScanBacktester:
                     cash -= notional + fee
                 positions[symbol] = {
                     "symbol": symbol, "side": side, "entry": fill, "qty": qty, "margin": notional,
-                    "stop": stop, "target": target, "trail_pct": trail_pct,
+                    "entry_fee": fee, "stop": stop, "target": target, "trail_pct": trail_pct,
                     "trail_activation": trail_activation, "peak": fill, "trough": fill,
                     "trail": False, "held": 0, "flat": 0, "entry_date": str(ts),
                 }
@@ -241,10 +247,18 @@ class CryptoScanBacktester:
 
             curve.append({"date": str(ts), "equity": round(self._equity(cash, positions, prices), 2)})
 
+        # Close remaining positions at the final simulated bar, not the last
+        # fetched row (which may be outside the requested end date).
+        final_ts = timeline[-1]
         for symbol, pos in list(positions.items()):
             frame = historical[symbol]
-            price = float(frame.iloc[-1]["Close"])
-            cash, _ = self._close(pos, price, timeline[-1], cash, trades, "Backtest end")
+            final_idx = indexes[symbol].get(final_ts)
+            price = (
+                float(frame.iloc[final_idx]["Close"])
+                if final_idx is not None
+                else pos["entry"]
+            )
+            cash, _ = self._close(pos, price, final_ts, cash, trades, "Backtest end")
         return BacktestReport.calculate_metrics(
             agent_name="CryptoRunner",
             symbols=self.symbols,
@@ -267,7 +281,8 @@ class CryptoScanBacktester:
             col = self._time_col(frame)
             frame[col] = pd.to_datetime(frame[col], utc=True)
             return frame.sort_values(col).reset_index(drop=True)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to fetch daily data for %s: %s", symbol, exc)
             return None
 
     def _protective_exit(self, pos: dict, high: float, low: float) -> tuple[Optional[float], Optional[str]]:
@@ -314,15 +329,17 @@ class CryptoScanBacktester:
         fill = price * (1 - slip if pos["side"] == "long" else 1 + slip)
         pnl = (fill - pos["entry"]) * pos["qty"] if pos["side"] == "long" else (pos["entry"] - fill) * pos["qty"]
         fee = fill * pos["qty"] * self.fee_rate
+        entry_fee = pos.get("entry_fee", 0.0)
         cash += pos["margin"] + pnl - fee
+        net_pnl = pnl - fee - entry_fee
         hold_hours = max(0.0, (pd.Timestamp(ts) - pd.Timestamp(pos["entry_date"])).total_seconds() / 3600)
         trades.append(TradeRecord(
             symbol=pos.get("symbol", ""), side=pos["side"], entry_date=pos["entry_date"], exit_date=str(ts),
-            entry_price=pos["entry"], exit_price=fill, quantity=pos["qty"], pnl=pnl - fee,
-            pnl_pct=((pnl - fee) / pos["margin"] * 100) if pos["margin"] else 0,
+            entry_price=pos["entry"], exit_price=fill, quantity=pos["qty"], pnl=net_pnl,
+            pnl_pct=(net_pnl / pos["margin"] * 100) if pos["margin"] else 0,
             hold_days=int(hold_hours // 24), hold_hours=hold_hours, reason=reason,
         ))
-        return cash, pnl - fee
+        return cash, net_pnl
 
     def _empty_report(self) -> BacktestReport:
         return BacktestReport.calculate_metrics(

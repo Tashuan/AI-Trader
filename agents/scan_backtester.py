@@ -130,10 +130,13 @@ class ScanBacktester:
                 end_dt = datetime.fromisoformat(self.end_date) + timedelta(days=1) if self.end_date else datetime.now()
                 end = end_dt.strftime("%Y-%m-%d")
                 df = self.provider.history(yf_symbol, start=start, end=end, interval="1d", auto_adjust=False, raise_errors=False)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to fetch historical data for %s: %s", symbol, exc)
             return None
 
         if df is None or getattr(df, "empty", True):
+            logger.warning("No historical data returned for %s (interval=%s, start=%s, end=%s)",
+                           symbol, self.interval, self.start_date, self.end_date)
             return None
 
         df = df.reset_index()

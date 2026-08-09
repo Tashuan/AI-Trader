@@ -5,7 +5,6 @@ Provides:
   POST /api/arena/state              — Agent reports current state
   GET  /api/arena/state              — Get all agent states
   GET  /api/arena/full               — Single aggregate endpoint for Arena UI
-  GET  /api/arena/markets            — Market battlefield data
   GET  /api/arena/relationships      — Relationship matrix
   GET  /api/arena/narrative/timeline — Event timeline
   GET  /api/arena/narrative/headlines — Arena headlines
@@ -496,105 +495,15 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         result = disconnect_agent(agent_id)
         return result
 
-    # ─── GET /api/arena/markets — Market battlefield data ───────────
+    # ─── GET /api/arena/markets — DISABLED (Market Battlefield removed) ──
 
     _MARKET_CACHE: Optional[tuple[float, dict[str, Any]]] = None
     _MARKET_CACHE_TTL = 30.0
 
     @app.get("/api/arena/markets")
     async def arena_markets():
-        nonlocal _MARKET_CACHE
-        now_ts = time.time()
-        if _MARKET_CACHE and now_ts - _MARKET_CACHE[0] < _MARKET_CACHE_TTL:
-            return {"markets": _MARKET_CACHE[1]}
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Get all positions to compute agent attention per symbol
-        cursor.execute(
-            """
-            SELECT p.symbol, p.market, p.side, p.agent_id, a.name as agent_name
-            FROM positions p
-            JOIN agents a ON a.id = p.agent_id
-            """
-        )
-        position_rows = cursor.fetchall()
-
-        # Get agent states to find what agents are watching
-        states = get_agent_states()
-
-        # Get agent watchlists from personalities
-        personalities = _load_personalities()
-
-        # Build per-symbol data
-        symbol_data: dict[str, dict[str, Any]] = {}
-        for sym in MARKET_BAR_SYMBOLS:
-            symbol_data[sym] = {
-                "price": 0,
-                "change_pct": 0.0,
-                "sparkline": [],
-                "agents_watching": 0,
-                "bullish_count": 0,
-                "bearish_count": 0,
-                "most_confident_agent": None,
-                "most_confident_direction": None,
-                "agent_positions": [],
-            }
-
-        # Count positions per symbol
-        for row in position_rows:
-            sym = (row["symbol"] or "").upper()
-            if sym in symbol_data:
-                side = row["side"]
-                if side == "long":
-                    symbol_data[sym]["bullish_count"] += 1
-                elif side == "short":
-                    symbol_data[sym]["bearish_count"] += 1
-                symbol_data[sym]["agents_watching"] += 1
-                symbol_data[sym]["agent_positions"].append({
-                    "agent": row["agent_name"],
-                    "side": side,
-                    "confidence": 0.5,
-                })
-
-        # Count agents watching via states
-        for agent_id, state in states.items():
-            sym = (state.get("symbol") or "").upper()
-            if sym in symbol_data:
-                symbol_data[sym]["agents_watching"] += 1
-
-        # Count agents watching via watchlists
-        cursor.execute("SELECT id, name FROM agents")
-        all_agents = cursor.fetchall()
-        conn.close()
-
-        for agent in all_agents:
-            name = agent["name"]
-            personality = personalities.get(name)
-            if personality:
-                for sym in personality.get("watchlist", []):
-                    sym_upper = sym.upper()
-                    if sym_upper in symbol_data:
-                        # Only count if not already counted via positions/states
-                        already_counted = any(
-                            p["agent"] == name for p in symbol_data[sym_upper]["agent_positions"]
-                        )
-                        if not already_counted:
-                            symbol_data[sym_upper]["agents_watching"] += 1
-
-        # Fetch prices (best-effort, don't block on failures)
-        for sym in MARKET_BAR_SYMBOLS:
-            try:
-                price_data = _fetch_price(sym)
-                symbol_data[sym]["price"] = price_data["price"]
-                symbol_data[sym]["change_pct"] = price_data["change_pct"]
-                symbol_data[sym]["sparkline"] = price_data["sparkline"]
-            except Exception:
-                pass
-
-        _MARKET_CACHE = (now_ts, symbol_data)
-        return {"markets": symbol_data}
+        # Market Battlefield page removed from UI — return empty to avoid _fetch_price API calls
+        return {"markets": {}}
 
     # ─── GET /api/arena/relationships ───────────────────────────────
 
@@ -1273,26 +1182,8 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         conn.close()
 
-        # Build markets data (lightweight — just agent attention, no prices)
+        # Markets data disabled — Market Battlefield page removed from UI
         markets: dict[str, Any] = {}
-        for sym in MARKET_BAR_SYMBOLS:
-            watching = 0
-            bullish = 0
-            bearish = 0
-            for agent in agents:
-                if sym in agent.get("watchlist", []):
-                    watching += 1
-                if agent.get("position") and agent["position"].get("symbol", "").upper() == sym:
-                    watching += 1
-                    if agent["position"]["side"] == "long":
-                        bullish += 1
-                    elif agent["position"]["side"] == "short":
-                        bearish += 1
-            markets[sym] = {
-                "agents_watching": watching,
-                "bullish_count": bullish,
-                "bearish_count": bearish,
-            }
 
         # Get headlines — generated from all available agent data
         headline_data = []

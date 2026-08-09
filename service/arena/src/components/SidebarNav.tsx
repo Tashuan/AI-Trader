@@ -1,9 +1,9 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState } from 'react';
-import { LayoutDashboard, ChevronLeft, ChevronRight, Settings, TrendingUp, Users, Activity, Target, Shield, FlaskConical } from 'lucide-react';
+import { LayoutDashboard, ChevronLeft, ChevronRight, Settings, Users, Activity, Target, Shield, FlaskConical } from 'lucide-react';
 import { BackgroundTaskIndicator } from './BackgroundTaskIndicator';
 
-export type PageId = 'arena' | 'agents' | 'markets' | 'positions' | 'risk' | 'timeline' | 'backtest' | 'settings';
+export type PageId = 'arena' | 'agents' | 'positions' | 'risk' | 'timeline' | 'backtest' | 'settings';
 
 interface NavItem {
   id: PageId;
@@ -15,7 +15,6 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: 'arena', label: 'Arena', icon: <LayoutDashboard size={16} />, description: 'Live agent dashboard' },
   { id: 'agents', label: 'Agents', icon: <Users size={16} />, description: 'Launch & manage agents' },
-  { id: 'markets', label: 'Markets', icon: <TrendingUp size={16} />, description: 'Market battlefield' },
   { id: 'positions', label: 'Positions', icon: <Target size={16} />, description: 'SL/TP position tracker' },
   { id: 'risk', label: 'Risk', icon: <Shield size={16} />, description: 'Portfolio risk engine' },
   { id: 'timeline', label: 'Timeline', icon: <Activity size={16} />, description: 'Event & trade history' },

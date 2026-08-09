@@ -9,7 +9,6 @@ import { AgentDashboard } from './components/AgentDashboard';
 // import { CommentaryPanel, ConversationPanel, HeadlinesPanel } from './components/SidePanels';
 import { ConversationPanel, HeadlinesPanel } from './components/SidePanels';
 import { AgentDrawer } from './components/AgentDrawer';
-import { MarketsPage } from './pages/MarketsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { TimelinePage } from './pages/TimelinePage';
@@ -51,7 +50,6 @@ export default function App() {
     );
   }
 
-  const markets = data?.markets || {};
   const agents = data?.agents || [];
   const headlines = data?.headlines || [];
   const timeline = data?.timeline || [];
@@ -94,10 +92,6 @@ export default function App() {
             <AgentDashboard agents={agents} />
 
           </div>
-        )}
-
-        {currentPage === 'markets' && (
-          <MarketsPage markets={markets} />
         )}
 
         {currentPage === 'positions' && (

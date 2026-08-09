@@ -22,9 +22,14 @@ class MarketDataProvider(Protocol):
 class YFinanceProvider:
     """Development market-data provider with a stable scanner-facing contract."""
 
-    def history(self, symbol: str, *, period: str = "1mo", interval: str = "1d", **kwargs):
+    def history(self, symbol: str, *, period: Optional[str] = "1mo", interval: str = "1d", **kwargs):
         import yfinance as yf
-        return yf.Ticker(symbol).history(period=period, interval=interval, **kwargs)
+        # yfinance rejects calls that supply both `period` and `start`/`end`.
+        # When a date range is provided, drop the default period so the call
+        # is valid instead of raising "Set maximum 2 of them."
+        if kwargs.get("start") is not None or kwargs.get("end") is not None:
+            return yf.Ticker(symbol).history(interval=interval, **kwargs)
+        return yf.Ticker(symbol).history(period=period or "1mo", interval=interval, **kwargs)
 
     def quote(self, symbol: str):
         frame = self.history(symbol, period="1d", interval="1m")

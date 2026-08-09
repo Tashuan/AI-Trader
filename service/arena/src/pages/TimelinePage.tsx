@@ -21,6 +21,7 @@ export function TimelinePage({ timeline }: TimelinePageProps) {
         <span className="flex items-center gap-1"><span className="text-arena-purple">🎯</span> Strategy</span>
         <span className="flex items-center gap-1"><span className="text-arena-blue">💬</span> Reply</span>
         <span className="flex items-center gap-1"><span className="text-arena-text-secondary">📊</span> Other</span>
+        <span className="flex items-center gap-1 ml-auto"><span className="font-mono text-arena-text-dim">Agent</span> column shows which bot posted</span>
       </div>
 
       <div className="card-base p-4 flex-1 min-h-0 flex flex-col">
@@ -32,6 +33,9 @@ export function TimelinePage({ timeline }: TimelinePageProps) {
               </span>
               <span className={`shrink-0 ${event.type === 'trade' ? 'text-arena-green' : event.type === 'strategy' ? 'text-arena-purple' : event.type === 'reply' ? 'text-arena-blue' : 'text-arena-text-secondary'}`}>
                 {event.type === 'trade' ? '⚡' : event.type === 'strategy' ? '🎯' : event.type === 'reply' ? '💬' : '📊'}
+              </span>
+              <span className="shrink-0 text-[10px] font-mono font-semibold text-arena-green bg-arena-green/10 border border-arena-green/20 rounded px-1.5 py-0.5 min-w-[90px] text-center">
+                {event.agent || '—'}
               </span>
               <span className="text-arena-text-secondary">{event.content}</span>
             </div>

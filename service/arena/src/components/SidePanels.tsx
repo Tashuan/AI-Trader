@@ -160,6 +160,9 @@ export function EventTimelinePanel({ timeline }: { timeline: TimelineEvent[] }) 
             <span className={`shrink-0 ${event.type === 'trade' ? 'text-arena-green' : event.type === 'strategy' ? 'text-arena-purple' : 'text-arena-text-secondary'}`}>
               {event.type === 'trade' ? '⚡' : event.type === 'strategy' ? '🎯' : '📊'}
             </span>
+            <span className="shrink-0 font-mono font-semibold text-arena-green bg-arena-green/10 border border-arena-green/20 rounded px-1 py-0.5 min-w-[70px] text-center">
+              {event.agent || '—'}
+            </span>
             <span className="text-arena-text-secondary line-clamp-2">{event.content}</span>
           </div>
         ))}
