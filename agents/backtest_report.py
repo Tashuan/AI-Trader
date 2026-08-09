@@ -68,6 +68,7 @@ class BacktestReport:
     exit_attribution: dict = field(default_factory=dict)
     data_coverage: dict = field(default_factory=dict)
     walk_forward_summary: dict = field(default_factory=dict)
+    goal_simulation: dict = field(default_factory=dict)
 
     def activation_gate(self) -> dict:
         checks = {
@@ -107,6 +108,7 @@ class BacktestReport:
             "exit_attribution": self.exit_attribution,
             "data_coverage": self.data_coverage,
             "walk_forward_summary": self.walk_forward_summary,
+            "goal_simulation": self.goal_simulation,
         }
 
     @staticmethod

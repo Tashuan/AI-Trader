@@ -86,6 +86,7 @@ class ScanBacktester:
         interval: str = "1h",
         slippage_bps: float = 0.0,
         goal_target: Optional[float] = None,
+        goal_max_loss: Optional[float] = None,
         provider: MarketDataProvider | None = None,
     ):
         self.symbols = symbols
@@ -96,6 +97,8 @@ class ScanBacktester:
         self.interval = interval or "1h"
         self.slippage_bps = slippage_bps
         self.goal_target = goal_target if goal_target is not None else initial_capital * 0.10
+        self.goal_max_loss = goal_max_loss
+        self.goal_active = goal_target is not None or goal_max_loss is not None
         self.provider = provider or YFinanceProvider()
 
     # ─── Historical data fetching ──────────────────────────────────
@@ -256,6 +259,12 @@ class ScanBacktester:
         reentry_cooldown: dict[str, int] = {}  # symbol -> remaining cooldown bars
         actual_start = sorted_ts[0]
         actual_end = sorted_ts[-1]
+
+        # Goal halt state
+        goal_can_open = True
+        goal_status = "active"
+        goal_halt_ts = None
+        goal_reason = None
 
         exit_cfg = self.params.get("exit_rules", {})
         stagnation_threshold = exit_cfg.get("stagnation_threshold_pct", 0.3)
@@ -475,9 +484,23 @@ class ScanBacktester:
                                         cash += cost
                                     positions[new_sym] = new_pos
 
+            # ── Goal halt check ──────────────────────────────────────
+            if self.goal_active and goal_can_open:
+                pnl_dollars = current_equity - self.initial_capital
+                if self.goal_target is not None and pnl_dollars >= self.goal_target:
+                    goal_can_open = False
+                    goal_status = "achieved"
+                    goal_halt_ts = sim_ts
+                    goal_reason = f"target_reached_${pnl_dollars:.2f}"
+                elif self.goal_max_loss is not None and pnl_dollars <= -self.goal_max_loss:
+                    goal_can_open = False
+                    goal_status = "max_loss_hit"
+                    goal_halt_ts = sim_ts
+                    goal_reason = f"max_loss_hit_${pnl_dollars:.2f}"
+
             # ── Entry logic (fill up to max_positions) ────────────────
             available_slots = max_positions - len(positions)
-            if available_slots > 0 and scans:
+            if available_slots > 0 and scans and goal_can_open:
                 ranked = self._rank_setups(scans, consecutive_losses)
                 for best in ranked:
                     if available_slots <= 0:
@@ -538,7 +561,7 @@ class ScanBacktester:
         final_equity = cash
         periods_per_year = _BARS_PER_DAY.get(self.interval, 1) * 252.0
 
-        return BacktestReport.calculate_metrics(
+        report = BacktestReport.calculate_metrics(
             agent_name="BlitzTrader",
             symbols=self.symbols,
             start_date=actual_start,
@@ -551,6 +574,18 @@ class ScanBacktester:
             slippage_bps=self.slippage_bps,
             periods_per_year=periods_per_year,
         )
+        if self.goal_active:
+            report.goal_simulation = {
+                "target_amount": self.goal_target,
+                "max_loss": self.goal_max_loss,
+                "status": goal_status,
+                "halt_timestamp": goal_halt_ts,
+                "halt_reason": goal_reason,
+                "final_pnl": round(final_equity - self.initial_capital, 2),
+                "goal_achieved": goal_status == "achieved",
+                "trades_before_halt": len([t for t in closed_trades if goal_halt_ts is None or t.entry_date <= goal_halt_ts]),
+            }
+        return report
 
     # ─── Helpers ────────────────────────────────────────────────────
 

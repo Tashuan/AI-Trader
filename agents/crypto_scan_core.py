@@ -25,10 +25,10 @@ CRYPTO_DEFAULT_PARAMS: dict[str, Any] = {
         "stop_loss_pct_clamp": [-3.0, -5.0],
         "take_profit_pct": 8.0,
         "take_profit_pct_clamp": [6.0, 10.0],
-        "stagnation_hours": 8,
-        "stagnation_threshold_pct": 1.0,
+        "stagnation_hours": 3,
+        "stagnation_threshold_pct": 1.5,
         "momentum_death_vol_ratio": 0.4,
-        "momentum_death_grace_hours": 32,
+        "momentum_death_grace_hours": 5,
         "ob_exhaustion_rsi": 80,
         "trailing_sl_pct": 3.0,
         "trailing_activation_pct": 4.0,
@@ -36,7 +36,7 @@ CRYPTO_DEFAULT_PARAMS: dict[str, Any] = {
     "entry_criteria": {
         "min_signals": 5,
         "min_signal_families": 3,
-        "min_vol_ratio": 1.3,
+        "min_vol_ratio": 1.5,
         "direction_mode": "both",
         "require_daily_trend_agreement": True,
         "require_btc_regime_ok_for_alts": True,
@@ -47,6 +47,7 @@ CRYPTO_DEFAULT_PARAMS: dict[str, Any] = {
         "regime_lookback_days": 55,
         "regime_persistence_bars": 3,
         "regime_neutral_mode": "block",
+        "btc_self_filter": True,
     },
     "position_sizing": {
         "max_positions": 3,
@@ -81,9 +82,9 @@ CRYPTO_DEFAULT_PARAMS: dict[str, Any] = {
         "reserve_btc_slot": False,
     },
     "indicators": {
-        "candle_interval": "4h",
+        "candle_interval": "1d",
         "confirm_interval": "1d",
-        "lookback_period": "3mo",
+        "lookback_period": "1y",
         "rsi_period": 14,
         "rsi_bullish": 55,
         "rsi_overbought": 80,
@@ -102,7 +103,7 @@ CRYPTO_DEFAULT_PARAMS: dict[str, Any] = {
         "vol_ratio_dead": 0.4,
     },
     "watchlist": [
-        "BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "ADA", "LINK",
+        "BTC", "SOL", "DOGE", "AVAX", "XRP", "ADA", "LINK",
         "DOT", "LTC", "UNI", "ATOM", "NEAR", "ARB", "OP", "INJ",
         "SUI", "SEI", "TIA", "PEPE", "SHIB", "MATIC", "APT", "BCH",
     ],
@@ -450,9 +451,10 @@ def regime_filter_entry(
     """
     cfg = params.get("entry_criteria", {})
     require_alignment = cfg.get("require_btc_regime_alignment", False)
+    btc_self_filter = cfg.get("btc_self_filter", True)
     regime_label = regime.get("regime", "neutral")
 
-    if symbol == "BTC":
+    if symbol == "BTC" and not btc_self_filter:
         return True, ""
 
     if regime_label == "bullish" and direction == "short":

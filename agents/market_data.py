@@ -38,6 +38,16 @@ class YFinanceProvider:
         return float(frame["Close"].iloc[-1])
 
 
+# Re-export crypto providers for convenient import:
+#   from market_data import HyperliquidProvider, BinanceProvider, CoinbaseProvider, CryptoFallbackProvider
+from crypto_data_providers import (  # noqa: E402
+    HyperliquidProvider,
+    BinanceProvider,
+    CoinbaseProvider,
+    CryptoFallbackProvider,
+)
+
+
 # ============================================================
 # Technical Analysis Data Structure
 # ============================================================

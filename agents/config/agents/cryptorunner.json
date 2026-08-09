@@ -2,7 +2,7 @@
   "agent_id": 1,
   "agent_name": "CryptoRunner",
   "content_hash": "f2acf996c1120f26",
-  "display_name": "CryptoRunner \u2014 Crypto Swing/Trend",
+  "display_name": "CryptoRunner \u2014 Crypto Position/Trend",
   "effective_strategy_params": {
     "cycle_timing": {
       "poll_interval_default": 1800,
@@ -12,20 +12,21 @@
     "entry_criteria": {
       "bearish_macro_min_signals": 6,
       "bearish_macro_threshold": 0.3,
+      "btc_self_filter": true,
       "direction_mode": "both",
       "min_avg_dollar_volume": 500000,
       "min_signal_families": 3,
       "min_signals": 5,
-      "min_vol_ratio": 1.3,
+      "min_vol_ratio": 1.5,
       "require_btc_regime_ok_for_alts": true,
       "require_daily_trend_agreement": true
     },
     "exit_rules": {
-      "momentum_death_grace_hours": 32,
+      "momentum_death_grace_hours": 5,
       "momentum_death_vol_ratio": 0.4,
       "ob_exhaustion_rsi": 80,
-      "stagnation_hours": 8,
-      "stagnation_threshold_pct": 1.0,
+      "stagnation_hours": 3,
+      "stagnation_threshold_pct": 1.5,
       "stop_loss_pct": -5.0,
       "stop_loss_pct_clamp": [
         -3.0,
@@ -44,14 +45,14 @@
       "bb_squeeze_ratio": 0.6,
       "candle_body_conviction": 0.6,
       "candle_body_doji": 0.3,
-      "candle_interval": "4h",
+      "candle_interval": "1d",
       "confirm_interval": "1d",
       "ema_periods": [
         9,
         21,
         55
       ],
-      "lookback_period": "3mo",
+      "lookback_period": "1y",
       "macd_fast": 12,
       "macd_signal": 9,
       "macd_slow": 26,
@@ -94,7 +95,7 @@
       "max_trade_notional_pct": 25.0,
       "paper_account_budget": 10000.0,
       "paper_only": true,
-      "risk_per_trade_pct": 0.5,
+      "risk_per_trade_pct": 3.0,
       "sizing_mode": "risk_based"
     },
     "schema_version": 2,
@@ -118,7 +119,6 @@
     },
     "watchlist": [
       "BTC",
-      "ETH",
       "SOL",
       "DOGE",
       "AVAX",

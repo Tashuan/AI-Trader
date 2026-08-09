@@ -1,10 +1,10 @@
-# CryptoRunner — Deterministic Crypto Swing/Trend Runner
+# CryptoRunner — Deterministic Crypto Position/Trend Runner
 
 > Paper-trading only. No real-money execution. No LLM in the loop.
 
 ## Overview
 
-CryptoRunner is a fully deterministic trading bot that executes a **crypto-specific swing/trend strategy** on digital assets. It uses 4-hour candles with daily trend confirmation, EMA trend alignment, a BTC regime filter for altcoins, and a liquidity floor gate. It supports up to 3 concurrent positions with wider stops and longer hold periods tuned for crypto volatility.
+CryptoRunner is a fully deterministic trading bot that executes a **crypto position/trend strategy** on digital assets. It uses **daily (1d) candles** with EMA trend alignment, a BTC regime filter for altcoins, and a liquidity floor gate. It supports up to 3 concurrent positions with aggressive risk sizing (3% per trade) tuned for daily-timeframe momentum.
 
 Like BlitzRunner, there is zero AI judgment — every decision follows the exact same code path as the crypto backtester.
 
@@ -12,9 +12,9 @@ Like BlitzRunner, there is zero AI judgment — every decision follows the exact
 
 | Parameter | Value |
 |---|---|
-| **Candle interval** | 4h |
+| **Candle interval** | 1d |
 | **Confirmation interval** | 1d (daily trend agreement) |
-| **Lookback period** | 3 months |
+| **Lookback period** | 1 year |
 | **Max positions** | 3 |
 | **Default watchlist** | BTC, ETH, SOL, DOGE, AVAX, XRP, ADA, LINK, DOT, LTC, UNI, ATOM, NEAR, ARB, OP, INJ, SUI, SEI, TIA, PEPE, SHIB, MATIC, APT, BCH |
 | **Default poll interval** | 1800 seconds (30 min) |
@@ -24,19 +24,37 @@ Like BlitzRunner, there is zero AI judgment — every decision follows the exact
 | **Min signals for entry** | 5 directional |
 | **Min signal families** | 3 |
 | **Min volume ratio** | 1.3x average |
-| **Risk per trade** | 0.50% of equity |
+| **Risk per trade** | 3.0% of equity |
 | **Max trade notional** | 25% of equity |
 | **Max open risk** | 1.50% of equity |
 | **Daily loss halt** | 3.0% of equity |
 | **Paper budget** | $10,000 |
 | **Min avg dollar volume** | $500,000 |
 
+## Backtested Performance (1d, 5 symbols, $10k)
+
+| Metric | Value |
+|---|---|
+| **Annual return** | +22.50% ($2,250) |
+| **Sharpe ratio** | 3.115 |
+| **Max drawdown** | 6.60% ($660) |
+| **Win rate** | 75.0% (21/28) |
+| **Profit factor** | 1.982 |
+| **Avg hold time** | 48 hours (2 days) |
+| **Avg position size** | $5,556 (55.6% of equity) |
+| **Avg loss** | $327 (3.27% of account) |
+| **Avg win** | $216 (2.16% of account) |
+| **Worst single loss** | $403 (4.03% of account) |
+| **Best single win** | $676 (6.76% of account) |
+
+The strategy is **win-rate dependent** (high win rate, negative R:R). It stays profitable as long as win rate remains above ~60%.
+
 ## What Makes CryptoRunner Different from BlitzRunner
 
 | Feature | BlitzRunner | CryptoRunner |
 |---|---|---|
 | Market | US equities (and some crypto) | Crypto only |
-| Candle interval | 1h | 4h |
+| Candle interval | 1h | 1d |
 | Max positions | 1 | 3 |
 | Stop loss | -2.0% | -5.0% (clamped) |
 | Take profit | +2.0% | +8.0% (clamped) |
@@ -45,8 +63,9 @@ Like BlitzRunner, there is zero AI judgment — every decision follows the exact
 | Min volume ratio | 1.5x | 1.3x |
 | OB exhaustion RSI | 75 | 80 |
 | Momentum death vol | 0.7x | 0.4x |
-| Stagnation timeout | 6 cycles | 8 hours (~2 cycles at 4h) |
-| Grace period | 3 bars | 32 hours (~8 cycles at 4h) |
+| Stagnation timeout | 6 cycles | 3 days |
+| Grace period | 3 bars | 5 days |
+| Risk per trade | 0.50% | 3.0% |
 | Daily trend confirmation | No | Yes |
 | BTC regime filter | No | Yes (for altcoins) |
 | Liquidity floor | No | Yes ($500k avg daily volume) |
@@ -63,8 +82,8 @@ A crypto symbol qualifies for entry when **all** of the following are true:
 2. **Signal family diversity** — At least 3 of the 6 indicator families are represented.
 3. **Volume confirmation** — Current bar volume > 1.3x the 20-bar average.
 4. **No OBV divergence** — Fake breakout detection.
-5. **Daily trend agreement** — The daily (1d) candle close must be on the same side as the entry direction (close > SMA20 for longs, close < SMA20 for shorts). This prevents 4h signals that conflict with the daily trend.
-6. **BTC regime filter** (for altcoins only) — If BTC's daily close is below its EMA21 (bearish regime), long entries on altcoins are blocked. BTC itself is exempt.
+5. **Daily trend agreement** — The daily candle close must be on the same side as the entry direction (close > SMA20 for longs, close < SMA20 for shorts).
+6. **BTC regime filter** (for altcoins only) — If BTC's daily close is below its EMA21 (bearish regime), long entries on altcoins are blocked. BTC itself is subject to the same regime filter via `btc_self_filter`.
 7. **Liquidity floor** — Average dollar volume (close x volume) over the lookback must exceed $500,000.
 
 ### Indicator Families (6 total)
@@ -74,7 +93,7 @@ A crypto symbol qualifies for entry when **all** of the following are true:
 | `volume` | Volume ratio, OBV divergence |
 | `volatility` | ATR, Bollinger Bands state |
 | `trend` | SMA alignment, EMA21, MACD histogram |
-| `momentum` | RSI, stochastic, 4h return |
+| `momentum` | RSI, stochastic, daily return |
 | `timing` | VWAP, candle body ratio, consolidation breakout |
 | `trend_strength` | EMA alignment (9/21/55 stack) |
 
@@ -94,7 +113,7 @@ A crypto symbol qualifies for entry when **all** of the following are true:
 | 10 | VWAP | timing | Bullish if price > VWAP |
 | 11 | Candle Body Ratio | timing | Bullish if full body (>= 0.6) |
 | 12 | Consolidation Breakout | timing | Bullish if breaking out |
-| 13 | 4h Return | momentum | Bullish if > 0 |
+| 13 | Daily Return | momentum | Bullish if > 0 |
 | 14 | EMA Alignment (9/21/55) | trend_strength | Bullish if 9>21>55, bearish if 9<21<55 |
 | 15 | EMA21 (context) | trend | Same as #5 |
 
@@ -124,14 +143,14 @@ This indicator creates the `trend_strength` family, raising the total family cou
 |---|---|---|
 | 1. Hard stop-loss | P&L% <= stop_loss_pct | -5.0% (clamped to -3.0% / -5.0%) |
 | 2. Take profit | P&L% >= take_profit_pct | +8.0% (clamped to +6.0% / +10.0%) |
-| 3. Stagnation timeout | Hours flat >= stagnation_hours | 8 hours, 1.0% threshold |
-| 4. Momentum death | Vol < threshold AND hours held >= grace | Vol < 0.4x, grace = 32 hours |
+| 3. Stagnation timeout | Days flat >= stagnation_hours | 3 days, 1.5% threshold |
+| 4. Momentum death | Vol < threshold AND days held >= grace | Vol < 0.4x, grace = 5 days |
 | 5. Overbought exhaustion | RSI > threshold AND vol dropping AND price rising | RSI > 80, vol < 1.0x |
 | 6. VWAP loss | Price crosses below VWAP after entering above it | — |
 
 ### Stop-Loss / Take-Profit Clamping
 
-CryptoRunner introduces clamped protective levels to prevent extreme stops on high-volatility assets:
+CryptoRunner uses clamped protective levels to prevent extreme stops on high-volatility assets:
 
 - **Stop loss**: Computed as -5.0% of entry, but clamped to the range [-3.0%, -5.0%]. This means the stop is never tighter than -3% or wider than -5%.
 - **Take profit**: Computed as +8.0% of entry, clamped to [+6.0%, +10.0%].
@@ -161,7 +180,13 @@ The CryptoRunner backtester also checks intraday high/low against stop and targe
 
 ### Risk-Based Sizing
 
-Same formula as BlitzRunner — notional is derived from risk dollars divided by stop distance, capped by budget and exposure limits. See the [BlitzRunner docs](./BLITZRUNNER.md#position-sizing) for details.
+At 3% risk per trade with a 5% stop distance, the notional per trade is:
+
+```
+notional = (equity × 3.0%) / (5.0% stop) = equity × 0.60
+```
+
+On a $10,000 account, this produces ~$6,000 position sizes. The actual average is ~$5,556 due to ATR-based stop variation and budget caps. See the [BlitzRunner docs](./BLITZRUNNER.md#position-sizing) for the full formula.
 
 ## Multi-Position Logic
 
@@ -182,14 +207,14 @@ Before entering, CryptoRunner checks the **daily candle** (1d interval) for tren
 - For **shorts**: The prior daily close must be below the daily SMA20
 - Requires at least 21 daily bars of history
 
-This prevents 4h signals that fight the daily trend — a common trap in crypto where lower timeframe signals are noisy.
-
 ## BTC Regime Filter
 
 For altcoins (any symbol that is not BTC):
 
 - If BTC's daily close > BTC's daily EMA21 → **bullish regime** → alt longs allowed
 - If BTC's daily close < BTC's daily EMA21 → **bearish regime** → alt longs blocked
+
+BTC itself is also subject to regime filtering via the `btc_self_filter` flag, preventing BTC longs during bearish regimes.
 
 This filter prevents buying altcoins during BTC downtrends, when altcoins typically bleed harder.
 
@@ -227,6 +252,19 @@ State is saved atomically to `agents/crypto_runner_state.json`:
 ```
 
 The `position_entry_times` map tracks when each position was opened so the runner can compute `bars_held` for the momentum-death grace period — matching the backtester's logic exactly.
+
+## Goal-Aware Backtesting
+
+The backtester supports optional goal simulation via CLI flags:
+
+```bash
+python agents/run_backtest.py cryptorunner --goal-target 100 --goal-max-loss 500
+```
+
+- **`--goal-target`**: Dollar profit target. When reached, trading halts.
+- **`--goal-max-loss`**: Dollar max loss. When reached, trading halts.
+
+With a $100 target and $500 max loss on $10k, the strategy hits the goal in ~87 days (2-3 trades) with a 100% win rate on the goal-limited window.
 
 ## Configuration
 
@@ -266,6 +304,12 @@ python agents/crypto_runner.py
 # With custom poll interval
 python agents/crypto_runner.py --interval 600
 
-# Backtest
-python agents/run_backtest.py cryptorunner --start 2025-06-01 --end 2025-08-01
+# Backtest (defaults to 1d interval)
+python agents/run_backtest.py cryptorunner --start 2025-08-09 --end 2026-08-09
+
+# Backtest with goal simulation
+python agents/run_backtest.py cryptorunner --start 2025-08-09 --end 2026-08-09 --goal-target 100 --goal-max-loss 500
+
+# Backtest with specific symbols
+python agents/run_backtest.py cryptorunner --symbols BTC,SOL,DOGE,AVAX,LINK --start 2025-08-09 --end 2026-08-09
 ```

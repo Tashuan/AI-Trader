@@ -32,6 +32,8 @@ class CryptoScanBacktester:
         slippage_bps: float = 5.0,
         fee_rate: float = 0.001,
         provider: MarketDataProvider | None = None,
+        goal_target: float | None = None,
+        goal_max_loss: float | None = None,
     ):
         self.symbols = symbols
         self.params = copy.deepcopy(params)
@@ -42,6 +44,9 @@ class CryptoScanBacktester:
         self.slippage_bps = slippage_bps
         self.fee_rate = fee_rate
         self.provider = provider or YFinanceProvider()
+        self.goal_target = goal_target
+        self.goal_max_loss = goal_max_loss
+        self.goal_active = goal_target is not None or goal_max_loss is not None
 
     def _fetch(self, symbol: str) -> Optional[pd.DataFrame]:
         try:
@@ -116,6 +121,13 @@ class CryptoScanBacktester:
             if not allowed:
                 result["qualifies_for_entry"] = False
                 result["entry_veto_reason"] = reason
+        elif symbol == "BTC" and cfg.get("btc_self_filter", True):
+            regime = core.classify_regime(daily.get("BTC"), ts, self.params)
+            result["btc_regime"] = regime
+            allowed, reason = core.regime_filter_entry(symbol, direction, regime, self.params)
+            if not allowed:
+                result["qualifies_for_entry"] = False
+                result["entry_veto_reason"] = reason
         if result.get("qualifies_for_entry"):
             min_adv = float(cfg.get("min_avg_dollar_volume", 500000))
             adv = float((window["Close"] * window["Volume"]).mean())
@@ -160,6 +172,12 @@ class CryptoScanBacktester:
         losses = 0
         trades: list[TradeRecord] = []
         curve: list[dict] = []
+
+        # Goal state — tracks whether the agent would halt in live mode
+        goal_can_open = True
+        goal_status = "active"
+        goal_halt_ts = None
+        goal_reason = None
 
         for ts in timeline:
             for symbol in list(cooldown):
@@ -209,6 +227,27 @@ class CryptoScanBacktester:
 
             equity = self._equity(cash, positions, prices)
             gross = self._gross(positions, prices)
+
+            # Goal checks — simulate live agent's goal-aware behavior
+            if self.goal_active and goal_can_open:
+                pnl_dollars = equity - self.initial_capital
+                if self.goal_target is not None and pnl_dollars >= self.goal_target:
+                    goal_can_open = False
+                    goal_status = "achieved"
+                    goal_halt_ts = str(ts)
+                    goal_reason = f"target_reached_${pnl_dollars:.2f}"
+                elif self.goal_max_loss is not None and pnl_dollars <= -self.goal_max_loss:
+                    goal_can_open = False
+                    goal_status = "max_loss_hit"
+                    goal_halt_ts = str(ts)
+                    goal_reason = f"max_loss_hit_${pnl_dollars:.2f}"
+
+            # Final-stretch sizing — reduce position size when >80% to goal
+            final_stretch = False
+            if self.goal_active and self.goal_target and self.goal_target > 0:
+                progress = ((equity - self.initial_capital) / self.goal_target) * 100
+                final_stretch = progress > 80.0
+
             ranked = sorted(
                 ((data.get("composite_score", 0), symbol, data) for symbol, data in scans.items()
                  if data.get("qualifies_for_entry") and symbol not in positions and symbol not in cooldown),
@@ -218,6 +257,8 @@ class CryptoScanBacktester:
             if losses >= params.get("position_sizing", {}).get("consecutive_loss_threshold", 3):
                 minimum = params.get("position_sizing", {}).get("consecutive_loss_min_signals", minimum)
             for _, symbol, data in ranked:
+                if not goal_can_open:
+                    break
                 if len(positions) >= max_positions:
                     break
                 directional = max(data.get("signal_count", {}).get("bullish", 0), data.get("signal_count", {}).get("bearish", 0))
@@ -237,6 +278,9 @@ class CryptoScanBacktester:
                 stop, target, trail_pct, trail_activation = core.compute_atr_sl_tp(entry, side, data, params)
                 stop_distance = abs((stop - entry) / entry) * 100
                 notional = position_notional(equity, stop_distance, gross, params)
+                # Goal final-stretch sizing — reduce notional when approaching target
+                if final_stretch:
+                    notional *= 0.5
                 if notional <= 0:
                     continue
                 slip = self.slippage_bps / 10000
@@ -269,7 +313,7 @@ class CryptoScanBacktester:
                 else pos["entry"]
             )
             cash, _ = self._close(pos, price, final_ts, cash, trades, "Backtest end")
-        return BacktestReport.calculate_metrics(
+        report = BacktestReport.calculate_metrics(
             agent_name="CryptoRunner",
             symbols=self.symbols,
             start_date=str(timeline[0]),
@@ -282,6 +326,18 @@ class CryptoScanBacktester:
             slippage_bps=self.slippage_bps,
             periods_per_year=6 * 365,
         )
+        if self.goal_active:
+            report.goal_simulation = {
+                "target_amount": self.goal_target,
+                "max_loss": self.goal_max_loss,
+                "status": goal_status,
+                "halt_timestamp": goal_halt_ts,
+                "halt_reason": goal_reason,
+                "final_pnl": round(cash - self.initial_capital, 2),
+                "goal_achieved": goal_status == "achieved",
+                "trades_before_halt": len([t for t in trades if goal_halt_ts is None or t.entry_date <= goal_halt_ts]),
+            }
+        return report
 
     def _fetch_daily(self, symbol: str) -> Optional[pd.DataFrame]:
         try:

@@ -54,7 +54,7 @@ def _field(label: str, field_type: str, minimum: float | None = None,
 
 STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
     "crypto_swing": {
-        "display_name": "CryptoRunner — Crypto Swing/Trend",
+        "display_name": "CryptoRunner — Crypto Position/Trend",
         "strategy_type": "crypto_swing",
         "parity_status": "live_backtest_matched",
         "defaults": crypto_scan_core.CRYPTO_DEFAULT_PARAMS,
@@ -68,10 +68,10 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "stop_loss_pct_clamp": _field("SL Clamp [min, max]", "list", default=[-3.0, -5.0]),
                 "take_profit_pct": _field("Take Profit %", "number", minimum=0, maximum=50, default=8.0),
                 "take_profit_pct_clamp": _field("TP Clamp [min, max]", "list", default=[6.0, 10.0]),
-                "stagnation_hours": _field("Stagnation Hours", "number", minimum=1, maximum=168, default=8),
-                "stagnation_threshold_pct": _field("Stagnation Threshold %", "number", minimum=0, maximum=10, default=1.0),
+                "stagnation_hours": _field("Stagnation Hours", "number", minimum=1, maximum=168, default=3),
+                "stagnation_threshold_pct": _field("Stagnation Threshold %", "number", minimum=0, maximum=10, default=1.5),
                 "momentum_death_vol_ratio": _field("Momentum Death Vol Ratio", "number", minimum=0, maximum=2, default=0.4),
-                "momentum_death_grace_hours": _field("Momentum Death Grace Hours", "number", minimum=1, maximum=168, default=32),
+                "momentum_death_grace_hours": _field("Momentum Death Grace Hours", "number", minimum=1, maximum=168, default=5),
                 "ob_exhaustion_rsi": _field("OB Exhaustion RSI", "number", minimum=50, maximum=100, default=80),
                 "trailing_sl_pct": _field("Trailing SL %", "number", minimum=0, maximum=20, default=3.0),
                 "trailing_activation_pct": _field("Trailing Activation %", "number", minimum=0, maximum=50, default=4.0),
@@ -90,6 +90,7 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "regime_lookback_days": _field("Regime Lookback Days", "number", minimum=7, maximum=200, default=55),
                 "regime_persistence_bars": _field("Regime Persistence Bars", "number", minimum=1, maximum=20, default=3),
                 "regime_neutral_mode": _field("Regime Neutral Mode", "enum", choices=["block", "reduce", "allow"], default="block"),
+                "btc_self_filter": _field("BTC Self-Filter (apply regime to BTC)", "bool", default=True),
             },
             "position_sizing": {
                 "max_positions": _field("Max Positions", "number", minimum=1, maximum=50, default=3),
@@ -118,9 +119,9 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "trend_strength_weight": _field("Trend Strength Weight", "number", minimum=0, maximum=1, default=0.15),
             },
             "indicators": {
-                "candle_interval": _field("Candle Interval", "enum", choices=["1m", "5m", "15m", "30m", "1h", "4h", "1d"], default="4h"),
+                "candle_interval": _field("Candle Interval", "enum", choices=["1m", "5m", "15m", "30m", "1h", "4h", "1d"], default="1d"),
                 "confirm_interval": _field("Confirmation Interval", "enum", choices=["1h", "4h", "1d"], default="1d"),
-                "lookback_period": _field("Lookback Period", "enum", choices=["1mo", "3mo", "6mo", "1y", "2y"], default="3mo"),
+                "lookback_period": _field("Lookback Period", "enum", choices=["1mo", "3mo", "6mo", "1y", "2y"], default="1y"),
                 "rsi_period": _field("RSI Period", "number", minimum=2, maximum=50, default=14),
                 "rsi_bullish": _field("RSI Bullish", "number", minimum=0, maximum=100, default=55),
                 "rsi_overbought": _field("RSI Overbought", "number", minimum=50, maximum=100, default=80),

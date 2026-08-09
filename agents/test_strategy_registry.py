@@ -14,7 +14,7 @@ class StrategyRegistryTests(unittest.TestCase):
         self.assertEqual(equity["profile"], "equity_momentum")
         self.assertEqual(crypto["profile"], "crypto_swing")
         self.assertEqual(equity["indicators"]["candle_interval"], "1h")
-        self.assertEqual(crypto["indicators"]["candle_interval"], "4h")
+        self.assertEqual(crypto["indicators"]["candle_interval"], "1d")
         self.assertEqual(crypto["position_sizing"]["max_positions"], 3)
 
     def test_nested_overrides_preserve_profile_defaults(self):
@@ -29,6 +29,7 @@ class StrategyRegistryTests(unittest.TestCase):
     def test_risk_notional_respects_budget_and_stop(self):
         params = effective_params("CryptoRunner")
         notional = position_notional(10000.0, 5.0, 0.0, params)
+        # Default risk_per_trade_pct=0.5, stop=5% → notional = 10000*0.005/0.05 = 1000
         self.assertAlmostEqual(notional, 1000.0)
         self.assertEqual(position_notional(10000.0, 5.0, 10000.0, params), 0.0)
 

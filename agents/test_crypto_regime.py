@@ -63,12 +63,20 @@ class TestRegimeClassification(unittest.TestCase):
         regime = classify_regime(df, params={"entry_criteria": {"regime_persistence_bars": 10}})
         self.assertEqual(regime["regime"], "neutral")
 
-    def test_regime_filter_btc_exempt(self):
+    def test_regime_filter_btc_self_filter_disabled(self):
         from crypto_scan_core import regime_filter_entry
         regime = {"regime": "bearish"}
-        params = {"entry_criteria": {}}
+        params = {"entry_criteria": {"btc_self_filter": False}}
         ok, reason = regime_filter_entry("BTC", "long", regime, params)
         self.assertTrue(ok)
+
+    def test_regime_filter_btc_self_filter_enabled(self):
+        from crypto_scan_core import regime_filter_entry
+        regime = {"regime": "bearish"}
+        params = {"entry_criteria": {"btc_self_filter": True}}
+        ok, reason = regime_filter_entry("BTC", "long", regime, params)
+        self.assertFalse(ok)
+        self.assertIn("bearish", reason)
 
     def test_regime_filter_bearish_blocks_long(self):
         from crypto_scan_core import regime_filter_entry

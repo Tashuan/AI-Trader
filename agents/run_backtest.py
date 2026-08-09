@@ -59,6 +59,19 @@ def print_report(report_dict: dict) -> None:
         for sym, stats in r["per_symbol_stats"].items():
             print(f"  {sym:<10} {stats['trades']:>7} {stats['wins']:>5} {stats['win_rate']:>10.1%} {stats['total_pnl']:>12.2f} {stats['avg_pnl_pct']:>10.2f}")
 
+    if r.get("goal_simulation") and r["goal_simulation"].get("target_amount") is not None:
+        g = r["goal_simulation"]
+        print(f"\n  --- Goal Simulation ---")
+        print(f"  Target:      ${g['target_amount']:.0f}")
+        print(f"  Max Loss:    ${g['max_loss']:.0f}" if g.get("max_loss") else "  Max Loss:    none")
+        print(f"  Status:      {g['status']}")
+        print(f"  Final P&L:   ${g['final_pnl']:.2f}")
+        print(f"  Achieved:    {'YES' if g['goal_achieved'] else 'NO'}")
+        if g.get("halt_timestamp"):
+            print(f"  Halted at:   {g['halt_timestamp']}")
+            print(f"  Halt reason: {g['halt_reason']}")
+            print(f"  Trades before halt: {g['trades_before_halt']}")
+
     print(f"\n{'='*60}\n")
 
 
@@ -73,6 +86,8 @@ def main():
     parser.add_argument("--interval", type=str, default="", help="Candle interval override for runner backtests")
     parser.add_argument("--slippage", type=float, default=5.0, help="Slippage in basis points")
     parser.add_argument("--json", type=str, default="", help="Save full report as JSON to this path")
+    parser.add_argument("--goal-target", type=float, default=None, help="Goal target profit in $ (e.g. 100 for $100 profit)")
+    parser.add_argument("--goal-max-loss", type=float, default=None, help="Goal max loss in $ (e.g. 500 stops trading at -$500)")
     args = parser.parse_args()
 
     if args.list:
@@ -94,7 +109,7 @@ def main():
         defaults = {
             "blitztrader": (["NVDA", "TSLA", "META", "AMZN"], "1h", "BlitzTrader", "momentum_scalp"),
             "blitzrunner": (["NVDA", "TSLA", "META", "AMZN"], "1h", "BlitzRunner", "momentum_scalp"),
-            "cryptorunner": (["BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "LINK"], "4h", "CryptoRunner", "crypto_swing"),
+            "cryptorunner": (["BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "LINK"], "1d", "CryptoRunner", "crypto_swing"),
         }
         default_symbols, default_interval, display_name, strategy_type = defaults[args.agent]
         params = effective_params(display_name, strategy_type)
@@ -104,7 +119,7 @@ def main():
         print(f"  Symbols: {', '.join(selected_symbols)}")
         print(f"  Period:  {args.start or '2y'} → {args.end or 'now'}")
         print(f"  Capital: ${args.capital:,.2f}")
-        bt = CryptoScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage) if args.agent == "cryptorunner" else ScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage)
+        bt = CryptoScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage, goal_target=args.goal_target, goal_max_loss=args.goal_max_loss) if args.agent == "cryptorunner" else ScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage, goal_target=args.goal_target, goal_max_loss=args.goal_max_loss)
         report_dict = bt.run().to_dict()
         print_report(report_dict)
         if args.json:
