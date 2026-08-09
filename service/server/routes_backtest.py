@@ -35,6 +35,7 @@ class BacktestRequest(BaseModel):
     interval: str = "1d"
     slippage_bps: float = 5.0
     goal_target: Optional[float] = None  # Dollar profit target for goal-aware sizing
+    params_override: Optional[dict] = None  # Temporary strategy test override
 
 
 class WalkForwardRequest(BaseModel):
@@ -159,8 +160,8 @@ def _load_personality_from_db(agent_key: str, fallback_personality):
         return fallback_personality
 
 
-def _load_runner_params(name: str, strategy_type: str) -> dict:
-    """Resolve stored overrides with the runner's agent-specific defaults."""
+def _load_runner_params(name: str, strategy_type: str, override: Optional[dict] = None) -> dict:
+    """Resolve stored overrides with optional one-request test overrides."""
     from strategy_registry import effective_params
 
     stored = {}
@@ -178,7 +179,7 @@ def _load_runner_params(name: str, strategy_type: str) -> dict:
             stored = json.loads(row["config_json"]).get("strategy_params", {})
     except Exception as exc:
         logger.warning(f"Failed to load {name} params from DB: {exc}")
-    return effective_params(name, strategy_type, stored)
+    return effective_params(name, strategy_type, stored, override=override)
 
 
 def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
@@ -222,7 +223,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
             import asyncio
             if req.agent_key == "cryptorunner":
                 from crypto_scan_backtester import CryptoScanBacktester
-                params = _load_runner_params("CryptoRunner", "crypto_swing")
+                params = _load_runner_params("CryptoRunner", "crypto_swing", req.params_override)
                 bt = CryptoScanBacktester(
                     symbols=req.symbols or info["watchlist"], params=params,
                     start_date=req.start_date, end_date=req.end_date,
@@ -232,7 +233,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
             elif req.agent_key == "scalprunner":
                 from scalp_scan_backtester import ScalpScanBacktester
                 from data_cache import CacheOnlyProvider
-                params = _load_runner_params("ScalpRunner", "scalp_4step")
+                params = _load_runner_params("ScalpRunner", "scalp_4step", req.params_override)
                 # Use cache-only provider (no Schwab/Alpaca auth needed) with
                 # 5m as the base timeframe — the cache has ~1yr of 5m equity data.
                 cache_provider = CacheOnlyProvider()
@@ -245,7 +246,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                 )
             else:
                 from scan_backtester import ScanBacktester
-                params = _load_runner_params("BlitzRunner", "momentum_scalp")
+                params = _load_runner_params("BlitzRunner", "momentum_scalp", req.params_override)
                 bt = ScanBacktester(
                     symbols=req.symbols or info["watchlist"], params=params,
                     start_date=req.start_date, end_date=req.end_date,
@@ -273,7 +274,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
             except ImportError as e:
                 raise HTTPException(status_code=500, detail=f"ScanBacktester module not available: {e}")
 
-            params = _load_runner_params("BlitzTrader", "momentum_scalp")
+            params = _load_runner_params("BlitzTrader", "momentum_scalp", req.params_override)
             bt = ScanBacktester(
                 symbols=symbols,
                 params=params,

@@ -9,6 +9,7 @@ level. Exits are ATR-based SL/TP plus an optional trailing stop.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -29,11 +30,15 @@ _INTRADAY_LIMITS = {
     "30m": 60,
 }
 
-_BARS_PER_DAY = {
-    "1m": 1440,
-    "5m": 288,
-    "15m": 96,
-    "30m": 48,
+_BAR_MINUTES = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+}
+
+_SESSION_BARS_PER_DAY = {
+    interval: (390 / minutes) for interval, minutes in _BAR_MINUTES.items()
 }
 
 # Resample rules: base interval → (mid TF, high TF)
@@ -106,6 +111,32 @@ class ScalpScanBacktester:
         self.goal_max_loss = goal_max_loss
         self.goal_active = goal_target is not None or goal_max_loss is not None
         self.base_interval = base_interval
+        self.bar_minutes = _BAR_MINUTES.get(base_interval, 5)
+
+    @staticmethod
+    def _new_diagnostics() -> dict:
+        return {
+            "scan_bars": 0,
+            "scan_errors": 0,
+            "mtf_qualified": 0,
+            "entry_rejected": 0,
+            "trend_rejected": 0,
+            "score_rejected": 0,
+            "liquidity_rejected": 0,
+            "setup_qualified": 0,
+            "orders_placed": 0,
+            "orders_filled": 0,
+            "orders_expired": 0,
+            "pending_at_end": 0,
+            "same_bar_exit_skipped": 0,
+            "exit_counts": Counter(),
+        }
+
+    @staticmethod
+    def _finalize_diagnostics(diagnostics: dict) -> dict:
+        result = dict(diagnostics)
+        result["exit_counts"] = dict(result.get("exit_counts", {}))
+        return result
 
     # ─── Data fetching ─────────────────────────────────────────────
 
@@ -262,6 +293,33 @@ class ScalpScanBacktester:
             logger.debug("Scan failed for %s: %s", symbol, exc)
             return None
 
+    @staticmethod
+    def _record_scan_diagnostic(scan: Optional[dict], diagnostics: dict) -> None:
+        diagnostics["scan_bars"] += 1
+        if not scan:
+            diagnostics["scan_errors"] += 1
+            return
+
+        mtf = scan.get("mtf", {})
+        setup = scan.get("setup")
+        if mtf.get("qualifies_for_entry"):
+            diagnostics["mtf_qualified"] += 1
+        else:
+            if mtf.get("trend_agrees") is False:
+                diagnostics["trend_rejected"] += 1
+            else:
+                diagnostics["entry_rejected"] += 1
+            return
+
+        if not setup:
+            return
+        if setup.get("score", 0) < 4.0:
+            diagnostics["score_rejected"] += 1
+        if not scan.get("liquidity", {}).get("passes", False):
+            diagnostics["liquidity_rejected"] += 1
+        if setup.get("qualifies"):
+            diagnostics["setup_qualified"] += 1
+
     # ─── Sizing and helpers ───────────────────────────────────────
 
     def _sizing_pct(self, equity: float, consecutive_losses: int) -> float:
@@ -299,7 +357,18 @@ class ScalpScanBacktester:
         if not all_ts:
             return self._empty_report()
 
-        lookback = self.params.get("timeframes", {}).get("lookback_bars", _BASE_LOOKBACK.get(self.base_interval, 200))
+        configured_lookback = self.params.get("timeframes", {}).get("lookback_bars", 0)
+        lookback = max(
+            int(configured_lookback or 0),
+            _BASE_LOOKBACK.get(self.base_interval, 200),
+        )
+        diagnostics = self._new_diagnostics()
+        diagnostics.update({
+            "base_interval": self.base_interval,
+            "bar_minutes": self.bar_minutes,
+            "session_bars_per_day": _SESSION_BARS_PER_DAY.get(self.base_interval, 78),
+            "sharpe_periods_per_year": _SESSION_BARS_PER_DAY.get(self.base_interval, 78) * 252,
+        })
 
         cash = self.initial_capital
         positions: dict[str, dict] = {}
@@ -344,10 +413,21 @@ class ScalpScanBacktester:
                 w1m, w5m, w15m = self._build_mtf_window({"base": df}, ts, lookback)
                 if w1m is not None and w5m is not None and w15m is not None:
                     scan = self._scan_symbol(sym, w1m, w5m, w15m)
+                    self._record_scan_diagnostic(scan, diagnostics)
                     if scan:
                         scans[sym] = scan
 
+            # ── Expire stale orders before checking fills ─────────────
+            expiry_minutes = float(self.params.get("order", {}).get("order_expiry_minutes", 30))
+            for sym, po in list(pending.items()):
+                placed_at = pd.Timestamp(po.get("placed_at", ts))
+                age_minutes = (pd.Timestamp(ts) - placed_at).total_seconds() / 60.0
+                if age_minutes >= expiry_minutes:
+                    del pending[sym]
+                    diagnostics["orders_expired"] += 1
+
             # ── Fill pending orders (intrabar stop-limit trigger) ─────
+            filled_this_bar: set[str] = set()
             for sym, po in list(pending.items()):
                 if sym not in prices:
                     continue
@@ -385,9 +465,14 @@ class ScalpScanBacktester:
                         "bars_held": 0,
                     }
                     del pending[sym]
+                    filled_this_bar.add(sym)
+                    diagnostics["orders_filled"] += 1
 
             # ── Position exit management ─────────────────────────────
             for sym, pos in list(positions.items()):
+                if sym in filled_this_bar:
+                    diagnostics["same_bar_exit_skipped"] += 1
+                    continue
                 if sym not in prices:
                     continue
                 px = prices[sym]
@@ -428,7 +513,7 @@ class ScalpScanBacktester:
 
                 # Active mode exit review
                 if exit_px is None and self.params.get("exit_rules", {}).get("exit_mode") == "active":
-                    minutes_held = pos["bars_held"]  # each bar is 1m
+                    minutes_held = pos["bars_held"] * self.bar_minutes
                     ind_data = scans.get(sym, {}).get("mtf", {}).get("indicators", {})
                     review = core.review_scalp_position(
                         {"pnl_pct": 0, "side": side}, self.params, minutes_held, ind_data,
@@ -438,6 +523,7 @@ class ScalpScanBacktester:
 
                 if exit_px is not None:
                     cash, pnl = self._close_position(pos, exit_px, ts, cash, trades, exit_reason)
+                    diagnostics["exit_counts"][exit_reason or "unknown"] += 1
                     losses = 0 if pnl > 0 else losses + 1
                     cooldown[sym] = 3
                     del positions[sym]
@@ -456,11 +542,7 @@ class ScalpScanBacktester:
                 else:
                     equity -= val
 
-            for sym, po in pending.items():
-                if po["side"] == "long":
-                    equity -= po["qty"] * po["entry_level"]
-                else:
-                    equity += po["qty"] * po["entry_level"]
+            pending_gross = sum(po["qty"] * po["entry_level"] for po in pending.values())
 
             if self.goal_active and goal_can_open:
                 pnl_dollars = equity - self.initial_capital
@@ -506,7 +588,9 @@ class ScalpScanBacktester:
                     continue
 
                 stop_distance = abs((sl - entry) / entry) * 100
-                notional = position_notional(equity, stop_distance, gross, self.params)
+                notional = position_notional(
+                    equity, stop_distance, gross + pending_gross, self.params,
+                )
                 if notional <= 0:
                     continue
 
@@ -524,7 +608,13 @@ class ScalpScanBacktester:
                     "trail_act_pct": exit_cfg.get("trailing_activation_pct", 0.8),
                     "placed_at": str(ts),
                 }
+                diagnostics["orders_placed"] += 1
                 available -= 1
+
+        diagnostics["pending_at_end"] = len(pending)
+        sample_days = (all_ts[-1] - all_ts[0]).total_seconds() / 86400 if len(all_ts) > 1 else 0
+        if sample_days < 20 or len(trades) < 100:
+            diagnostics["sample_warning"] = "Short sample: use multiple windows and at least 100 trades before promotion."
 
         # ── Close remaining positions at final bar ─────────────────
         final_ts = all_ts[-1]
@@ -534,6 +624,7 @@ class ScalpScanBacktester:
             final_idx = df.index[df[col] == final_ts].tolist()
             px = float(df.iloc[final_idx[-1]]["Close"]) if final_idx else pos["entry_price"]
             cash, _ = self._close_position(pos, px, final_ts, cash, trades, "Backtest end")
+            diagnostics["exit_counts"]["Backtest end"] += 1
             del positions[sym]
 
         report = BacktestReport.calculate_metrics(
@@ -547,7 +638,8 @@ class ScalpScanBacktester:
             trades=trades,
             interval=self.base_interval,
             slippage_bps=self.slippage_bps,
-            periods_per_year=_BARS_PER_DAY.get(self.base_interval, 288) * 252,
+            periods_per_year=_SESSION_BARS_PER_DAY.get(self.base_interval, 78) * 252,
+            diagnostics=self._finalize_diagnostics(diagnostics),
         )
         if self.goal_active:
             report.goal_simulation = {
@@ -629,4 +721,6 @@ class ScalpScanBacktester:
             trades=[],
             interval=self.base_interval,
             slippage_bps=self.slippage_bps,
+            periods_per_year=_SESSION_BARS_PER_DAY.get(self.base_interval, 78) * 252,
+            diagnostics=self._finalize_diagnostics(self._new_diagnostics()),
         )

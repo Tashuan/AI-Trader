@@ -271,6 +271,7 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "order": {
                 "stop_limit_offset_pct": _field("Stop-Limit Offset %", "number", minimum=0, maximum=1, default=0.02),
+                "entry_trigger_offset_pct": _field("Entry Trigger Offset %", "number", minimum=0, maximum=2, default=0.08),
                 "order_expiry_minutes": _field("Order Expiry Minutes", "number", minimum=1, maximum=120, default=30),
                 "sl_atr_multiple": _field("SL ATR Multiple", "number", minimum=0.1, maximum=5, default=1.0),
                 "tp_atr_multiple": _field("TP ATR Multiple", "number", minimum=0.1, maximum=10, default=1.5),

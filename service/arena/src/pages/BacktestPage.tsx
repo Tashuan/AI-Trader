@@ -59,6 +59,20 @@ interface BacktestReport {
   interval: string;
   slippage_bps: number;
   activation_gate?: { eligible: boolean; checks: Record<string, boolean> };
+  diagnostics?: {
+    scan_bars?: number;
+    mtf_qualified?: number;
+    entry_rejected?: number;
+    trend_rejected?: number;
+    setup_qualified?: number;
+    orders_placed?: number;
+    orders_filled?: number;
+    orders_expired?: number;
+    pending_at_end?: number;
+    same_bar_exit_skipped?: number;
+    exit_counts?: Record<string, number>;
+    sample_warning?: string;
+  };
 }
 
 export function BacktestPage() {
@@ -81,6 +95,7 @@ export function BacktestPage() {
   const [slippageBps, setSlippageBps] = useState('5');
   const [goalTarget, setGoalTarget] = useState('');
   const [activeTestPreset, setActiveTestPreset] = useState('');
+  const [paramsOverride, setParamsOverride] = useState<Record<string, unknown> | null>(null);
   const [walkForwardRunning, setWalkForwardRunning] = useState(false);
   const [walkForwardResult, setWalkForwardResult] = useState<Record<string, any> | null>(null);
 
@@ -96,6 +111,7 @@ export function BacktestPage() {
     interval: string;
     slippage: string;
     goalTarget: string;
+    paramsOverride?: Record<string, unknown>;
   }
 
   const testPresets: TestPreset[] = [
@@ -218,6 +234,11 @@ export function BacktestPage() {
       interval: '5m',
       slippage: '2',
       goalTarget: '',
+      paramsOverride: {
+        entry_criteria: { min_vol_ratio: 1.5, min_signals: 3 },
+        position_sizing: { max_positions: 2, max_pending_orders: 2 },
+        order: { entry_trigger_offset_pct: 0.08, sl_atr_multiple: 1.0, tp_atr_multiple: 1.5 },
+      },
     },
     {
       id: 'scalp-runner-3mo',
@@ -231,6 +252,11 @@ export function BacktestPage() {
       interval: '5m',
       slippage: '2',
       goalTarget: '',
+      paramsOverride: {
+        entry_criteria: { min_vol_ratio: 1.75, min_signals: 4, require_trend_agreement: true },
+        position_sizing: { max_positions: 1, max_pending_orders: 2 },
+        order: { entry_trigger_offset_pct: 0.10, sl_atr_multiple: 1.2, tp_atr_multiple: 1.8 },
+      },
     },
     {
       id: 'scalp-runner-full-year',
@@ -244,6 +270,11 @@ export function BacktestPage() {
       interval: '5m',
       slippage: '2',
       goalTarget: '',
+      paramsOverride: {
+        entry_criteria: { min_vol_ratio: 1.25, min_signals: 3, require_trend_agreement: true },
+        position_sizing: { max_positions: 2, max_pending_orders: 2 },
+        order: { entry_trigger_offset_pct: 0.05, sl_atr_multiple: 1.2, tp_atr_multiple: 2.0 },
+      },
     },
     {
       id: 'scalp-runner-nvda',
@@ -270,6 +301,7 @@ export function BacktestPage() {
     setCandleInterval(preset.interval);
     setSlippageBps(preset.slippage);
     setGoalTarget(preset.goalTarget);
+    setParamsOverride(preset.paramsOverride || null);
     setActivePreset('');
   };
 
@@ -401,6 +433,9 @@ export function BacktestPage() {
       body.slippage_bps = parseFloat(slippageBps) || 0;
       if (goalTarget.trim()) {
         body.goal_target = parseFloat(goalTarget) || undefined;
+      }
+      if (paramsOverride) {
+        body.params_override = paramsOverride;
       }
 
       const resp = await fetch('/api/backtest/run', {
@@ -742,6 +777,17 @@ export function BacktestPage() {
     lines.push(`Profit Factor: ${report.profit_factor.toFixed(3)}`);
     lines.push(`Total Trades: ${report.total_trades}`);
     lines.push(`Avg Hold Days: ${report.avg_hold_days.toFixed(1)}`);
+    if (report.diagnostics) {
+      lines.push('');
+      lines.push('--- Execution Diagnostics ---');
+      lines.push(`Scans: ${report.diagnostics.scan_bars ?? 0}`);
+      lines.push(`Entry rejected: ${report.diagnostics.entry_rejected ?? 0}`);
+      lines.push(`Trend rejected: ${report.diagnostics.trend_rejected ?? 0}`);
+      lines.push(`Qualified setups: ${report.diagnostics.setup_qualified ?? 0}`);
+      lines.push(`Orders: ${report.diagnostics.orders_placed ?? 0} placed / ${report.diagnostics.orders_filled ?? 0} filled`);
+      lines.push(`Expired pending orders: ${report.diagnostics.orders_expired ?? 0}`);
+      lines.push(`Same-bar exits skipped: ${report.diagnostics.same_bar_exit_skipped ?? 0}`);
+    }
     lines.push('');
     lines.push('--- Per-Symbol Breakdown ---');
     const symStats = Object.entries(report.per_symbol_stats).sort((a, b) => b[1].total_pnl - a[1].total_pnl);
@@ -865,7 +911,11 @@ export function BacktestPage() {
               <select
                 className="form-input"
                 value={selectedKey}
-                onChange={e => setSelectedKey(e.target.value)}
+                onChange={e => {
+                  setSelectedKey(e.target.value);
+                  setParamsOverride(null);
+                  setActiveTestPreset('');
+                }}
               >
                 {strategies.map(s => (
                   <option key={s.key} value={s.key}>{s.name}</option>
@@ -1056,6 +1106,23 @@ export function BacktestPage() {
               <div className={`mt-4 rounded-lg border px-3 py-2 text-[10px] ${report.activation_gate.eligible ? 'border-arena-green/30 bg-arena-green/5 text-arena-green' : 'border-arena-yellow/30 bg-arena-yellow/5 text-arena-yellow'}`}>
                 <strong>{report.activation_gate.eligible ? 'Activation eligible' : 'Paper-only: quantitative gate not passed'}</strong>
                 {' · '}{Object.entries(report.activation_gate.checks).filter(([, passed]) => !passed).map(([key]) => key.split('_').join(' ')).join(', ') || 'all checks passed'}
+              </div>
+            )}
+            {report.diagnostics && (
+              <div className="mt-4 rounded-lg border border-arena-border/60 bg-white/[0.02] px-3 py-2 text-[10px] text-arena-text-dim">
+                <div className="font-semibold text-arena-text-secondary mb-1">Execution Diagnostics</div>
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  <span>Scans: {report.diagnostics.scan_bars ?? 0}</span>
+                  <span>Entry rejected: {report.diagnostics.entry_rejected ?? 0}</span>
+                  <span>Trend rejected: {report.diagnostics.trend_rejected ?? 0}</span>
+                  <span>Qualified: {report.diagnostics.setup_qualified ?? 0}</span>
+                  <span>Orders: {report.diagnostics.orders_placed ?? 0} placed / {report.diagnostics.orders_filled ?? 0} filled</span>
+                  <span>Expired: {report.diagnostics.orders_expired ?? 0}</span>
+                  <span>Same-bar exits skipped: {report.diagnostics.same_bar_exit_skipped ?? 0}</span>
+                </div>
+                {report.diagnostics.sample_warning && (
+                  <div className="mt-1 text-arena-yellow">{report.diagnostics.sample_warning}</div>
+                )}
               </div>
             )}
           </div>

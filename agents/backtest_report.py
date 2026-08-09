@@ -69,6 +69,7 @@ class BacktestReport:
     data_coverage: dict = field(default_factory=dict)
     walk_forward_summary: dict = field(default_factory=dict)
     goal_simulation: dict = field(default_factory=dict)
+    diagnostics: dict = field(default_factory=dict)
 
     def activation_gate(self) -> dict:
         checks = {
@@ -109,6 +110,7 @@ class BacktestReport:
             "data_coverage": self.data_coverage,
             "walk_forward_summary": self.walk_forward_summary,
             "goal_simulation": self.goal_simulation,
+            "diagnostics": self.diagnostics,
         }
 
     @staticmethod
@@ -124,6 +126,7 @@ class BacktestReport:
         interval: str = "1d",
         slippage_bps: float = 0.0,
         periods_per_year: float = 252.0,
+        diagnostics: Optional[dict] = None,
     ) -> "BacktestReport":
         """Compute all performance metrics from raw backtest data.
 
@@ -213,6 +216,7 @@ class BacktestReport:
             slippage_bps=slippage_bps,
             exit_attribution=exit_attribution,
             data_coverage=data_coverage,
+            diagnostics=diagnostics or {},
         )
 
 

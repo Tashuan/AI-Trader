@@ -96,6 +96,7 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
     },
     "order": {
         "stop_limit_offset_pct": 0.02,
+        "entry_trigger_offset_pct": 0.08,
         "order_expiry_minutes": 30,
         "sl_atr_multiple": 1.0,
         "tp_atr_multiple": 1.5,
@@ -673,13 +674,14 @@ def score_scalp_setup(
     sl_mult = order_cfg.get("sl_atr_multiple", 1.0)
     tp_mult = order_cfg.get("tp_atr_multiple", 1.5)
 
-    # Entry level: breakout level if ready, else current price
-    entry_level = breakout.get("level_price", price) if breakout.get("ready_to_break") else price
-
+    reference_level = breakout.get("level_price", price) if breakout.get("ready_to_break") else price
+    trigger_offset_pct = max(0.0, float(order_cfg.get("entry_trigger_offset_pct", 0.08)))
     if direction == "long":
+        entry_level = reference_level * (1 + trigger_offset_pct / 100.0)
         sl_level = entry_level - sl_mult * atr
         tp_level = entry_level + tp_mult * atr
     else:
+        entry_level = reference_level * (1 - trigger_offset_pct / 100.0)
         sl_level = entry_level + sl_mult * atr
         tp_level = entry_level - tp_mult * atr
 
