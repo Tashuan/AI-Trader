@@ -674,6 +674,37 @@ async def auto_close_positions_loop():
             conn = get_db_connection()
             try:
                 cursor = conn.cursor()
+
+                # Backfill default SL/TP for positions that are missing them
+                # (skip Polymarket — probability-based, different risk profile)
+                cursor.execute("""
+                    SELECT p.id, p.entry_price, p.side, p.market
+                    FROM positions p
+                    WHERE p.stop_loss_price IS NULL
+                       AND p.take_profit_price IS NULL
+                       AND p.trailing_sl_pct IS NULL
+                       AND p.market != 'polymarket'
+                """)
+                missing = cursor.fetchall()
+                for miss in missing:
+                    entry = float(miss["entry_price"] or 0)
+                    if entry <= 0:
+                        continue
+                    side = miss["side"]
+                    if side == "long":
+                        sl = entry * 0.95
+                        tp = entry * 1.10
+                    else:
+                        sl = entry * 1.05
+                        tp = entry * 0.90
+                    cursor.execute(
+                        "UPDATE positions SET stop_loss_price = ?, take_profit_price = ? WHERE id = ?",
+                        (sl, tp, miss["id"]),
+                    )
+                if missing:
+                    conn.commit()
+                    print(f"[Auto-Close] Backfilled default SL/TP for {len(missing)} position(s)")
+
                 cursor.execute("""
                     SELECT p.id, p.agent_id, p.symbol, p.market, p.token_id, p.outcome,
                            p.side, p.quantity, p.entry_price, p.current_price,
@@ -799,6 +830,7 @@ async def auto_close_positions_loop():
 
             # ── Check thresholds and close sequentially (DB writes must be serial) ──
             closed_count = 0
+            check_log_lines = []
             for idx, row in enumerate(rows):
                 current_price = fresh_prices[idx]
                 if current_price is None:
@@ -812,6 +844,16 @@ async def auto_close_positions_loop():
                 take_profit = row["take_profit_price"]
                 quantity = abs(row["quantity"])
                 agent_name = row["agent_name"] or "unknown"
+                entry_price = float(row["entry_price"] or 0)
+
+                # Percentage-based PnL for logging
+                if entry_price > 0:
+                    if side == "long":
+                        pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                    else:
+                        pnl_pct = ((entry_price - current_price) / entry_price) * 100
+                else:
+                    pnl_pct = 0.0
 
                 should_close = False
                 close_reason = ""
@@ -832,6 +874,10 @@ async def auto_close_positions_loop():
                         close_reason = f"take-profit hit ({current_price:.4f} <= {take_profit:.4f})"
 
                 if not should_close:
+                    check_log_lines.append(
+                        f"  {agent_name} {symbol} {side} pnl={pnl_pct:+.2f}% "
+                        f"price={current_price:.4f} SL={stop_loss} TP={take_profit} -> hold"
+                    )
                     continue
 
                 now = datetime.now(timezone.utc)
@@ -964,6 +1010,11 @@ async def auto_close_positions_loop():
 
             if closed_count:
                 print(f"[Auto-Close] Processed {closed_count} position(s) this cycle")
+            elif rows and not closed_count:
+                # Log a summary every cycle so we can confirm the loop is alive
+                print(f"[Auto-Close] Checked {len(rows)} position(s) — all holding")
+                for line in check_log_lines:
+                    print(line)
 
         except Exception as e:
             print(f"[Auto-Close Error] {e}")

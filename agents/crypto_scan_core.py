@@ -37,6 +37,7 @@ CRYPTO_DEFAULT_PARAMS: dict[str, Any] = {
         "min_signals": 5,
         "min_signal_families": 3,
         "min_vol_ratio": 1.3,
+        "direction_mode": "both",
         "require_daily_trend_agreement": True,
         "require_btc_regime_ok_for_alts": True,
         "min_avg_dollar_volume": 500000,
@@ -575,8 +576,11 @@ def deep_scan_symbol_from_df(symbol: str, df: pd.DataFrame, params: dict[str, An
 
     direction = "long" if bullish_count > bearish_count else "short"
     directional_count = max(bullish_count, bearish_count)
+    direction_mode = entry_cfg.get("direction_mode", "both")
+    direction_allowed = direction_mode == "both" or direction == direction_mode
     qualifies = (
-        directional_count >= min_signals
+        direction_allowed
+        and directional_count >= min_signals
         and len(families) >= min_families
         and vol_ratio > min_vol
         and not obv_div

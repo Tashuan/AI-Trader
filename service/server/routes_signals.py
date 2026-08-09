@@ -294,6 +294,15 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         if data.take_profit_pct is not None:
             distance = abs(float(data.take_profit_pct)) / 100.0
             take_profit_price = fill_price * (1 + distance if action_lower == 'buy' else 1 - distance)
+
+        # Safety net: if no SL/TP was set at all, apply defaults so the
+        # server-side auto_close loop can manage positions even when the
+        # agent is offline.  Skip for Polymarket (probabilities, different risk profile).
+        if market != 'polymarket' and action_lower in ('buy', 'short'):
+            if stop_loss_price is None:
+                stop_loss_price = fill_price * (0.95 if action_lower == 'buy' else 1.05)
+            if take_profit_price is None:
+                take_profit_price = fill_price * (1.10 if action_lower == 'buy' else 0.90)
         position_entry_price = None
         reward_points = SIGNAL_PUBLISH_REWARD
         reward_context = experiment_contexts[0] if experiment_contexts else None

@@ -110,9 +110,13 @@ class CryptoScanBacktester:
             result["qualifies_for_entry"] = False
             result["entry_veto_reason"] = "daily_trend_disagreement"
         elif symbol != "BTC" and cfg.get("require_btc_regime_ok_for_alts", True):
-            if self._btc_regime(ts, daily) == "bearish" and direction == "long":
+            btc_regime = self._btc_regime(ts, daily)
+            if btc_regime == "bearish" and direction == "long":
                 result["qualifies_for_entry"] = False
                 result["entry_veto_reason"] = "btc_regime_bearish"
+            elif btc_regime == "bullish" and direction == "short" and cfg.get("require_btc_regime_alignment", False):
+                result["qualifies_for_entry"] = False
+                result["entry_veto_reason"] = "btc_regime_bullish"
         if result.get("qualifies_for_entry"):
             min_adv = float(cfg.get("min_avg_dollar_volume", 500000))
             adv = float((window["Close"] * window["Volume"]).mean())
