@@ -51,11 +51,9 @@ class BacktestAgent(BaseAgent):
         for sym, pos in self._positions.items():
             price = self._price_lookup.get(sym, pos["entry_price"])
             if pos.get("side") == "short":
-                # Short positions: equity contribution = entry_proceeds - current_cost_to_cover
-                # When we shorted, we received entry_price * qty. To close, we pay current price * qty.
-                # PnL = (entry_price - current_price) * qty
-                equity += (pos["entry_price"] - price) * pos["quantity"]
-                equity += pos["entry_price"] * pos["quantity"]  # add back the short proceeds we already received
+                # Short-sale proceeds are already included in cash. Only the
+                # current cost to cover remains as a liability.
+                equity -= price * pos["quantity"]
             else:
                 equity += pos["quantity"] * price
         self.portfolio_value = equity

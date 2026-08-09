@@ -77,8 +77,9 @@ def main():
 
     if args.list:
         print("\nAvailable strategies for backtesting:")
+        print("  blitztrader      — BlitzTrader: deterministic equity momentum")
         print("  blitzrunner      — BlitzRunner: deterministic equity momentum")
-        print("  cryptorunner    — CryptoRunner: deterministic crypto swing")
+        print("  cryptorunner     — CryptoRunner: deterministic crypto swing")
         for key, info in list_personalities().items():
             if key in AGENT_CLASSES:
                 print(f"  {key:15s} — {info['name']}: {info['tagline']} [{info['strategy']}]")
@@ -89,8 +90,9 @@ def main():
 
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
 
-    if args.agent in {"blitzrunner", "cryptorunner"}:
+    if args.agent in {"blitztrader", "blitzrunner", "cryptorunner"}:
         defaults = {
+            "blitztrader": (["NVDA", "TSLA", "META", "AMZN"], "1h", "BlitzTrader", "momentum_scalp"),
             "blitzrunner": (["NVDA", "TSLA", "META", "AMZN"], "1h", "BlitzRunner", "momentum_scalp"),
             "cryptorunner": (["BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "LINK"], "4h", "CryptoRunner", "crypto_swing"),
         }
@@ -138,6 +140,7 @@ def main():
         start_date=args.start,
         end_date=args.end,
         initial_capital=args.capital,
+        slippage_bps=args.slippage,
     )
 
     report = bt.run()

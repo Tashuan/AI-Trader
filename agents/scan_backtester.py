@@ -404,12 +404,14 @@ class ScanBacktester:
             for close_sym, exit_px, exit_reason in to_close:
                 pos = positions[close_sym]
                 self._close_position(pos, exit_px, sim_ts, exit_reason, closed_trades)
+                slip = self.slippage_bps / 10000.0
+                exit_fill = exit_px * (1 - slip if pos["side"] == "long" else 1 + slip)
                 if pos["side"] == "long":
-                    pnl = (exit_px - pos["entry_price"]) * pos["qty"]
-                    cash += pos["qty"] * exit_px
+                    pnl = (exit_fill - pos["entry_price"]) * pos["qty"]
+                    cash += pos["qty"] * exit_fill
                 else:
-                    pnl = (pos["entry_price"] - exit_px) * pos["qty"]
-                    cash -= pos["qty"] * exit_px
+                    pnl = (pos["entry_price"] - exit_fill) * pos["qty"]
+                    cash -= pos["qty"] * exit_fill
 
                 if pnl > 0:
                     consecutive_losses = 0
@@ -440,12 +442,14 @@ class ScanBacktester:
                                 can_switch = px < entry
                         if improvement > switch_threshold_pct and can_switch and best["symbol"] != pos_sym:
                             self._close_position(pos, px, sim_ts, f"switch_to_{best['symbol']}", closed_trades)
+                            slip = self.slippage_bps / 10000.0
+                            exit_fill = px * (1 - slip if side == "long" else 1 + slip)
                             if side == "long":
-                                pnl = (px - entry) * pos["qty"]
-                                cash += pos["qty"] * px
+                                pnl = (exit_fill - entry) * pos["qty"]
+                                cash += pos["qty"] * exit_fill
                             else:
-                                pnl = (entry - px) * pos["qty"]
-                                cash -= pos["qty"] * px
+                                pnl = (entry - exit_fill) * pos["qty"]
+                                cash -= pos["qty"] * exit_fill
 
                             if pnl > 0:
                                 consecutive_losses = 0
@@ -509,23 +513,26 @@ class ScanBacktester:
                     equity -= pos["qty"] * px
             equity_curve.append({"date": sim_ts, "equity": round(equity, 2)})
 
-        # 5. Close any remaining open positions at last available prices
+        # 5. Close any remaining open positions at the final simulated bar.
+        # Do not use the last fetched row: it may be outside the requested range.
+        slip = self.slippage_bps / 10000.0
         for pos_sym, pos in list(positions.items()):
-            ts_list = ts_list_map.get(pos_sym, [])
-            if ts_list:
-                last_idx = ts_to_idx_map[pos_sym].get(ts_list[-1])
-                if last_idx is not None:
-                    px = float(historical[pos_sym].iloc[last_idx]["Close"])
-                else:
-                    px = pos["entry_price"]
-            else:
-                px = pos["entry_price"]
+            final_idx = ts_to_idx_map.get(pos_sym, {}).get(actual_end)
+            px = (
+                float(historical[pos_sym].iloc[final_idx]["Close"])
+                if final_idx is not None
+                else pos["entry_price"]
+            )
+            exit_fill = px * (1 - slip if pos["side"] == "long" else 1 + slip)
 
-            self._close_position(pos, px, actual_end, "Backtest end — position auto-closed", closed_trades)
+            self._close_position(
+                pos, px, actual_end,
+                "Backtest end — position auto-closed", closed_trades,
+            )
             if pos["side"] == "long":
-                cash += pos["qty"] * px
+                cash += pos["qty"] * exit_fill
             else:
-                cash -= pos["qty"] * px
+                cash -= pos["qty"] * exit_fill
             del positions[pos_sym]
 
         final_equity = cash
