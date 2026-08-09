@@ -26,12 +26,30 @@ _INTRADAY_LIMITS = {
     "1m": 7,
     "5m": 60,
     "15m": 60,
+    "30m": 60,
 }
 
 _BARS_PER_DAY = {
     "1m": 1440,
     "5m": 288,
     "15m": 96,
+    "30m": 48,
+}
+
+# Resample rules: base interval → (mid TF, high TF)
+_RESAMPLE_MAP = {
+    "1m": ("5min", "15min"),
+    "5m": ("15min", "30min"),
+    "15m": ("30min", "1H"),
+}
+
+# Min bars needed at the highest TF (30 for indicator precompute).
+# Base-TF lookback must be large enough to produce that after resample.
+_MIN_HIGH_TF_BARS = 30
+_BASE_LOOKBACK = {
+    "1m": 200,   # 200 1m → 13 15m bars (ok, 15m only needs 10 in _trend_direction)
+    "5m": 600,   # 600 5m → ~100 30m bars (covers market gaps, yields 30+)
+    "15m": 400,  # 400 15m → ~100 1H bars
 }
 
 
@@ -58,6 +76,10 @@ class ScalpScanBacktester:
         Dollar profit target for goal-aware sizing.
     goal_max_loss : float | None
         Dollar max loss for goal halt.
+    base_interval : str
+        Base timeframe for the simulation timeline. "1m" fetches 1m bars
+        and resamples to 5m/15m. "5m" fetches 5m bars and resamples to
+        15m/30m — useful when 1m data isn't available (e.g. cache-only).
     """
 
     def __init__(
@@ -71,6 +93,7 @@ class ScalpScanBacktester:
         provider: MarketDataProvider | None = None,
         goal_target: float | None = None,
         goal_max_loss: float | None = None,
+        base_interval: str = "1m",
     ):
         self.symbols = symbols
         self.params = params
@@ -82,6 +105,7 @@ class ScalpScanBacktester:
         self.goal_target = goal_target
         self.goal_max_loss = goal_max_loss
         self.goal_active = goal_target is not None or goal_max_loss is not None
+        self.base_interval = base_interval
 
     # ─── Data fetching ─────────────────────────────────────────────
 
@@ -91,17 +115,29 @@ class ScalpScanBacktester:
             now = datetime.now()
             max_lookback = _INTRADAY_LIMITS.get(interval, 7)
 
+            # CacheOnlyProvider and CachedProvider don't need lookback clamping —
+            # they serve whatever is on disk. Only clamp for live APIs.
+            is_cache = type(self.provider).__name__ in ("CacheOnlyProvider", "CachedProvider")
+
             if self.start_date:
                 req_start = datetime.fromisoformat(self.start_date) - timedelta(days=3)
-                earliest_allowed = now - timedelta(days=max_lookback - 1)
-                start = max(req_start, earliest_allowed).strftime("%Y-%m-%d")
+                if is_cache:
+                    start = req_start.strftime("%Y-%m-%d")
+                else:
+                    earliest_allowed = now - timedelta(days=max_lookback - 1)
+                    start = max(req_start, earliest_allowed).strftime("%Y-%m-%d")
             else:
                 start = (now - timedelta(days=max_lookback - 1)).strftime("%Y-%m-%d")
 
-            end = (now if not self.end_date else min(
-                datetime.fromisoformat(self.end_date) + timedelta(days=1),
-                now,
-            )).strftime("%Y-%m-%d")
+            if is_cache and self.end_date:
+                end = (datetime.fromisoformat(self.end_date) + timedelta(days=1)).strftime("%Y-%m-%d")
+            elif not self.end_date:
+                end = now.strftime("%Y-%m-%d")
+            else:
+                end = min(
+                    datetime.fromisoformat(self.end_date) + timedelta(days=1),
+                    now,
+                ).strftime("%Y-%m-%d")
 
             df = self.provider.history(symbol, start=start, end=end,
                                        interval=interval, auto_adjust=False, raise_errors=False)
@@ -126,26 +162,28 @@ class ScalpScanBacktester:
 
     def _build_mtf_window(self, frames: dict[str, pd.DataFrame], ts: pd.Timestamp,
                           lookback: int = 200) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[pd.DataFrame]]:
-        """For a given 1m timestamp, build 1m/5m/15m windows ending at that bar."""
-        df_1m = frames.get("1m")
-        if df_1m is None or df_1m.empty:
+        """For a given base-TF timestamp, build 3 MTF windows ending at that bar."""
+        df_base = frames.get("base")
+        if df_base is None or df_base.empty:
             return None, None, None
 
-        col = self._time_col(df_1m)
-        idx = df_1m.index[df_1m[col] == ts].tolist()
+        col = self._time_col(df_base)
+        idx = df_base.index[df_base[col] == ts].tolist()
         if not idx:
             return None, None, None
         end_idx = idx[-1]
         start_idx = max(0, end_idx - lookback + 1)
 
-        w1m = df_1m.iloc[start_idx:end_idx + 1].copy()
-        if w1m.empty or len(w1m) < 30:
+        w_base = df_base.iloc[start_idx:end_idx + 1].copy()
+        if w_base.empty or len(w_base) < 30:
             return None, None, None
 
-        w5m = self._resample_window(w1m, "5min", lookback)
-        w15m = self._resample_window(w1m, "15min", lookback)
+        mid_rule, high_rule = _RESAMPLE_MAP.get(self.base_interval, ("5min", "15min"))
+        w_mid = self._resample_window(w_base, mid_rule, lookback)
+        w_high = self._resample_window(w_base, high_rule, lookback)
 
-        return w1m, w5m, w15m
+        # Map to the labels the core logic expects: (1m=entry, 5m=pattern, 15m=trend)
+        return w_base, w_mid, w_high
 
     @staticmethod
     def _resample_window(df_1m: pd.DataFrame, rule: str, lookback: int) -> Optional[pd.DataFrame]:
@@ -241,10 +279,10 @@ class ScalpScanBacktester:
 
     def run(self) -> BacktestReport:
         """Execute the multi-timeframe scalp backtest."""
-        # Fetch 1m data for all symbols (primary simulation timeline)
+        # Fetch base-interval data for all symbols (primary simulation timeline)
         historical: dict[str, pd.DataFrame] = {}
         for sym in self.symbols:
-            df = self._fetch(sym, "1m")
+            df = self._fetch(sym, self.base_interval)
             if df is not None and not df.empty:
                 historical[sym] = df
 
@@ -261,7 +299,7 @@ class ScalpScanBacktester:
         if not all_ts:
             return self._empty_report()
 
-        lookback = self.params.get("timeframes", {}).get("lookback_bars", 200)
+        lookback = self.params.get("timeframes", {}).get("lookback_bars", _BASE_LOOKBACK.get(self.base_interval, 200))
 
         cash = self.initial_capital
         positions: dict[str, dict] = {}
@@ -303,7 +341,7 @@ class ScalpScanBacktester:
                 highs[sym] = float(row["High"])
                 lows[sym] = float(row["Low"])
 
-                w1m, w5m, w15m = self._build_mtf_window({"1m": df}, ts, lookback)
+                w1m, w5m, w15m = self._build_mtf_window({"base": df}, ts, lookback)
                 if w1m is not None and w5m is not None and w15m is not None:
                     scan = self._scan_symbol(sym, w1m, w5m, w15m)
                     if scan:
@@ -507,9 +545,9 @@ class ScalpScanBacktester:
             final_equity=cash,
             equity_curve=curve,
             trades=trades,
-            interval="1m",
+            interval=self.base_interval,
             slippage_bps=self.slippage_bps,
-            periods_per_year=_BARS_PER_DAY["1m"] * 252,
+            periods_per_year=_BARS_PER_DAY.get(self.base_interval, 288) * 252,
         )
         if self.goal_active:
             report.goal_simulation = {
@@ -589,6 +627,6 @@ class ScalpScanBacktester:
             final_equity=self.initial_capital,
             equity_curve=[],
             trades=[],
-            interval="1m",
+            interval=self.base_interval,
             slippage_bps=self.slippage_bps,
         )

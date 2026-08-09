@@ -205,30 +205,56 @@ export function BacktestPage() {
       slippage: '5',
       goalTarget: '',
     },
-    // ---- ScalpRunner (1m candles, 4-step scalp) ----
+    // ---- ScalpRunner (5m candles from cached Alpaca data, 4-step scalp) ----
     {
-      id: 'scalp-runner-1w',
-      label: 'ScalpRunner 1-Week',
-      description: 'Fast 1m replay over the last 7 days on the default equity watchlist. Exercises the full 4-step pipeline: discovery, liquidity filter, multi-TF analysis, and stop-limit fills.',
+      id: 'scalp-runner-1mo',
+      label: 'ScalpRunner 1-Month (Cached)',
+      description: '5m replay over a 1-month slice of cached Alpaca data on the default equity watchlist. Exercises the full 4-step pipeline: discovery, liquidity filter, multi-TF analysis, and stop-limit fills. No Schwab auth required.',
       agentKey: 'scalprunner',
-      startDate: new Date(new Date().setDate(new Date().getDate() - 7)).toISOString().split('T')[0],
-      endDate: new Date().toISOString().split('T')[0],
+      startDate: '2025-08-04',
+      endDate: '2025-09-04',
       symbols: '',
       capital: '10000',
-      interval: '1m',
+      interval: '5m',
+      slippage: '2',
+      goalTarget: '',
+    },
+    {
+      id: 'scalp-runner-3mo',
+      label: 'ScalpRunner 3-Month (Cached)',
+      description: '5m replay over a 3-month slice of cached Alpaca data on the full equity watchlist. Enough trades for a meaningful win-rate and Sharpe read on the scalp profile.',
+      agentKey: 'scalprunner',
+      startDate: '2025-08-04',
+      endDate: '2025-11-04',
+      symbols: '',
+      capital: '10000',
+      interval: '5m',
+      slippage: '2',
+      goalTarget: '',
+    },
+    {
+      id: 'scalp-runner-full-year',
+      label: 'ScalpRunner Full Year (Cached)',
+      description: 'The full cached replay. 5m bars over the entire ~1yr Alpaca cache (Aug 2025 – Aug 2026) on the default watchlist. Maximum trade count for stable Sharpe and drawdown readings.',
+      agentKey: 'scalprunner',
+      startDate: '2025-08-04',
+      endDate: '2026-08-09',
+      symbols: '',
+      capital: '10000',
+      interval: '5m',
       slippage: '2',
       goalTarget: '',
     },
     {
       id: 'scalp-runner-nvda',
-      label: 'ScalpRunner NVDA Focus',
-      description: 'Single-name isolation on NVDA over 3 days at 1m resolution. Removes cross-symbol noise to grade entry/exit quality on a high-volume scalp name.',
+      label: 'ScalpRunner NVDA Focus (Cached)',
+      description: 'Single-name isolation on NVDA over the full cached year at 5m resolution. Removes cross-symbol noise to grade entry/exit quality on the highest-volume scalp name.',
       agentKey: 'scalprunner',
-      startDate: new Date(new Date().setDate(new Date().getDate() - 3)).toISOString().split('T')[0],
-      endDate: new Date().toISOString().split('T')[0],
+      startDate: '2025-08-04',
+      endDate: '2026-08-09',
       symbols: 'NVDA',
       capital: '10000',
-      interval: '1m',
+      interval: '5m',
       slippage: '2',
       goalTarget: '',
     },
@@ -342,7 +368,7 @@ export function BacktestPage() {
       return;
     }
     if (selectedKey === 'scalprunner') {
-      setCandleInterval('1m');
+      setCandleInterval('5m');
       return;
     }
     const hp = selectedStrategy.hold_period;

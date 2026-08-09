@@ -53,7 +53,7 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
     "entry_criteria": {
         "min_signals": 3,
         "min_signal_families": 2,
-        "min_vol_ratio": 2.0,
+        "min_vol_ratio": 1.5,
         "max_spread_pct": 0.15,
         "min_dollar_volume": 1_000_000,
         "min_depth_dollars": 50_000,
@@ -571,10 +571,12 @@ def deep_scan_multi_tf(
     require_agreement = entry_cfg.get("require_trend_agreement", True)
 
     direction_1m = scan_1m.get("entry_direction", "long")
+    # Map 1m direction ("long"/"short") to trend vocabulary ("bullish"/"bearish")
+    dir_trend = "bullish" if direction_1m == "long" else "bearish"
     confluence = 0
-    if trend_5m["direction"] == direction_1m:
+    if trend_5m["direction"] == dir_trend:
         confluence += 1
-    if trend_15m["direction"] == direction_1m:
+    if trend_15m["direction"] == dir_trend:
         confluence += 1
 
     trend_agrees = confluence >= 2 or not require_agreement

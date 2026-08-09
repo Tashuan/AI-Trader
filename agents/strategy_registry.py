@@ -228,7 +228,7 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
             "entry_criteria": {
                 "min_signals": _field("Min Signals", "number", minimum=1, maximum=15, default=3),
                 "min_signal_families": _field("Min Signal Families", "number", minimum=1, maximum=6, default=2),
-                "min_vol_ratio": _field("Min Vol Ratio", "number", minimum=0, maximum=10, default=2.0),
+                "min_vol_ratio": _field("Min Vol Ratio", "number", minimum=0, maximum=10, default=1.5),
                 "max_spread_pct": _field("Max Spread %", "number", minimum=0, maximum=5, default=0.15),
                 "min_dollar_volume": _field("Min Dollar Volume", "number", minimum=0, maximum=1e9, default=1_000_000),
                 "min_depth_dollars": _field("Min Depth $", "number", minimum=0, maximum=1e7, default=50_000),

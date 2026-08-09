@@ -120,3 +120,121 @@ class CachedProvider:
 
     def quote(self, symbol: str):
         return self.inner.quote(symbol)
+
+
+class CacheOnlyProvider:
+    """Reads OHLCV data exclusively from .data_cache/ — no API calls.
+
+    Scans meta files for matching (symbol, interval) and loads the parquet,
+    filtering to the requested date range. If no exact (start, end) match
+    exists, returns the full cached range intersected with the request.
+
+    Falls back gracefully: returns None on any miss so the caller can
+    decide whether to skip the symbol or try another provider.
+    """
+
+    def __init__(self, cache_dir: str = ""):
+        self._cache_dir = cache_dir or _CACHE_DIR
+        self._provider_name = "CacheOnly"
+
+    @property
+    def available(self) -> bool:
+        return os.path.isdir(self._cache_dir)
+
+    def _scan_metas(self, symbol: str, interval: str) -> list[dict]:
+        """Return all cached meta entries matching symbol + interval."""
+        import json
+        hits = []
+        if not os.path.isdir(self._cache_dir):
+            return hits
+        for fname in os.listdir(self._cache_dir):
+            if not fname.endswith(".meta.json"):
+                continue
+            try:
+                with open(os.path.join(self._cache_dir, fname)) as f:
+                    meta = json.load(f)
+                if meta.get("symbol") == symbol and meta.get("interval") == interval:
+                    key = fname.replace(".meta.json", "")
+                    hits.append((meta, key))
+            except Exception:
+                continue
+        return hits
+
+    def history(self, symbol: str, *, period: Optional[str] = "1mo",
+                interval: str = "1d", **kwargs):
+        import pandas as pd
+        start = kwargs.get("start")
+        end = kwargs.get("end")
+
+        candidates = self._scan_metas(symbol, interval)
+        if not candidates:
+            logger.info("CacheOnly MISS: %s %s (no cached entry)", symbol, interval)
+            return None
+
+        # Pick the candidate whose date range best covers the request.
+        # Prefer exact start/end match; otherwise pick the widest range.
+        best = None
+        best_score = -1
+        for meta, key in candidates:
+            m_start = meta.get("start")
+            m_end = meta.get("end")
+            m_rows = meta.get("rows", 0)
+            if m_rows == 0:
+                continue
+
+            score = m_rows  # wider = better by default
+            if start and m_start and m_end:
+                # If cached range covers the requested range, boost score
+                if m_start <= start and m_end >= (end or m_end):
+                    score += 1_000_000
+            if score > best_score:
+                best = (meta, key)
+                best_score = score
+
+        if best is None:
+            logger.info("CacheOnly MISS: %s %s (all entries empty)", symbol, interval)
+            return None
+
+        meta, key = best
+        cpath = _cache_path(key)
+        try:
+            df = pd.read_parquet(cpath)
+        except Exception as exc:
+            logger.warning("CacheOnly read failed for %s: %s", symbol, exc)
+            return None
+
+        if df.empty:
+            return None
+
+        # Normalize: ensure Datetime column is UTC
+        tcol = "Datetime" if "Datetime" in df.columns else "Date"
+        if tcol in df.columns:
+            df[tcol] = pd.to_datetime(df[tcol], utc=True)
+            df = df.sort_values(tcol).reset_index(drop=True)
+        elif df.index.name in ("Datetime", "Date"):
+            df.index = pd.to_datetime(df.index, utc=True)
+            df = df.sort_index().reset_index()
+            tcol = df.columns[0]
+
+        # Filter to requested date range
+        if start and tcol in df.columns:
+            df = df[df[tcol] >= pd.Timestamp(start, tz="UTC")]
+        if end and tcol in df.columns:
+            df = df[df[tcol] <= pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)]
+
+        if df.empty:
+            logger.info("CacheOnly EMPTY after filter: %s %s", symbol, interval)
+            return None
+
+        # Restore DatetimeIndex for compatibility with backtester expectations
+        if tcol in df.columns:
+            df = df.set_index(tcol)
+
+        logger.info("CacheOnly HIT: %s %s → %d rows", symbol, interval, len(df))
+        return df
+
+    def quote(self, symbol: str):
+        df = self.history(symbol, period="1d", interval="1m")
+        if df is None or df.empty:
+            return None
+        return float(df["Close"].iloc[-1])

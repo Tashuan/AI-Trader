@@ -231,12 +231,17 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                 )
             elif req.agent_key == "scalprunner":
                 from scalp_scan_backtester import ScalpScanBacktester
+                from data_cache import CacheOnlyProvider
                 params = _load_runner_params("ScalpRunner", "scalp_4step")
+                # Use cache-only provider (no Schwab/Alpaca auth needed) with
+                # 5m as the base timeframe — the cache has ~1yr of 5m equity data.
+                cache_provider = CacheOnlyProvider()
                 bt = ScalpScanBacktester(
                     symbols=req.symbols or info["watchlist"], params=params,
                     start_date=req.start_date, end_date=req.end_date,
                     initial_capital=req.initial_capital,
                     slippage_bps=req.slippage_bps, goal_target=req.goal_target,
+                    provider=cache_provider, base_interval="5m",
                 )
             else:
                 from scan_backtester import ScanBacktester
