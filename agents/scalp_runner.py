@@ -185,12 +185,14 @@ def register(name: str = "ScalpRunner", password: Optional[str] = None) -> Optio
     password = password or os.getenv("SCALP_RUNNER_PASSWORD")
     if not password:
         password = "scalprunner"
+    initial_cash = float(os.getenv("SCALP_RUNNER_INITIAL_CASH", "10000"))
     try:
         url = f"{API_BASE}/claw/agents/selfRegister"
         data = json.dumps({
             "name": name,
             "email": "scalprunner@agent.dev",
             "password": password,
+            "initial_balance": initial_cash,
         }).encode()
         req = urllib.request.Request(url, data=data, method="POST", headers={
             "Content-Type": "application/json",
@@ -509,7 +511,9 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
         else:
             equity -= qty * price
 
-    initial_capital = 100000.0
+    initial_capital = float(
+        params.get("risk_controls", {}).get("paper_account_budget", 10000.0)
+    )
     goal_target = goal.get("goal", {}).get("target_amount", 0) if isinstance(goal.get("goal"), dict) else 0
 
     # 3. Active exit management (if not set-and-forget)
@@ -518,12 +522,16 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     # 4. Manage existing pending orders — cancel stale ones
     pending_orders = fetch_pending_orders(token)
     active_pending_symbols = set()
+    pending_gross_exposure = 0.0
     for po in pending_orders:
         po_id = po.get("id")
         po_symbol = po.get("symbol", "")
         po_status = po.get("status", "PENDING")
         if po_status == "PENDING":
             active_pending_symbols.add(po_symbol)
+            qty = abs(float(po.get("quantity", 0)))
+            trigger = float(po.get("stop_price", 0)) or float(po.get("limit_price", 0))
+            pending_gross_exposure += qty * trigger
 
     # Clean up state's pending_order_ids for orders no longer pending
     state_pending = dict(state.get("pending_order_ids", {}))
@@ -601,7 +609,9 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
             continue
 
         stop_distance_pct = abs((sl_level - entry_price) / entry_price) * 100 if sl_level > 0 else 1.0
-        notional = position_notional(equity, stop_distance_pct, gross_exposure, params)
+        notional = position_notional(
+            equity, stop_distance_pct, gross_exposure + pending_gross_exposure, params,
+        )
         qty = notional / entry_price if notional > 0 else 0
 
         if qty <= 0:

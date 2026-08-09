@@ -179,12 +179,14 @@ def register(name: str = "CryptoRunner", password: Optional[str] = None) -> Opti
     if not password:
         logger.warning("CRYPTO_RUNNER_PASSWORD not configured; using dev fallback")
         password = "cryptorunner"
+    initial_cash = float(os.getenv("CRYPTO_RUNNER_INITIAL_CASH", "10000"))
     try:
         url = f"{API_BASE}/claw/agents/selfRegister"
         data = json.dumps({
             "name": name,
             "email": "cryptorunner@agent.dev",
             "password": password,
+            "initial_balance": initial_cash,
         }).encode()
         req = urllib.request.Request(url, data=data, method="POST", headers={
             "Content-Type": "application/json",
@@ -430,7 +432,9 @@ def run_cycle(token: str, state: dict, params: dict, poll_interval: int) -> dict
         else:
             equity -= qty * price
 
-    initial_capital = 100000.0
+    initial_capital = float(
+        params.get("risk_controls", {}).get("paper_account_budget", 10000.0)
+    )
     goal_target = goal.get("goal", {}).get("target_amount", 0) if isinstance(goal.get("goal"), dict) else 0
 
     # 3. Run scan for indicators + setups + position reviews

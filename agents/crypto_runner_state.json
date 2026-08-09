@@ -1,8 +1,8 @@
 {
   "consecutive_losses": 0,
   "reentry_cooldown": {},
-  "last_cycle_time": "2026-08-09T02:51:13.659405+00:00",
-  "cycles_run": 2,
+  "last_cycle_time": "2026-08-09T23:25:56.903575+00:00",
+  "cycles_run": 3,
   "position_entry_times": {
     "BTC": "2026-08-09T02:50:33.244021+00:00",
     "LTC": "2026-08-09T02:50:53.008830+00:00",
