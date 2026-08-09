@@ -37,6 +37,21 @@ class BacktestRequest(BaseModel):
     goal_target: Optional[float] = None  # Dollar profit target for goal-aware sizing
 
 
+class WalkForwardRequest(BaseModel):
+    agent_key: str
+    symbols: list[str]
+    start_date: str
+    end_date: str
+    candidates: dict[str, dict] = {}
+    train_days: int = 90
+    test_days: int = 30
+    step_days: int = 30
+    initial_capital: float = 100000.0
+    interval: str = "4h"
+    slippage_bps: float = 5.0
+    gates: Optional[dict] = None
+
+
 def _get_strategy_registry() -> dict:
     """Build a registry of available agent strategies for backtesting."""
     try:
@@ -336,3 +351,108 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
         except Exception as e:
             logger.error(f"LLM diagnosis error: {e}")
             return {"available": False, "diagnosis": None}
+
+    @app.post("/api/backtest/walk-forward")
+    async def run_walk_forward(data: WalkForwardRequest):
+        """Run walk-forward experiment with multiple parameter candidates."""
+        try:
+            from walk_forward import run_walk_forward as _run_wf, summarize_walk_forward
+            from strategy_registry import effective_params
+
+            base_params = _load_runner_params_by_key(data.agent_key)
+            if not base_params:
+                raise HTTPException(status_code=400, detail=f"Unknown agent: {data.agent_key}")
+
+            candidates = data.candidates or {"baseline": {}}
+
+            summaries = _run_wf(
+                symbols=data.symbols,
+                base_params=base_params,
+                candidates=candidates,
+                start_date=data.start_date,
+                end_date=data.end_date,
+                train_days=data.train_days,
+                test_days=data.test_days,
+                step_days=data.step_days,
+                initial_capital=data.initial_capital,
+                interval=data.interval,
+                slippage_bps=data.slippage_bps,
+                gates=data.gates,
+            )
+
+            return {"summary": summarize_walk_forward(summaries)}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Walk-forward error: {exc}")
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    def _load_runner_params_by_key(agent_key: str) -> dict | None:
+        """Load runner params by agent key (e.g. 'cryptorunner', 'blitzrunner')."""
+        key_map = {
+            "cryptorunner": ("CryptoRunner", "crypto_swing"),
+            "blitzrunner": ("BlitzRunner", "equity_momentum"),
+        }
+        if agent_key.lower() not in key_map:
+            return None
+        name, strategy_type = key_map[agent_key.lower()]
+        return _load_runner_params(name, strategy_type)
+
+    @app.post("/api/backtest/promote")
+    async def promote_candidate(data: dict):
+        """Evaluate walk-forward results and preview promotion candidates.
+
+        Body: { agent_key, symbols, start_date, end_date, candidates, ... }
+        Returns promotion evaluation without applying anything.
+        """
+        try:
+            from walk_forward import run_walk_forward as _run_wf
+            from promotion import evaluate_promotion, promotion_preview
+
+            base_params = _load_runner_params_by_key(data.get("agent_key", ""))
+            if not base_params:
+                raise HTTPException(status_code=400, detail=f"Unknown agent: {data.get('agent_key')}")
+
+            candidates = data.get("candidates") or {"baseline": {}}
+            summaries = _run_wf(
+                symbols=data.get("symbols", []),
+                base_params=base_params,
+                candidates=candidates,
+                start_date=data.get("start_date", ""),
+                end_date=data.get("end_date", ""),
+                initial_capital=data.get("initial_capital", 100000),
+                interval=data.get("interval", "4h"),
+            )
+            evaluations = evaluate_promotion(summaries)
+            return {"preview": promotion_preview(evaluations, candidates)}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Promotion evaluation error: {exc}")
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @app.post("/api/backtest/rollback")
+    async def rollback_config(data: dict):
+        """Load previous config from local JSON backup for rollback.
+
+        Body: { agent_name }
+        Returns the backed-up params without applying them.
+        User must confirm via PATCH endpoint to actually roll back.
+        """
+        try:
+            from promotion import rollback_params
+
+            agent_name = data.get("agent_name", "")
+            if not agent_name:
+                raise HTTPException(status_code=400, detail="agent_name required")
+
+            params = rollback_params(agent_name)
+            if params is None:
+                raise HTTPException(status_code=404, detail="No backup found for agent")
+
+            return {"strategy_params": params, "agent_name": agent_name}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(f"Rollback error: {exc}")
+            raise HTTPException(status_code=500, detail=str(exc))

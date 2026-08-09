@@ -1203,6 +1203,49 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
             stored=stored or {},
         )
 
+    @app.get('/api/agents/manage/{agent_id}/config-schema')
+    async def admin_get_config_schema(
+        agent_id: int,
+        authorization: str = Header(None),
+    ):
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+        from strategy_registry import get_config_schema
+        schema = get_config_schema(agent.get('name', ''), agent.get('strategy_type', ''))
+        if not schema:
+            raise HTTPException(status_code=404, detail='No schema for this agent')
+        return schema
+
+    @app.get('/api/agents/config-backups')
+    async def admin_list_config_backups(authorization: str = Header(None)):
+        from config_backup import list_backups
+        return {'backups': list_backups()}
+
+    @app.get('/api/agents/manage/{agent_id}/config-backup')
+    async def admin_get_config_backup_status(
+        agent_id: int,
+        authorization: str = Header(None),
+    ):
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+        from config_backup import reconcile_agent_config
+        stored = {}
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT config_json FROM agent_configs WHERE agent_id = ?', (agent_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if row and row['config_json']:
+            try:
+                config = json.loads(row['config_json'])
+                stored = config.get('strategy_params', {})
+            except (json.JSONDecodeError, TypeError):
+                pass
+        eff = _effective_for_agent(agent, stored)
+        return reconcile_agent_config(agent.get('name', ''), agent_id, eff)
+
     @app.get('/api/agents/manage/{agent_id}/strategy-params')
     async def admin_get_strategy_params(
         agent_id: int,
@@ -1272,6 +1315,12 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
         conn.commit()
         conn.close()
 
+        try:
+            from config_backup import backup_agent_config
+            backup_agent_config(agent.get('name', ''), agent_id, effective)
+        except Exception:
+            pass
+
         return {'success': True, 'agent_id': agent_id, 'strategy_params': effective}
 
     @app.patch('/api/agents/manage/{agent_id}/strategy-params')
@@ -1324,5 +1373,11 @@ def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
             )
         conn.commit()
         conn.close()
+
+        try:
+            from config_backup import backup_agent_config
+            backup_agent_config(agent.get('name', ''), agent_id, effective)
+        except Exception:
+            pass
 
         return {'success': True, 'agent_id': agent_id, 'strategy_params': effective}

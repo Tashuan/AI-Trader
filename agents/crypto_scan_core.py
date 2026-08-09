@@ -40,9 +40,13 @@ CRYPTO_DEFAULT_PARAMS: dict[str, Any] = {
         "direction_mode": "both",
         "require_daily_trend_agreement": True,
         "require_btc_regime_ok_for_alts": True,
+        "require_btc_regime_alignment": False,
         "min_avg_dollar_volume": 500000,
         "bearish_macro_min_signals": 6,
         "bearish_macro_threshold": 0.3,
+        "regime_lookback_days": 55,
+        "regime_persistence_bars": 3,
+        "regime_neutral_mode": "block",
     },
     "position_sizing": {
         "max_positions": 3,
@@ -70,6 +74,11 @@ CRYPTO_DEFAULT_PARAMS: dict[str, Any] = {
         "candle_quality_weight": 0.15,
         "consolidation_bonus_weight": 0.15,
         "trend_strength_weight": 0.15,
+    },
+    "exposure_controls": {
+        "max_correlated_positions": 2,
+        "correlation_buckets": [],
+        "reserve_btc_slot": False,
     },
     "indicators": {
         "candle_interval": "4h",
@@ -289,6 +298,293 @@ def market_state(vol_ratio: float, bb_state_str: str, quality: str) -> str:
         return "dead"
     else:
         return "balanced"
+
+
+# ============================================================
+# Indicator Family Definitions (for confluence scoring)
+# ============================================================
+
+INDICATOR_FAMILIES: dict[str, list[str]] = {
+    "trend": ["sma_alignment", "ema21", "macd_hist"],
+    "trend_strength": ["ema_alignment"],
+    "momentum": ["rsi", "stochastic", "return_1h"],
+    "volume": ["vol_ratio", "obv_divergence"],
+    "volatility": ["atr", "bb_state"],
+    "timing": ["vwap", "candle_body_ratio", "consolidation_breakout"],
+}
+
+FAMILY_CORRELATION_GROUPS: dict[str, list[str]] = {
+    "trend_stack": ["trend", "trend_strength"],
+    "momentum_osc": ["momentum"],
+    "volume_flow": ["volume"],
+    "volatility_range": ["volatility"],
+    "timing_micro": ["timing"],
+}
+
+
+def family_confluence_score(indicators: dict[str, Any]) -> tuple[int, float]:
+    """Count distinct families with directional signals and compute diversity ratio.
+
+    Returns (family_count, diversity_ratio) where diversity_ratio = family_count / total_families.
+    Correlated families (e.g. trend + trend_strength) are counted once per
+    correlation group to reduce overcounting.
+    """
+    family_signals: dict[str, str] = {}
+    for name, data in indicators.items():
+        fam = data.get("family", "")
+        sig = data.get("signal", "neutral")
+        if sig != "neutral" and fam:
+            if fam not in family_signals:
+                family_signals[fam] = sig
+
+    correlated_count = 0
+    seen_groups: set[str] = set()
+    for group_name, members in FAMILY_CORRELATION_GROUPS.items():
+        has_signal = any(f in family_signals for f in members)
+        if has_signal:
+            correlated_count += 1
+            for m in members:
+                seen_groups.add(m)
+
+    for fam in family_signals:
+        if fam not in seen_groups:
+            correlated_count += 1
+
+    total_groups = len(FAMILY_CORRELATION_GROUPS)
+    diversity = correlated_count / total_groups if total_groups > 0 else 0.0
+    return correlated_count, diversity
+
+
+# ============================================================
+# Regime Classification (persistent, symmetric)
+# ============================================================
+
+def classify_regime(
+    btc_daily_df: pd.DataFrame | None,
+    ts: pd.Timestamp | None = None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Classify BTC regime as bullish, bearish, or neutral with persistence.
+
+    Uses EMA21 on daily closes plus SMA50 alignment. Requires the regime
+    to persist for regime_persistence_bars consecutive bars to avoid flicker.
+
+    Returns dict with:
+      - regime: "bullish" | "bearish" | "neutral"
+      - persistence_bars: how many consecutive bars the regime has held
+      - ema21, sma50, close: raw values for transparency
+      - allows_long, allows_short: symmetric policy booleans
+    """
+    cfg = (params or {}).get("entry_criteria", {})
+    lookback = cfg.get("regime_lookback_days", 55)
+    persistence_needed = cfg.get("regime_persistence_bars", 3)
+    neutral_mode = cfg.get("regime_neutral_mode", "block")
+
+    if btc_daily_df is None or btc_daily_df.empty:
+        return {"regime": "neutral", "persistence_bars": 0, "allows_long": neutral_mode == "allow",
+                "allows_short": neutral_mode == "allow"}
+
+    col = "Datetime" if "Datetime" in btc_daily_df.columns else "Date"
+    df = btc_daily_df.sort_values(col).reset_index(drop=True)
+    if ts is not None:
+        df = df[df[col] < pd.Timestamp(ts).normalize()]
+
+    if len(df) < 22:
+        return {"regime": "neutral", "persistence_bars": 0, "allows_long": neutral_mode == "allow",
+                "allows_short": neutral_mode == "allow"}
+
+    closes = df["Close"].values
+    ema21 = pd.Series(closes).ewm(span=21).mean().values
+    sma50 = pd.Series(closes).rolling(50).mean().values
+
+    regimes: list[str] = []
+    for i in range(len(closes) - 1, max(len(closes) - lookback - 1, 20), -1):
+        if i < 0 or np.isnan(ema21[i]) or np.isnan(sma50[i]):
+            break
+        if closes[i] > ema21[i] and ema21[i] > sma50[i]:
+            regimes.append("bullish")
+        elif closes[i] < ema21[i] and ema21[i] < sma50[i]:
+            regimes.append("bearish")
+        else:
+            regimes.append("neutral")
+
+    if not regimes:
+        return {"regime": "neutral", "persistence_bars": 0, "allows_long": neutral_mode == "allow",
+                "allows_short": neutral_mode == "allow"}
+
+    current = regimes[0]
+    persistence = 0
+    for r in regimes:
+        if r == current:
+            persistence += 1
+        else:
+            break
+
+    if persistence < persistence_needed:
+        current = "neutral"
+
+    allows_long = current == "bullish" or (current == "neutral" and neutral_mode == "allow")
+    allows_short = current == "bearish" or (current == "neutral" and neutral_mode == "allow")
+
+    return {
+        "regime": current,
+        "persistence_bars": persistence,
+        "ema21": round(float(ema21[-1]), 4) if not np.isnan(ema21[-1]) else 0.0,
+        "sma50": round(float(sma50[-1]), 4) if not np.isnan(sma50[-1]) else 0.0,
+        "close": round(float(closes[-1]), 4),
+        "allows_long": allows_long,
+        "allows_short": allows_short,
+    }
+
+
+def regime_filter_entry(
+    symbol: str,
+    direction: str,
+    regime: dict[str, Any],
+    params: dict[str, Any],
+) -> tuple[bool, str]:
+    """Check whether the BTC regime allows this entry. Returns (allowed, reason).
+
+    Symmetric policy: bearish blocks longs, bullish blocks shorts.
+    If require_btc_regime_alignment is True, neutral also blocks both.
+    """
+    cfg = params.get("entry_criteria", {})
+    require_alignment = cfg.get("require_btc_regime_alignment", False)
+    regime_label = regime.get("regime", "neutral")
+
+    if symbol == "BTC":
+        return True, ""
+
+    if regime_label == "bullish" and direction == "short":
+        return False, "btc_regime_bullish_blocks_short"
+    if regime_label == "bearish" and direction == "long":
+        return False, "btc_regime_bearish_blocks_long"
+    if regime_label == "neutral":
+        neutral_mode = cfg.get("regime_neutral_mode", "block")
+        if neutral_mode == "block":
+            return False, "btc_regime_neutral_blocked"
+        elif neutral_mode == "reduce":
+            return True, "btc_regime_neutral_reduced"
+        else:
+            return True, ""
+
+    if require_alignment and regime_label == "neutral":
+        return False, "btc_regime_neutral_alignment_required"
+
+    return True, ""
+
+
+# ============================================================
+# Exposure and Symbol-Quality Controls
+# ============================================================
+
+DEFAULT_CORRELATION_BUCKETS: list[list[str]] = [
+    ["BTC", "WBTC", "BCH"],
+    ["ETH", "STETH", "ETC"],
+    ["SOL", "AVAX", "NEAR", "SUI", "SEI", "APT", "TIA"],
+    ["DOGE", "SHIB", "PEPE", "MATIC"],
+    ["LINK", "UNI", "ATOM", "DOT", "ARB", "OP", "INJ"],
+    ["LTC", "XRP", "ADA"],
+]
+
+
+def check_symbol_eligibility(
+    symbol: str,
+    df: pd.DataFrame | None,
+    params: dict[str, Any],
+) -> tuple[bool, str]:
+    """Data-aware symbol quality check. Returns (eligible, reason).
+
+    Checks:
+      - Minimum data rows (30 bars)
+      - Minimum average dollar volume
+      - Non-zero recent volume
+    """
+    if df is None or df.empty:
+        return False, "no_data"
+
+    if len(df) < 30:
+        return False, f"insufficient_bars_{len(df)}"
+
+    cfg = params.get("entry_criteria", {})
+    min_adv = float(cfg.get("min_avg_dollar_volume", 500000))
+    adv = float((df["Close"] * df["Volume"]).mean())
+    if adv < min_adv:
+        return False, f"low_dollar_volume_{adv:.0f}"
+
+    recent_vol = df["Volume"].tail(10)
+    if (recent_vol > 0).sum() < 5:
+        return False, "insufficient_recent_volume"
+
+    return True, ""
+
+
+def _get_correlation_buckets(params: dict[str, Any]) -> list[list[str]]:
+    exp_cfg = params.get("exposure_controls", {})
+    buckets = exp_cfg.get("correlation_buckets", [])
+    if not buckets:
+        return DEFAULT_CORRELATION_BUCKETS
+    return buckets
+
+
+def _symbol_bucket(symbol: str, buckets: list[list[str]]) -> int | None:
+    for i, bucket in enumerate(buckets):
+        if symbol in bucket:
+            return i
+    return None
+
+
+def check_correlation_exposure(
+    symbol: str,
+    open_positions: dict[str, Any],
+    params: dict[str, Any],
+) -> tuple[bool, str]:
+    """Check whether adding this symbol would exceed correlated position limits.
+
+    Returns (allowed, reason).
+    """
+    exp_cfg = params.get("exposure_controls", {})
+    max_correlated = int(exp_cfg.get("max_correlated_positions", 2))
+    buckets = _get_correlation_buckets(params)
+
+    target_bucket = _symbol_bucket(symbol, buckets)
+    if target_bucket is None:
+        return True, ""
+
+    correlated_count = 0
+    for pos_symbol in open_positions:
+        if pos_symbol == symbol:
+            return False, "already_in_position"
+        pos_bucket = _symbol_bucket(pos_symbol, buckets)
+        if pos_bucket == target_bucket:
+            correlated_count += 1
+
+    if correlated_count >= max_correlated:
+        return False, f"correlation_limit_{correlated_count}"
+
+    return True, ""
+
+
+def check_btc_slot_reservation(
+    open_positions: dict[str, Any],
+    params: dict[str, Any],
+    max_positions: int,
+) -> tuple[bool, str]:
+    """If reserve_btc_slot is True, ensure one slot is reserved for BTC.
+
+    Returns (can_add_non_btc, reason).
+    """
+    exp_cfg = params.get("exposure_controls", {})
+    if not exp_cfg.get("reserve_btc_slot", False):
+        return True, ""
+
+    if "BTC" in open_positions:
+        return True, ""
+
+    if len(open_positions) >= max_positions - 1:
+        return False, "btc_slot_reserved"
+
+    return True, ""
 
 
 # ============================================================
@@ -578,18 +874,22 @@ def deep_scan_symbol_from_df(symbol: str, df: pd.DataFrame, params: dict[str, An
     directional_count = max(bullish_count, bearish_count)
     direction_mode = entry_cfg.get("direction_mode", "both")
     direction_allowed = direction_mode == "both" or direction == direction_mode
+
+    # Use family confluence scoring (reduces correlated overcounting)
+    confluence_families, confluence_diversity = family_confluence_score(indicators)
+
     qualifies = (
         direction_allowed
         and directional_count >= min_signals
-        and len(families) >= min_families
+        and confluence_families >= min_families
         and vol_ratio > min_vol
         and not obv_div
     )
 
-    # Composite score (6 families now)
+    # Composite score using confluence-aware family count
     weights = params.get("scoring_weights", {})
     signal_count_score = max(bullish_count, bearish_count) / 15.0
-    family_diversity_score = len(families) / 6.0
+    family_diversity_score = confluence_diversity
     candle_quality_score = min(body_ratio, 1.0)
     consolidation_bonus = 1.0 if consolidation_bo else 0.0
     trend_strength_bonus = 1.0 if ema_align_signal != "neutral" else 0.0
@@ -608,6 +908,8 @@ def deep_scan_symbol_from_df(symbol: str, df: pd.DataFrame, params: dict[str, An
         "indicators": indicators,
         "signal_count": {"bullish": bullish_count, "bearish": bearish_count, "neutral": neutral_count},
         "families_represented": sorted(list(families)),
+        "confluence_families": confluence_families,
+        "confluence_diversity": round(confluence_diversity, 3),
         "qualifies_for_entry": qualifies,
         "entry_direction": direction,
         "candle_quality": candle_qual,
@@ -737,7 +1039,8 @@ def compute_atr_sl_tp(entry_price: float, side: str, scan_data: dict,
                       params: dict) -> tuple[float, float, float, float]:
     """Compute ATR-based SL/TP with percentage clamping.
 
-    SL = 2x ATR, TP = 4x ATR, then clamped into configured pct-of-entry ranges.
+    SL = 1.5x ATR, TP = 3x ATR (2:1 reward/risk ratio), then clamped
+    into configured pct-of-entry ranges.
     Returns (stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct).
     """
     exit_cfg = params.get("exit_rules", {})
@@ -746,8 +1049,8 @@ def compute_atr_sl_tp(entry_price: float, side: str, scan_data: dict,
     if atr <= 0:
         atr = entry_price * 0.03  # 3% fallback for crypto
 
-    sl_distance = 2.0 * atr
-    tp_distance = 4.0 * atr
+    sl_distance = 1.5 * atr
+    tp_distance = 3.0 * atr
 
     # Convert to pct of entry and clamp
     sl_pct_raw = (sl_distance / entry_price) * 100

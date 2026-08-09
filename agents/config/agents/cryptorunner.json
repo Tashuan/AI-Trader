@@ -1,0 +1,150 @@
+{
+  "agent_id": 1,
+  "agent_name": "CryptoRunner",
+  "content_hash": "f2acf996c1120f26",
+  "display_name": "CryptoRunner \u2014 Crypto Swing/Trend",
+  "effective_strategy_params": {
+    "cycle_timing": {
+      "poll_interval_default": 1800,
+      "poll_interval_max": 3600,
+      "poll_interval_min": 300
+    },
+    "entry_criteria": {
+      "bearish_macro_min_signals": 6,
+      "bearish_macro_threshold": 0.3,
+      "direction_mode": "both",
+      "min_avg_dollar_volume": 500000,
+      "min_signal_families": 3,
+      "min_signals": 5,
+      "min_vol_ratio": 1.3,
+      "require_btc_regime_ok_for_alts": true,
+      "require_daily_trend_agreement": true
+    },
+    "exit_rules": {
+      "momentum_death_grace_hours": 32,
+      "momentum_death_vol_ratio": 0.4,
+      "ob_exhaustion_rsi": 80,
+      "stagnation_hours": 8,
+      "stagnation_threshold_pct": 1.0,
+      "stop_loss_pct": -5.0,
+      "stop_loss_pct_clamp": [
+        -3.0,
+        -5.0
+      ],
+      "take_profit_pct": 8.0,
+      "take_profit_pct_clamp": [
+        6.0,
+        10.0
+      ],
+      "trailing_activation_pct": 4.0,
+      "trailing_sl_pct": 3.0
+    },
+    "indicators": {
+      "atr_period": 14,
+      "bb_squeeze_ratio": 0.6,
+      "candle_body_conviction": 0.6,
+      "candle_body_doji": 0.3,
+      "candle_interval": "4h",
+      "confirm_interval": "1d",
+      "ema_periods": [
+        9,
+        21,
+        55
+      ],
+      "lookback_period": "3mo",
+      "macd_fast": 12,
+      "macd_signal": 9,
+      "macd_slow": 26,
+      "rsi_bullish": 55,
+      "rsi_overbought": 80,
+      "rsi_oversold": 25,
+      "rsi_period": 14,
+      "sma_periods": [
+        20,
+        50,
+        200
+      ],
+      "stochastic_period": 14,
+      "vol_ratio_bullish": 1.3,
+      "vol_ratio_dead": 0.4
+    },
+    "position_sizing": {
+      "approaching_sizing_max_pct": 12,
+      "approaching_sizing_min_pct": 8,
+      "consecutive_loss_min_signals": 6,
+      "consecutive_loss_size_cut_pct": 50,
+      "consecutive_loss_threshold": 3,
+      "daily_loss_size_cut_pct": 50,
+      "daily_pnl_reset_timezone": "UTC",
+      "final_stretch_tp_pct": 5.0,
+      "max_position_dollar_cap": null,
+      "max_positions": 3,
+      "normal_sizing_max_pct": 16,
+      "normal_sizing_min_pct": 12,
+      "slippage_buffer_pct": 0.15
+    },
+    "profile": "crypto_swing",
+    "risk_controls": {
+      "daily_loss_halt_pct": 3.0,
+      "loss_streak_size_cut_pct": 50.0,
+      "max_gross_exposure_pct": 100.0,
+      "max_open_risk_pct": 1.5,
+      "max_position_dollar_cap": null,
+      "max_positions": 3,
+      "max_trade_notional_pct": 25.0,
+      "paper_account_budget": 10000.0,
+      "paper_only": true,
+      "risk_per_trade_pct": 0.5,
+      "sizing_mode": "risk_based"
+    },
+    "schema_version": 2,
+    "scoring_weights": {
+      "candle_quality_weight": 0.15,
+      "consolidation_bonus_weight": 0.15,
+      "family_diversity_weight": 0.25,
+      "signal_count_weight": 0.3,
+      "trend_strength_weight": 0.15
+    },
+    "sweep": {
+      "enabled": true,
+      "sweep_max_qualifiers": 15,
+      "sweep_min_price_change_pct": 2.0,
+      "sweep_min_vol_ratio": 1.3
+    },
+    "switch_logic": {
+      "reentry_cooldown_hours": 8,
+      "switch_require_profitable": true,
+      "switch_score_threshold_pct": 30
+    },
+    "watchlist": [
+      "BTC",
+      "ETH",
+      "SOL",
+      "DOGE",
+      "AVAX",
+      "XRP",
+      "ADA",
+      "LINK",
+      "DOT",
+      "LTC",
+      "UNI",
+      "ATOM",
+      "NEAR",
+      "ARB",
+      "OP",
+      "INJ",
+      "SUI",
+      "SEI",
+      "TIA",
+      "PEPE",
+      "SHIB",
+      "MATIC",
+      "APT",
+      "BCH"
+    ]
+  },
+  "exported_at": "2026-08-09T11:50:56.325711+00:00",
+  "parity_status": "live_backtest_matched",
+  "schema_name": "crypto_swing",
+  "shared_config": {}
+}

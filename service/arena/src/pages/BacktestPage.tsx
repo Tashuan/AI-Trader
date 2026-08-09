@@ -81,6 +81,8 @@ export function BacktestPage() {
   const [slippageBps, setSlippageBps] = useState('5');
   const [goalTarget, setGoalTarget] = useState('');
   const [activeTestPreset, setActiveTestPreset] = useState('');
+  const [walkForwardRunning, setWalkForwardRunning] = useState(false);
+  const [walkForwardResult, setWalkForwardResult] = useState<Record<string, any> | null>(null);
 
   interface TestPreset {
     id: string;
@@ -188,6 +190,19 @@ export function BacktestPage() {
       slippage: '5',
       goalTarget: '1000',
     },
+    {
+      id: 'crypto-wf-profile-a',
+      label: 'CryptoRunner Walk-Forward Profile A',
+      description: 'Walk-forward experiment: 90-day train, 30-day test windows over 1 year. Validates regime-aware parameters out-of-sample.',
+      agentKey: 'cryptorunner',
+      startDate: new Date(new Date().setFullYear(new Date().getFullYear() - 1)).toISOString().split('T')[0],
+      endDate: new Date().toISOString().split('T')[0],
+      symbols: 'BTC,ETH,SOL',
+      capital: '100000',
+      interval: '4h',
+      slippage: '5',
+      goalTarget: '',
+    },
   ];
 
   const applyTestPreset = (preset: TestPreset) => {
@@ -218,6 +233,42 @@ export function BacktestPage() {
     }
     setStartDate(start.toISOString().split('T')[0]);
     setEndDate(now.toISOString().split('T')[0]);
+  };
+
+  const runWalkForward = async () => {
+    if (!selectedKey || !startDate || !endDate) return;
+    setWalkForwardRunning(true);
+    setWalkForwardResult(null);
+    setError(null);
+    try {
+      const symbols = symbolsInput
+        ? symbolsInput.split(',').map(s => s.trim()).filter(Boolean)
+        : (selectedStrategy?.watchlist || []);
+      const res = await fetch('/api/backtest/walk-forward', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent_key: selectedKey,
+          symbols,
+          start_date: startDate,
+          end_date: endDate,
+          candidates: { baseline: {} },
+          train_days: 90,
+          test_days: 30,
+          step_days: 30,
+          initial_capital: parseFloat(capital) || 100000,
+          interval: candleInterval,
+          slippage_bps: parseFloat(slippageBps) || 5,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setWalkForwardResult(data.summary || null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Walk-forward failed');
+    } finally {
+      setWalkForwardRunning(false);
+    }
   };
 
   const fetchStrategies = useCallback(async () => {

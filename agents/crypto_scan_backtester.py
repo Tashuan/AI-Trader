@@ -110,13 +110,12 @@ class CryptoScanBacktester:
             result["qualifies_for_entry"] = False
             result["entry_veto_reason"] = "daily_trend_disagreement"
         elif symbol != "BTC" and cfg.get("require_btc_regime_ok_for_alts", True):
-            btc_regime = self._btc_regime(ts, daily)
-            if btc_regime == "bearish" and direction == "long":
+            regime = core.classify_regime(daily.get("BTC"), ts, self.params)
+            result["btc_regime"] = regime
+            allowed, reason = core.regime_filter_entry(symbol, direction, regime, self.params)
+            if not allowed:
                 result["qualifies_for_entry"] = False
-                result["entry_veto_reason"] = "btc_regime_bearish"
-            elif btc_regime == "bullish" and direction == "short" and cfg.get("require_btc_regime_alignment", False):
-                result["qualifies_for_entry"] = False
-                result["entry_veto_reason"] = "btc_regime_bullish"
+                result["entry_veto_reason"] = reason
         if result.get("qualifies_for_entry"):
             min_adv = float(cfg.get("min_avg_dollar_volume", 500000))
             adv = float((window["Close"] * window["Volume"]).mean())
@@ -224,6 +223,13 @@ class CryptoScanBacktester:
                 directional = max(data.get("signal_count", {}).get("bullish", 0), data.get("signal_count", {}).get("bearish", 0))
                 if directional < minimum:
                     continue
+                cor_ok, cor_reason = core.check_correlation_exposure(symbol, positions, params)
+                if not cor_ok:
+                    continue
+                if symbol != "BTC":
+                    btc_ok, btc_reason = core.check_btc_slot_reservation(positions, params, max_positions)
+                    if not btc_ok:
+                        continue
                 entry = prices.get(symbol, 0)
                 side = data.get("entry_direction", "long")
                 if entry <= 0:

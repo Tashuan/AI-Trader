@@ -1205,6 +1205,40 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
             stored=stored or {},
         )
 
+    @app.get('/api/claw/agents/me/config-schema')
+    async def get_agent_config_schema(authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+        from strategy_registry import get_config_schema
+        schema = get_config_schema(agent.get('name', ''), agent.get('strategy_type', ''))
+        if not schema:
+            raise HTTPException(status_code=404, detail='No schema for this agent')
+        return schema
+
+    @app.get('/api/claw/agents/me/config-backup')
+    async def get_agent_config_backup_status(authorization: str = Header(None)):
+        token = _extract_token(authorization)
+        agent = _get_agent_by_token(token)
+        if not agent:
+            raise HTTPException(status_code=401, detail='Invalid token')
+        from config_backup import reconcile_agent_config
+        stored = {}
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT config_json FROM agent_configs WHERE agent_id = ?', (agent['id'],))
+        row = cursor.fetchone()
+        conn.close()
+        if row and row['config_json']:
+            try:
+                config = json.loads(row['config_json'])
+                stored = config.get('strategy_params', {})
+            except (json.JSONDecodeError, TypeError):
+                pass
+        eff = _effective_for_agent(agent, stored)
+        return reconcile_agent_config(agent.get('name', ''), agent.get('id'), eff)
+
     @app.get('/api/claw/agents/me/strategy-params')
     async def get_agent_strategy_params(authorization: str = Header(None)):
         token = _extract_token(authorization)
@@ -1277,6 +1311,12 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
             )
         conn.commit()
         conn.close()
+
+        try:
+            from config_backup import backup_agent_config
+            backup_agent_config(agent.get('name', ''), agent.get('id'), effective)
+        except Exception:
+            pass
 
         return {'success': True, 'strategy_params': effective}
 

@@ -65,6 +65,9 @@ class BacktestReport:
     interval: str = "1d"
     slippage_bps: float = 0.0
     out_of_sample: bool = False
+    exit_attribution: dict = field(default_factory=dict)
+    data_coverage: dict = field(default_factory=dict)
+    walk_forward_summary: dict = field(default_factory=dict)
 
     def activation_gate(self) -> dict:
         checks = {
@@ -101,6 +104,9 @@ class BacktestReport:
             "slippage_bps": self.slippage_bps,
             "out_of_sample": self.out_of_sample,
             "activation_gate": self.activation_gate(),
+            "exit_attribution": self.exit_attribution,
+            "data_coverage": self.data_coverage,
+            "walk_forward_summary": self.walk_forward_summary,
         }
 
     @staticmethod
@@ -178,6 +184,9 @@ class BacktestReport:
                 "avg_pnl_pct": round(sum(t.pnl_pct for t in sym_trades) / len(sym_trades), 2) if sym_trades else 0.0,
             }
 
+        exit_attribution = _compute_exit_attribution(trades)
+        data_coverage = _compute_data_coverage(symbols, start_date, end_date, equity_curve)
+
         return BacktestReport(
             agent_name=agent_name,
             symbols=symbols,
@@ -200,4 +209,64 @@ class BacktestReport:
             per_symbol_stats=per_symbol,
             interval=interval,
             slippage_bps=slippage_bps,
+            exit_attribution=exit_attribution,
+            data_coverage=data_coverage,
         )
+
+
+def _compute_exit_attribution(trades: list[TradeRecord]) -> dict:
+    """Aggregate exit reasons into counts and pnl breakdowns."""
+    counts: dict[str, int] = {}
+    pnl_by_reason: dict[str, float] = {}
+    for t in trades:
+        reason = t.reason or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+        pnl_by_reason[reason] = pnl_by_reason.get(reason, 0.0) + t.pnl
+    total = len(trades) if trades else 1
+    return {
+        "counts": counts,
+        "pnl_by_reason": {k: round(v, 2) for k, v in pnl_by_reason.items()},
+        "pct_by_reason": {k: round(v / total * 100, 1) for k, v in counts.items()},
+    }
+
+
+def _compute_data_coverage(
+    symbols: list[str],
+    start_date: str,
+    end_date: str,
+    equity_curve: list[dict],
+) -> dict:
+    """Compute data coverage metrics for the backtest period."""
+    from datetime import datetime, timedelta
+
+    try:
+        start_dt = datetime.fromisoformat(start_date.split("T")[0])
+        end_dt = datetime.fromisoformat(end_date.split("T")[0])
+        requested_days = max(1, (end_dt - start_dt).days)
+    except Exception:
+        requested_days = 0
+
+    bars = len(equity_curve)
+    actual_start = equity_curve[0]["date"] if equity_curve else ""
+    actual_end = equity_curve[-1]["date"] if equity_curve else ""
+
+    try:
+        actual_start_dt = datetime.fromisoformat(actual_start.split("T")[0])
+        actual_end_dt = datetime.fromisoformat(actual_end.split("T")[0])
+        actual_days = max(1, (actual_end_dt - actual_start_dt).days)
+    except Exception:
+        actual_days = 0
+
+    coverage_pct = (actual_days / requested_days * 100) if requested_days > 0 else 0.0
+
+    return {
+        "symbols_requested": len(symbols),
+        "bars_in_equity_curve": bars,
+        "requested_start": start_date,
+        "requested_end": end_date,
+        "actual_start": actual_start,
+        "actual_end": actual_end,
+        "requested_days": requested_days,
+        "actual_days": actual_days,
+        "coverage_pct": round(coverage_pct, 1),
+    }
