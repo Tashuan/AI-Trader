@@ -116,12 +116,12 @@ export function BacktestPage() {
     {
       id: 'crypto-1y',
       label: 'CryptoRunner 1-Year',
-      description: 'The statistically meaningful full replay. 4h candles over a full year on the full watchlist at production capital — enough trades for stable Sharpe and drawdown readings.',
+      description: 'The statistically meaningful full replay. 4h candles over a full year on the full watchlist at the $10K account budget — enough trades for stable Sharpe and drawdown readings.',
       agentKey: 'cryptorunner',
       startDate: new Date(new Date().setFullYear(new Date().getFullYear() - 1)).toISOString().split('T')[0],
       endDate: new Date().toISOString().split('T')[0],
       symbols: '',
-      capital: '100000',
+      capital: '10000',
       interval: '4h',
       slippage: '5',
       goalTarget: '',
@@ -147,7 +147,7 @@ export function BacktestPage() {
       startDate: new Date(new Date().setFullYear(new Date().getFullYear() - 1)).toISOString().split('T')[0],
       endDate: new Date().toISOString().split('T')[0],
       symbols: 'BTC,ETH,SOL',
-      capital: '100000',
+      capital: '10000',
       interval: '4h',
       slippage: '5',
       goalTarget: '',
@@ -258,7 +258,7 @@ export function BacktestPage() {
           train_days: 90,
           test_days: 30,
           step_days: 30,
-          initial_capital: parseFloat(capital) || 100000,
+          initial_capital: parseFloat(capital) || 10000,
           interval: candleInterval,
           slippage_bps: parseFloat(slippageBps) || 5,
         }),
@@ -335,7 +335,7 @@ export function BacktestPage() {
         agent_key: selectedKey,
         start_date: startDate,
         end_date: endDate,
-        initial_capital: parseFloat(capital) || 100000,
+        initial_capital: parseFloat(capital) || 10000,
       };
       if (symbolsInput.trim()) {
         body.symbols = symbolsInput.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
