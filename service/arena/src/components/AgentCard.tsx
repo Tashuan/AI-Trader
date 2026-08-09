@@ -123,7 +123,7 @@ export function AgentCard({ agent, mentioned, onClick }: AgentCardProps) {
           <div className={`text-sm font-mono font-bold ${agent.total_profit >= 0 ? 'text-arena-green' : 'text-arena-red'}`}>
             {agent.total_profit >= 0 ? '+' : '-'}${Math.abs(agent.total_profit).toLocaleString(undefined, { maximumFractionDigits: 0 })}
             <span className="text-[10px] ml-1">
-              ({agent.total_profit >= 0 ? '+' : ''}{((agent.total_profit / 100000) * 100).toFixed(1)}%)
+              ({agent.total_profit >= 0 ? '+' : ''}{((agent.total_profit / (agent.cash || 100000)) * 100).toFixed(1)}%)
             </span>
           </div>
         </div>

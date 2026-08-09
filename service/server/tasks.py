@@ -1086,7 +1086,7 @@ def _record_profit_history_once() -> int:
 
     started_at = time.monotonic()
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    initial_capital = 100000.0
+    default_initial_capital = 100000.0
     max_abs_profit = 1e12
     conn = get_db_connection()
     try:
@@ -1107,16 +1107,21 @@ def _record_profit_history_once() -> int:
                                 END
                             ),
                             0
-                        ) AS position_value
+                        ) AS position_value,
+                        COALESCE(
+                            NULLIF(ac.config_json::json#>>'{strategy_params,risk_controls,paper_account_budget}', '')::float,
+                            ?::float
+                        ) AS initial_capital
                     FROM agents a
                     LEFT JOIN positions p ON p.agent_id = a.id
+                    LEFT JOIN agent_configs ac ON ac.agent_id = a.id
                     WHERE NOT EXISTS (
                         SELECT 1
                         FROM agent_leaderboard_exclusions ale
                         WHERE ale.agent_id = a.id
                           AND COALESCE(ale.active, 1) = 1
                     )
-                    GROUP BY a.id, a.cash, a.deposited
+                    GROUP BY a.id, a.cash, a.deposited, ac.config_json
                 ),
                 calculated AS (
                     SELECT
@@ -1124,7 +1129,7 @@ def _record_profit_history_once() -> int:
                         cash,
                         position_value,
                         cash + position_value AS total_value,
-                        cash + position_value - (? + deposited) AS raw_profit
+                        cash + position_value - (initial_capital + deposited) AS raw_profit
                     FROM agent_values
                 ),
                 inserted AS (
@@ -1146,7 +1151,7 @@ def _record_profit_history_once() -> int:
                 SELECT
                     (SELECT COUNT(*) FROM inserted) AS inserted_count,
                     (SELECT COUNT(*) FROM calculated WHERE ABS(raw_profit) > ?) AS clamped_count
-            """, (initial_capital, max_abs_profit, max_abs_profit, max_abs_profit, now, max_abs_profit))
+            """, (default_initial_capital, max_abs_profit, max_abs_profit, max_abs_profit, now, max_abs_profit))
             row = cursor.fetchone()
             inserted_count = int(row["inserted_count"] or 0) if row else 0
             clamped_count = int(row["clamped_count"] or 0) if row else 0
@@ -1166,16 +1171,21 @@ def _record_profit_history_once() -> int:
                                 END
                             ),
                             0
-                        ) AS position_value
+                        ) AS position_value,
+                        COALESCE(
+                            json_extract(ac.config_json, '$.strategy_params.risk_controls.paper_account_budget'),
+                            ?
+                        ) AS initial_capital
                     FROM agents a
                     LEFT JOIN positions p ON p.agent_id = a.id
+                    LEFT JOIN agent_configs ac ON ac.agent_id = a.id
                     WHERE NOT EXISTS (
                         SELECT 1
                         FROM agent_leaderboard_exclusions ale
                         WHERE ale.agent_id = a.id
                           AND COALESCE(ale.active, 1) = 1
                     )
-                    GROUP BY a.id, a.cash, a.deposited
+                    GROUP BY a.id, a.cash, a.deposited, ac.config_json
                 ),
                 calculated AS (
                     SELECT
@@ -1183,7 +1193,7 @@ def _record_profit_history_once() -> int:
                         cash,
                         position_value,
                         cash + position_value AS total_value,
-                        cash + position_value - (? + deposited) AS raw_profit
+                        cash + position_value - (initial_capital + deposited) AS raw_profit
                     FROM agent_values
                 )
                 INSERT INTO profit_history (agent_id, total_value, cash, position_value, profit, recorded_at)
@@ -1199,7 +1209,7 @@ def _record_profit_history_once() -> int:
                     END AS profit,
                     ?
                 FROM calculated
-            """, (initial_capital, max_abs_profit, max_abs_profit, max_abs_profit, now))
+            """, (default_initial_capital, max_abs_profit, max_abs_profit, max_abs_profit, now))
             inserted_count = cursor.rowcount if cursor.rowcount is not None and cursor.rowcount >= 0 else 0
             clamped_count = 0
             if inserted_count == 0:

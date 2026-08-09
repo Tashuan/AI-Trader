@@ -1,7 +1,11 @@
 {
   "consecutive_losses": 0,
   "reentry_cooldown": {},
-  "last_cycle_time": "2026-08-03T19:18:04.875526+00:00",
-  "cycles_run": 1,
-  "position_entry_times": {}
+  "last_cycle_time": "2026-08-09T02:51:13.659405+00:00",
+  "cycles_run": 2,
+  "position_entry_times": {
+    "BTC": "2026-08-09T02:50:33.244021+00:00",
+    "LTC": "2026-08-09T02:50:53.008830+00:00",
+    "ETH": "2026-08-09T02:51:09.488362+00:00"
+  }
 }

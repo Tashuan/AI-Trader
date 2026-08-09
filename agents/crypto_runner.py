@@ -152,7 +152,7 @@ def post_discussion(token: str, title: str, content: str, market: str = "crypto"
 def post_activity(token: str, text: str, market: str = "crypto", symbol: str = "") -> None:
     """Post cycle activity as both a thought and a discussion for full UI visibility."""
     post_thought(token, text)
-    post_discussion(token, text, market=market, symbol=symbol)
+    post_discussion(token, text[:200], text, market=market, symbol=symbol)
 
 
 def login(name: str = "CryptoRunner", password: Optional[str] = None) -> Optional[str]:

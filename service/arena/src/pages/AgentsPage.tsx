@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, Check, ChevronDown, ChevronUp, Bot, Play, Square, Wifi, WifiOff, Circle, Settings, Zap } from 'lucide-react';
+import { Copy, Check, ChevronDown, ChevronUp, Bot, Play, Square, Wifi, WifiOff, Circle, Settings, Zap, AlertCircle, X } from 'lucide-react';
 import { Tooltip } from '../components/Tooltip';
 import { AgentEditorModal } from '../components/AgentEditorModal';
 
@@ -40,6 +40,7 @@ interface RunnerStatus {
   pid: number | null;
   thread: string | null;
   bot_type: string;
+  last_error?: string | null;
 }
 
 const ALL_AGENTS: AgentEntry[] = [
@@ -75,6 +76,12 @@ export function AgentsPage() {
   const [editAgent, setEditAgent] = useState<{ id: number; name: string } | null>(null);
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
   const [cryptoRunnerStatus, setCryptoRunnerStatus] = useState<RunnerStatus | null>(null);
+  const [toast, setToast] = useState<{ type: 'error' | 'success'; message: string; detail?: string } | null>(null);
+
+  const showToast = (type: 'error' | 'success', message: string, detail?: string) => {
+    setToast({ type, message, detail });
+    setTimeout(() => setToast(null), 8000);
+  };
 
   const fetchData = useCallback(() => {
     fetch('/api/arena/personalities')
@@ -150,11 +157,16 @@ export function AgentsPage() {
   const handleStartRunner = async () => {
     setActionLoading('start-runner');
     try {
-      await fetch('/api/arena/runner/start', { method: 'POST' });
+      const resp = await fetch('/api/arena/runner/start', { method: 'POST' });
+      const data = await resp.json();
+      if (!data.success) {
+        showToast('error', data.message || 'Failed to start BlitzRunner', data.error);
+      }
       await new Promise(r => setTimeout(r, 500));
       fetchData();
     } catch (e) {
       console.error('Failed to start runner:', e);
+      showToast('error', 'Failed to start BlitzRunner', String(e));
     }
     setActionLoading(null);
   };
@@ -174,11 +186,16 @@ export function AgentsPage() {
   const handleStartCryptoRunner = async () => {
     setActionLoading('start-crypto-runner');
     try {
-      await fetch('/api/arena/crypto-runner/start', { method: 'POST' });
+      const resp = await fetch('/api/arena/crypto-runner/start', { method: 'POST' });
+      const data = await resp.json();
+      if (!data.success) {
+        showToast('error', data.message || 'Failed to start CryptoRunner', data.error);
+      }
       await new Promise(r => setTimeout(r, 500));
       fetchData();
     } catch (e) {
       console.error('Failed to start crypto runner:', e);
+      showToast('error', 'Failed to start CryptoRunner', String(e));
     }
     setActionLoading(null);
   };
@@ -208,6 +225,24 @@ export function AgentsPage() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
+      {/* Toast notification */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 max-w-md p-3 rounded-lg border shadow-xl ${toast.type === 'error' ? 'bg-arena-red/10 border-arena-red/30' : 'bg-arena-green/10 border-arena-green/30'}`}>
+          <div className="flex items-start gap-2">
+            <AlertCircle size={16} className={toast.type === 'error' ? 'text-arena-red shrink-0 mt-0.5' : 'text-arena-green shrink-0 mt-0.5'} />
+            <div className="flex-1 min-w-0">
+              <div className={`text-xs font-semibold ${toast.type === 'error' ? 'text-arena-red' : 'text-arena-green'}`}>{toast.message}</div>
+              {toast.detail && (
+                <pre className="mt-1 text-[10px] text-arena-text-dim whitespace-pre-wrap max-h-32 overflow-y-auto font-mono">{toast.detail}</pre>
+              )}
+            </div>
+            <button onClick={() => setToast(null)} className="text-arena-text-dim hover:text-white shrink-0">
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
       <h1 className="text-lg font-bold text-white mb-1">Agents</h1>
       <p className="text-xs text-arena-text-dim mb-6">
         Launch Python bots from the UI or copy the agent prompt into a new AI chat. When an AI agent logs in, it automatically takes over from any running bot.
@@ -297,6 +332,15 @@ export function AgentsPage() {
             Runs alongside the AI agent for A/B comparison. Trades use the same BlitzTrader account — positions are shared.
           </div>
         )}
+        {!runnerStatus?.running && runnerStatus?.last_error && (
+          <div className="mt-2 pt-2 border-t border-arena-red/20 flex items-start gap-2">
+            <AlertCircle size={12} className="text-arena-red shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-semibold text-arena-red">Runner crashed</div>
+              <pre className="text-[9px] text-arena-text-dim whitespace-pre-wrap max-h-24 overflow-y-auto font-mono mt-0.5">{runnerStatus.last_error}</pre>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* CryptoRunner — Deterministic Crypto Swing Runner */}
@@ -365,6 +409,15 @@ export function AgentsPage() {
         {cryptoRunnerStatus?.running && (
           <div className="mt-2 pt-2 border-t border-arena-border/50 text-[9px] text-arena-text-dim">
             Runs 24/7 alongside other agents. Executes trend-following strategy across BTC, ETH, SOL, and 20+ other crypto symbols.
+          </div>
+        )}
+        {!cryptoRunnerStatus?.running && cryptoRunnerStatus?.last_error && (
+          <div className="mt-2 pt-2 border-t border-arena-red/20 flex items-start gap-2">
+            <AlertCircle size={12} className="text-arena-red shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-semibold text-arena-red">Runner crashed</div>
+              <pre className="text-[9px] text-arena-text-dim whitespace-pre-wrap max-h-24 overflow-y-auto font-mono mt-0.5">{cryptoRunnerStatus.last_error}</pre>
+            </div>
           </div>
         )}
       </div>

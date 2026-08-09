@@ -17,6 +17,7 @@ Provides:
 
 import json
 import os
+import asyncio
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -234,7 +235,8 @@ def _build_goal_data_from_config(config: dict, agent_cash: float = 100000.0) -> 
     if not goal:
         return {'goal': None, 'status': 'no_goal', 'progress_pct': 0.0, 'can_trade': True}
 
-    starting_equity = 100000.0
+    risk_controls = config.get('risk_controls') or config.get('strategy_params', {}).get('risk_controls', {})
+    starting_equity = float(risk_controls.get('paper_account_budget', 100000.0))
     current_equity = float(agent_cash)
     target = goal.get('target_amount', 0)
     progress_pct = 0.0
@@ -450,7 +452,11 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         agents_dir = os.path.join(project_root, "agents")
         result = start_runner(agents_dir)
-        status_code = 200 if result["success"] else 409
+        if result["success"]:
+            await asyncio.sleep(2)
+            status = get_runner_status()
+            if not status["running"] and status.get("last_error"):
+                return {"success": False, "message": f"BlitzRunner crashed on startup", "error": status["last_error"]}
         return result
 
     @app.post("/api/arena/runner/stop")
@@ -469,7 +475,11 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         agents_dir = os.path.join(project_root, "agents")
         result = start_crypto_runner(agents_dir)
-        status_code = 200 if result["success"] else 409
+        if result["success"]:
+            await asyncio.sleep(2)
+            status = get_crypto_runner_status()
+            if not status["running"] and status.get("last_error"):
+                return {"success": False, "message": f"CryptoRunner crashed on startup", "error": status["last_error"]}
         return result
 
     @app.post("/api/arena/crypto-runner/stop")
@@ -1193,14 +1203,15 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             goal_data = _build_goal_data_from_config(agent_config, float(row["cash"] or 100000.0))
 
             # Today's P&L — use unrealized P&L from open positions, fall back to profit_history
+            agent_cash = float(row["cash"] or 100000.0)
             total_profit = profit_info.get("profit", 0)
-            total_value = profit_info.get("total_value", 100000.0)
+            total_value = profit_info.get("total_value", agent_cash)
             if all_positions:
                 today_pnl = total_unrealized_pnl
-                today_pnl_pct = (total_unrealized_pnl / 100000.0) * 100
+                today_pnl_pct = (total_unrealized_pnl / agent_cash) * 100 if agent_cash else 0
             else:
                 today_pnl = total_profit
-                today_pnl_pct = (total_profit / 100000.0) * 100 if total_value else 0
+                today_pnl_pct = (total_profit / agent_cash) * 100 if agent_cash else 0
 
             # Win streak
             win_streak = stats_info.get("current_streak", 0)
@@ -1225,6 +1236,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             agents.append({
                 "agent_id": aid,
                 "name": name,
+                "cash": agent_cash,
                 "tagline": personality.get("tagline", ""),
                 "bio": personality.get("bio", ""),
                 "goal": personality.get("goal", ""),

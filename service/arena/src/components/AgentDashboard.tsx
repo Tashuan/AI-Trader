@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import {
   TrendingUp, TrendingDown, Brain, Users, Target, Settings,
   ChevronDown, Wifi, WifiOff, Bot, Circle, Activity, DollarSign,
-  Zap, Award,
+  Zap, Award, Loader2,
 } from 'lucide-react';
 import type { Agent, GoalData } from '../types';
 import { GrowthChart } from './GrowthChart';
@@ -16,7 +16,7 @@ interface AgentDashboardProps {
 }
 
 interface AgentDetail {
-  agent: { id: number; name: string; identity_status: string };
+  agent: { id: number; name: string; identity_status: string; cash?: number };
   personality: { tagline: string; bio: string; goal: string; voice: string; quirks: string[]; watchlist: string[] };
   positions: { symbol: string; side: string; quantity: number; entry_price: number; current_price: number; opened_at: string; stop_loss_price: number | null; take_profit_price: number | null; market: string }[];
   trades: { symbol: string; side: string; signal_type: string; pnl: number; content: string; created_at: string }[];
@@ -108,8 +108,10 @@ export function AgentDashboard({ agents }: AgentDashboardProps) {
     return sum + pnl;
   }, 0);
 
-  const totalEquity = (stats?.total_profit ?? 0) + 100000;
-  const cash = selectedAgent?.today_pnl != null ? totalEquity - totalUnrealizedPnl : totalEquity;
+  // Use actual agent cash from the detail endpoint (or card data) as the base
+  const agentCash = detail?.agent?.cash ?? selectedAgent?.cash ?? 100000;
+  const totalEquity = agentCash + totalUnrealizedPnl;
+  const cash = agentCash;
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -199,7 +201,17 @@ export function AgentDashboard({ agents }: AgentDashboardProps) {
       </div>
 
       {loading && !detail && (
-        <div className="p-8 text-center text-arena-text-dim text-sm">Loading agent details...</div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 py-20">
+          <Loader2 size={28} className="text-arena-purple animate-spin" />
+          <span className="text-sm text-arena-text-dim">Loading {selectedAgentName}...</span>
+        </div>
+      )}
+
+      {loading && detail && (
+        <div className="px-4 py-1.5 flex items-center gap-2 bg-arena-purple/5 border-b border-arena-purple/10">
+          <Loader2 size={12} className="text-arena-purple animate-spin" />
+          <span className="text-[10px] text-arena-text-dim">Updating {selectedAgentName}...</span>
+        </div>
       )}
 
       {detail && (

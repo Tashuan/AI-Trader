@@ -44,7 +44,7 @@ export function AgentArena({ agents, mentionedAgent, onAgentClick }: AgentArenaP
         case 'pnl':
           return b.total_profit - a.total_profit;
         case 'pnl_pct':
-          return (b.total_profit / 100000) - (a.total_profit / 100000);
+          return (b.total_profit / (b.cash || 100000)) - (a.total_profit / (a.cash || 100000));
         case 'trades':
           return b.trade_count - a.trade_count;
         case 'win_rate':

@@ -1,8 +1,10 @@
 import os
 import sys
+import time
+import traceback
 import threading
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, Callable, Any
 
 
 @dataclass
@@ -12,15 +14,43 @@ class ManagedBot:
     stop_event: threading.Event
     started_at: float
     bot_type: str = "strategy"  # "strategy" (BaseAgent) or "runner" (deterministic Goal Runner)
+    last_error: str | None = None
+    last_error_at: float | None = None
 
 
 _bots: dict[str, ManagedBot] = {}
 _lock = threading.Lock()
 
+# Keep last error for dead bots so the UI can show why they stopped
+_dead_bot_errors: dict[str, tuple[str, float]] = {}
+_DEAD_ERROR_TTL = 300  # 5 minutes
+
 
 def _ensure_agents_path(agents_dir: str) -> None:
     if agents_dir not in sys.path:
         sys.path.insert(0, agents_dir)
+
+
+def _wrap_target(key: str, target: Callable, args: tuple) -> Callable[[], None]:
+    """Wrap a thread target so crashes are captured and stored for the UI."""
+    def wrapper():
+        try:
+            target(*args)
+        except SystemExit:
+            pass
+        except Exception:
+            err = traceback.format_exc()
+            with _lock:
+                bot = _bots.get(key)
+                if bot:
+                    bot.last_error = err
+                    bot.last_error_at = time.time()
+                _dead_bot_errors[key] = (err, time.time())
+        else:
+            # Thread exited cleanly (stop_event was set)
+            with _lock:
+                _dead_bot_errors.pop(key, None)
+    return wrapper
 
 
 def start_bot(agent_key: str, agents_dir: str, api_base: str = "http://localhost:8000/api") -> dict:
@@ -30,15 +60,13 @@ def start_bot(agent_key: str, agents_dir: str, api_base: str = "http://localhost
             return {"success": False, "message": f"Bot '{agent_key}' is already running"}
 
         try:
-            import time
             _ensure_agents_path(agents_dir)
             from run_agents import create_agent, run_agent_thread
 
             agent = create_agent(agent_key, api_base, 60)
             stop_event = threading.Event()
             thread = threading.Thread(
-                target=run_agent_thread,
-                args=(agent, 0, stop_event),
+                target=_wrap_target(agent_key, run_agent_thread, (agent, 0, stop_event)),
                 name=f"ManagedBot-{agent_key}",
                 daemon=True,
             )
@@ -87,8 +115,21 @@ def get_bot_status(agent_key: str) -> dict:
         bot = _bots.get(agent_key)
         if not bot or not bot.thread.is_alive():
             _bots.pop(agent_key, None)
-            return {"running": False, "pid": None, "thread": None}
-        return {"running": True, "pid": None, "thread": bot.thread.name}
+            err = _get_dead_error(agent_key)
+            return {"running": False, "pid": None, "thread": None, "last_error": err}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "last_error": None}
+
+
+def _get_dead_error(key: str) -> str | None:
+    """Get error for a dead bot, with TTL cleanup."""
+    entry = _dead_bot_errors.get(key)
+    if not entry:
+        return None
+    err, ts = entry
+    if time.time() - ts > _DEAD_ERROR_TTL:
+        _dead_bot_errors.pop(key, None)
+        return None
+    return err
 
 
 def get_all_bot_statuses() -> dict[str, dict]:
@@ -102,6 +143,7 @@ def get_all_bot_statuses() -> dict[str, dict]:
                     "pid": None,
                     "thread": bot.thread.name,
                     "bot_type": bot.bot_type,
+                    "last_error": None,
                 }
             else:
                 dead.append(key)
@@ -137,14 +179,12 @@ def start_runner(agents_dir: str, poll_interval: int = 120) -> dict:
             return {"success": False, "message": "BlitzRunner is already running"}
 
         try:
-            import time
             _ensure_agents_path(agents_dir)
             from blitz_runner import run_loop
 
             stop_event = threading.Event()
             thread = threading.Thread(
-                target=run_loop,
-                args=(stop_event, poll_interval),
+                target=_wrap_target(_RUNNER_KEY, run_loop, (stop_event, poll_interval)),
                 name="ManagedRunner-blitztrader",
                 daemon=True,
             )
@@ -176,8 +216,8 @@ def get_runner_status() -> dict:
         bot = _bots.get(_RUNNER_KEY)
         if not bot or not bot.thread.is_alive():
             _bots.pop(_RUNNER_KEY, None)
-            return {"running": False, "pid": None, "thread": None, "bot_type": "runner"}
-        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner"}
+            return {"running": False, "pid": None, "thread": None, "bot_type": "runner", "last_error": _get_dead_error(_RUNNER_KEY)}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
 
 
 # ── CryptoRunner management ────────────────────────────────────────────
@@ -193,14 +233,12 @@ def start_crypto_runner(agents_dir: str, poll_interval: int = 1800) -> dict:
             return {"success": False, "message": "CryptoRunner is already running"}
 
         try:
-            import time
             _ensure_agents_path(agents_dir)
             from crypto_runner import run_loop
 
             stop_event = threading.Event()
             thread = threading.Thread(
-                target=run_loop,
-                args=(stop_event, poll_interval),
+                target=_wrap_target(_CRYPTO_RUNNER_KEY, run_loop, (stop_event, poll_interval)),
                 name="ManagedRunner-cryptorunner",
                 daemon=True,
             )
@@ -232,5 +270,5 @@ def get_crypto_runner_status() -> dict:
         bot = _bots.get(_CRYPTO_RUNNER_KEY)
         if not bot or not bot.thread.is_alive():
             _bots.pop(_CRYPTO_RUNNER_KEY, None)
-            return {"running": False, "pid": None, "thread": None, "bot_type": "runner"}
-        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner"}
+            return {"running": False, "pid": None, "thread": None, "bot_type": "runner", "last_error": _get_dead_error(_CRYPTO_RUNNER_KEY)}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}

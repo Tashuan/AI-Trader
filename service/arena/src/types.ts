@@ -56,6 +56,7 @@ export interface GoalData {
 export interface Agent {
   agent_id: number;
   name: string;
+  cash?: number;
   tagline: string;
   bio: string;
   goal: string;
