@@ -61,6 +61,9 @@ from bot_manager import (
     start_crypto_runner,
     stop_crypto_runner,
     get_crypto_runner_status,
+    start_stockboy,
+    stop_stockboy,
+    get_stockboy_status,
     start_scalp_runner,
     stop_scalp_runner,
     get_scalp_runner_status,
@@ -515,6 +518,19 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/arena/scalp-runner/status")
     async def arena_scalp_runner_status():
         return get_scalp_runner_status()
+
+    # ── StockBoy supervisor endpoints ────────────────────────────────
+    @app.post("/api/arena/stockboy/start")
+    async def arena_start_stockboy():
+        return start_stockboy()
+
+    @app.post("/api/arena/stockboy/stop")
+    async def arena_stop_stockboy():
+        return stop_stockboy()
+
+    @app.get("/api/arena/stockboy/status")
+    async def arena_stockboy_status():
+        return get_stockboy_status()
 
     @app.post("/api/arena/agent/{agent_id}/disconnect")
     async def arena_disconnect_agent(agent_id: int):

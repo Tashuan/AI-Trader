@@ -33,9 +33,12 @@ class BacktestRequest(BaseModel):
     end_date: str = ""
     initial_capital: float = 100000.0
     interval: str = "1d"
-    slippage_bps: float = 5.0
+    slippage_bps: float = 10.0
+    fee_rate: float = 0.001
+    realistic_fills: bool = True
     goal_target: Optional[float] = None  # Dollar profit target for goal-aware sizing
     params_override: Optional[dict] = None  # Temporary strategy test override
+    use_massive_fills: bool = False  # Use Massive tick data for realistic fill simulation
 
 
 class ScalpAnalysisRequest(BaseModel):
@@ -59,7 +62,7 @@ class WalkForwardRequest(BaseModel):
     step_days: int = 30
     initial_capital: float = 100000.0
     interval: str = "4h"
-    slippage_bps: float = 5.0
+    slippage_bps: float = 10.0
     gates: Optional[dict] = None
 
 
@@ -192,6 +195,36 @@ def _load_runner_params(name: str, strategy_type: str, override: Optional[dict] 
     return effective_params(name, strategy_type, stored, override=override)
 
 
+def _build_fill_config(req: BacktestRequest, market: str, interval: str):
+    """Build the same deterministic fill model used by all backtesters."""
+    from execution_simulator import FillConfig
+
+    realistic = req.realistic_fills
+    return FillConfig(
+        slippage_bps=req.slippage_bps,
+        fee_rate=req.fee_rate if realistic else 0.0,
+        enable_size_impact=realistic,
+        enable_vol_widening=realistic,
+        enable_partial_fills=realistic,
+        enable_tick_rounding=realistic,
+        market=market,
+        interval=interval,
+    )
+
+
+def _annotate_fill_model(report, req: BacktestRequest):
+    """Expose execution assumptions alongside performance metrics."""
+    report.diagnostics.update({
+        "fill_model": "shared_deterministic" if req.realistic_fills else "bps_only",
+        "fee_rate": req.fee_rate if req.realistic_fills else 0.0,
+        "size_impact_enabled": req.realistic_fills,
+        "volatility_widening_enabled": req.realistic_fills,
+        "partial_fills_enabled": req.realistic_fills,
+        "tick_rounding_enabled": req.realistic_fills,
+    })
+    return report
+
+
 def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     @app.get("/api/backtest/strategies")
@@ -226,6 +259,10 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                 status_code=400,
                 detail=f"Unknown agent_key: {req.agent_key}. Available: {list(registry.keys())}"
             )
+        if req.slippage_bps < 0 or req.fee_rate < 0:
+            raise HTTPException(status_code=400, detail="slippage_bps and fee_rate must be non-negative")
+        if req.fee_rate > 0.10:
+            raise HTTPException(status_code=400, detail="fee_rate must not exceed 10%")
 
         info = registry[req.agent_key]
 
@@ -238,7 +275,8 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                     symbols=req.symbols or info["watchlist"], params=params,
                     start_date=req.start_date, end_date=req.end_date,
                     initial_capital=req.initial_capital, interval=req.interval or "4h",
-                    slippage_bps=req.slippage_bps,
+                    slippage_bps=req.slippage_bps, fee_rate=req.fee_rate,
+                    fill_config=_build_fill_config(req, "crypto", req.interval or "4h"),
                 )
             elif req.agent_key == "scalprunner":
                 from scalp_scan_backtester import ScalpScanBacktester
@@ -247,12 +285,27 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                 # Use cache-only provider (no Schwab/Alpaca auth needed) with
                 # 5m as the base timeframe — the cache has ~1yr of 5m equity data.
                 cache_provider = CacheOnlyProvider()
+                # Optional: tick-level realistic fill simulation via Massive
+                fill_sim = None
+                if req.use_massive_fills:
+                    try:
+                        from massive_provider import MassiveProvider
+                        from massive_fill_simulator import FillSimulator
+                        massive = MassiveProvider()
+                        if massive.is_configured:
+                            fill_sim = FillSimulator(massive)
+                        else:
+                            logger.warning("use_massive_fills=True but MASSIVE_API_KEY not set")
+                    except ImportError as e:
+                        logger.warning("Massive fill simulator unavailable: %s", e)
                 bt = ScalpScanBacktester(
                     symbols=req.symbols or info["watchlist"], params=params,
                     start_date=req.start_date, end_date=req.end_date,
                     initial_capital=req.initial_capital,
                     slippage_bps=req.slippage_bps, goal_target=req.goal_target,
                     provider=cache_provider, base_interval="5m",
+                    fill_simulator=fill_sim,
+                    fill_config=_build_fill_config(req, "us-stock", "5m"),
                 )
             else:
                 from scan_backtester import ScanBacktester
@@ -262,8 +315,9 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                     start_date=req.start_date, end_date=req.end_date,
                     initial_capital=req.initial_capital, interval=req.interval or "1h",
                     slippage_bps=req.slippage_bps, goal_target=req.goal_target,
+                    fill_config=_build_fill_config(req, "us-stock", req.interval or "1h"),
                 )
-            report = await asyncio.to_thread(bt.run)
+            report = _annotate_fill_model(await asyncio.to_thread(bt.run), req)
             return {"report": report.to_dict()}
 
     @app.post("/api/backtest/scalp-analysis")
@@ -326,9 +380,10 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                 interval=req.interval,
                 slippage_bps=req.slippage_bps,
                 goal_target=req.goal_target,
+                fill_config=_build_fill_config(req, "us-stock", req.interval),
             )
             import asyncio
-            report = await asyncio.to_thread(bt.run)
+            report = _annotate_fill_model(await asyncio.to_thread(bt.run), req)
             return {"report": report.to_dict()}
 
         # Legacy path for other agents
@@ -350,7 +405,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
         )
 
         import asyncio
-        report = await asyncio.to_thread(bt.run)
+        report = _annotate_fill_model(await asyncio.to_thread(bt.run), req)
         return {"report": report.to_dict()}
 
     @app.post("/api/backtest/scalp-analysis")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from dataclasses import replace
 import math
 from datetime import datetime, timedelta
 from typing import Optional
@@ -12,6 +13,7 @@ import pandas as pd
 
 import crypto_scan_core as core
 from backtest_report import BacktestReport, TradeRecord
+from execution_simulator import FillConfig, simulate_entry, simulate_exit
 from strategy_registry import position_notional
 from market_data import MarketDataProvider, YFinanceProvider
 
@@ -34,6 +36,7 @@ class CryptoScanBacktester:
         provider: MarketDataProvider | None = None,
         goal_target: float | None = None,
         goal_max_loss: float | None = None,
+        fill_config: FillConfig | None = None,
     ):
         self.symbols = symbols
         self.params = copy.deepcopy(params)
@@ -43,6 +46,10 @@ class CryptoScanBacktester:
         self.interval = interval or "4h"
         self.slippage_bps = slippage_bps
         self.fee_rate = fee_rate
+        self.fill_config = fill_config or FillConfig.from_legacy(
+            slippage_bps=slippage_bps, fee_rate=fee_rate,
+            market="crypto", interval=self.interval,
+        )
         self.provider = provider or YFinanceProvider()
         self.goal_target = goal_target
         self.goal_max_loss = goal_max_loss
@@ -187,12 +194,14 @@ class CryptoScanBacktester:
             prices: dict[str, float] = {}
             highs: dict[str, float] = {}
             lows: dict[str, float] = {}
+            current_bars: dict[str, object] = {}
             scans: dict[str, dict] = {}
             for symbol, frame in historical.items():
                 idx = indexes[symbol].get(ts)
                 if idx is None:
                     continue
                 row = frame.iloc[idx]
+                current_bars[symbol] = row
                 prices[symbol] = float(row["Close"])
                 highs[symbol] = float(row["High"])
                 lows[symbol] = float(row["Low"])
@@ -219,11 +228,13 @@ class CryptoScanBacktester:
                         threshold = float(exit_cfg.get("stagnation_threshold_pct", 1.0))
                         pos["flat"] = pos["flat"] + 1 if abs(pnl_pct) < threshold else 0
                 if exit_px is not None:
-                    pnl = self._close(pos, exit_px, ts, cash, trades, reason)
-                    cash = pnl[0]
-                    losses = 0 if pnl[1] > 0 else losses + 1
+                    cash, close_pnl, filled_qty = self._close(
+                        pos, exit_px, ts, cash, trades, reason, current_bars.get(symbol),
+                    )
+                    losses = 0 if close_pnl > 0 else losses + 1
                     cooldown[symbol] = max(1, round(params.get("switch_logic", {}).get("reentry_cooldown_hours", 8) / 4))
-                    del positions[symbol]
+                    if pos["qty"] <= 1e-12:
+                        del positions[symbol]
 
             equity = self._equity(cash, positions, prices)
             gross = self._gross(positions, prices)
@@ -283,21 +294,24 @@ class CryptoScanBacktester:
                     notional *= 0.5
                 if notional <= 0:
                     continue
-                slip = self.slippage_bps / 10000
-                fill = entry * (1 + slip if side == "long" else 1 - slip)
-                qty = notional / fill
-                fee = notional * self.fee_rate
-                if side == "long":
-                    cash -= notional + fee
-                else:
-                    cash -= notional + fee
+                requested_qty = notional / entry
+                fill = simulate_entry(
+                    entry, side, requested_qty, symbol, self.fill_config,
+                    current_bars.get(symbol),
+                )
+                if fill.fill_qty <= 0:
+                    continue
+                filled_notional = fill.fill_price * fill.fill_qty
+                cash -= filled_notional + fill.fee
                 positions[symbol] = {
-                    "symbol": symbol, "side": side, "entry": fill, "qty": qty, "margin": notional,
-                    "entry_fee": fee, "stop": stop, "target": target, "trail_pct": trail_pct,
-                    "trail_activation": trail_activation, "peak": fill, "trough": fill,
+                    "symbol": symbol, "side": side, "entry": fill.fill_price,
+                    "qty": fill.fill_qty, "margin": filled_notional,
+                    "entry_fee": fill.fee, "stop": stop, "target": target,
+                    "trail_pct": trail_pct, "trail_activation": trail_activation,
+                    "peak": fill.fill_price, "trough": fill.fill_price,
                     "trail": False, "held": 0, "flat": 0, "entry_date": str(ts),
                 }
-                gross += notional
+                gross += filled_notional
 
             curve.append({"date": str(ts), "equity": round(self._equity(cash, positions, prices), 2)})
 
@@ -312,7 +326,11 @@ class CryptoScanBacktester:
                 if final_idx is not None
                 else pos["entry"]
             )
-            cash, _ = self._close(pos, price, final_ts, cash, trades, "Backtest end")
+            cash, _, filled_qty = self._close(
+                pos, price, final_ts, cash, trades, "Backtest end", frame.iloc[final_idx] if final_idx is not None else None, True,
+            )
+            if pos["qty"] > 1e-12:
+                logger.warning("Partial final close for %s: %.6f remaining", symbol, pos["qty"])
         report = BacktestReport.calculate_metrics(
             agent_name="CryptoRunner",
             symbols=self.symbols,
@@ -390,22 +408,35 @@ class CryptoScanBacktester:
             total += pos["margin"] + pnl
         return total
 
-    def _close(self, pos: dict, price: float, ts, cash: float, trades: list[TradeRecord], reason: str) -> tuple[float, float]:
-        slip = self.slippage_bps / 10000
-        fill = price * (1 - slip if pos["side"] == "long" else 1 + slip)
-        pnl = (fill - pos["entry"]) * pos["qty"] if pos["side"] == "long" else (pos["entry"] - fill) * pos["qty"]
-        fee = fill * pos["qty"] * self.fee_rate
-        entry_fee = pos.get("entry_fee", 0.0)
-        cash += pos["margin"] + pnl - fee
-        net_pnl = pnl - fee - entry_fee
+    def _close(self, pos: dict, price: float, ts, cash: float,
+               trades: list[TradeRecord], reason: str, bar=None,
+               force_full: bool = False) -> tuple[float, float, float]:
+        """Close as much as the shared deterministic fill model permits."""
+        config = replace(self.fill_config, enable_partial_fills=False) if force_full else self.fill_config
+        result = simulate_exit(
+            price, pos["side"], pos["qty"], pos["symbol"], config, bar,
+        )
+        qty = min(result.fill_qty, pos["qty"])
+        if qty <= 0:
+            return cash, 0.0, 0.0
+        entry_fee = pos.get("entry_fee", 0.0) * qty / pos["qty"]
+        gross_pnl = ((result.fill_price - pos["entry"]) if pos["side"] == "long"
+                     else (pos["entry"] - result.fill_price)) * qty
+        net_pnl = gross_pnl - result.fee - entry_fee
+        cash += pos["margin"] * qty / pos["qty"] + gross_pnl - result.fee
         hold_hours = max(0.0, (pd.Timestamp(ts) - pd.Timestamp(pos["entry_date"])).total_seconds() / 3600)
         trades.append(TradeRecord(
-            symbol=pos.get("symbol", ""), side=pos["side"], entry_date=pos["entry_date"], exit_date=str(ts),
-            entry_price=pos["entry"], exit_price=fill, quantity=pos["qty"], pnl=net_pnl,
-            pnl_pct=(net_pnl / pos["margin"] * 100) if pos["margin"] else 0,
+            symbol=pos.get("symbol", ""), side=pos["side"], entry_date=pos["entry_date"],
+            exit_date=str(ts), entry_price=pos["entry"], exit_price=result.fill_price,
+            quantity=qty, pnl=net_pnl,
+            pnl_pct=(net_pnl / (pos["margin"] * qty / pos["qty"]) * 100)
+            if pos["margin"] else 0,
             hold_days=int(hold_hours // 24), hold_hours=hold_hours, reason=reason,
         ))
-        return cash, net_pnl
+        pos["qty"] -= qty
+        pos["margin"] = max(0.0, pos["margin"] - pos["margin"] * qty / (pos["qty"] + qty))
+        pos["entry_fee"] = max(0.0, pos.get("entry_fee", 0.0) - entry_fee)
+        return cash, net_pnl, qty
 
     def _empty_report(self) -> BacktestReport:
         return BacktestReport.calculate_metrics(

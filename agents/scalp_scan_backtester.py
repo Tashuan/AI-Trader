@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -17,7 +18,8 @@ import pandas as pd
 
 import scalp_scan_core as core
 from backtest_report import BacktestReport, TradeRecord
-from market_data import MarketDataProvider, YFinanceProvider
+from execution_simulator import FillConfig, FillResult, simulate_entry, simulate_exit
+from market_data import MarketDataProvider, get_default_equity_provider
 from strategy_registry import position_notional
 
 logger = logging.getLogger(__name__)
@@ -99,6 +101,8 @@ class ScalpScanBacktester:
         goal_target: float | None = None,
         goal_max_loss: float | None = None,
         base_interval: str = "1m",
+        fill_simulator=None,
+        fill_config: FillConfig | None = None,
     ):
         self.symbols = symbols
         self.params = params
@@ -106,12 +110,17 @@ class ScalpScanBacktester:
         self.end_date = end_date
         self.initial_capital = initial_capital
         self.slippage_bps = slippage_bps
-        self.provider = provider or YFinanceProvider()
+        self.provider = provider or get_default_equity_provider()
         self.goal_target = goal_target
         self.goal_max_loss = goal_max_loss
         self.goal_active = goal_target is not None or goal_max_loss is not None
         self.base_interval = base_interval
         self.bar_minutes = _BAR_MINUTES.get(base_interval, 5)
+        self.fill_simulator = fill_simulator
+        self.fill_config = fill_config or FillConfig.from_legacy(
+            slippage_bps=slippage_bps, fee_rate=0.001,
+            market="us-stock", interval=base_interval,
+        )
 
     @staticmethod
     def _new_diagnostics() -> dict:
@@ -130,12 +139,21 @@ class ScalpScanBacktester:
             "pending_at_end": 0,
             "same_bar_exit_skipped": 0,
             "exit_counts": Counter(),
+            "fills_with_tick_data": 0,
+            "fills_fallback_bar_close": 0,
+            "avg_fill_slippage_bps": 0.0,
+            "avg_spread_bps": 0.0,
         }
 
-    @staticmethod
-    def _finalize_diagnostics(diagnostics: dict) -> dict:
+    def _finalize_diagnostics(self, diagnostics: dict) -> dict:
         result = dict(diagnostics)
         result["exit_counts"] = dict(result.get("exit_counts", {}))
+        if self.fill_simulator is not None:
+            fs = self.fill_simulator.stats
+            result["fills_with_tick_data"] = fs.get("fills_with_tick_data", 0)
+            result["fills_fallback_bar_close"] = fs.get("fills_fallback_bar_close", 0)
+            result["avg_fill_slippage_bps"] = round(fs.get("avg_fill_slippage_bps", 0.0), 2)
+            result["avg_spread_bps"] = round(fs.get("avg_spread_bps", 0.0), 2)
         return result
 
     # ─── Data fetching ─────────────────────────────────────────────
@@ -337,6 +355,8 @@ class ScalpScanBacktester:
 
     def run(self) -> BacktestReport:
         """Execute the multi-timeframe scalp backtest."""
+        if self.fill_simulator is not None:
+            self.fill_simulator.reset_stats()
         # Fetch base-interval data for all symbols (primary simulation timeline)
         historical: dict[str, pd.DataFrame] = {}
         for sym in self.symbols:
@@ -398,6 +418,7 @@ class ScalpScanBacktester:
             prices: dict[str, float] = {}
             highs: dict[str, float] = {}
             lows: dict[str, float] = {}
+            current_bars: dict[str, object] = {}
             scans: dict[str, dict] = {}
 
             for sym, df in historical.items():
@@ -406,6 +427,7 @@ class ScalpScanBacktester:
                 if not idx:
                     continue
                 row = df.iloc[idx[-1]]
+                current_bars[sym] = row
                 prices[sym] = float(row["Close"])
                 highs[sym] = float(row["High"])
                 lows[sym] = float(row["Low"])
@@ -438,31 +460,36 @@ class ScalpScanBacktester:
 
                 if triggered:
                     fill_price = entry
-                    if side == "long":
-                        fill_price *= (1 + self.slippage_bps / 10000)
+                    fill_qty = po["qty"]
+                    fee = 0.0
+                    if self.fill_simulator is not None:
+                        # Tick-level data decides whether and where the order fills.
+                        tick_result = self.fill_simulator.simulate_entry(
+                            sym, ts, entry, side, "stop_limit")
+                        if tick_result["filled"]:
+                            fill_price = tick_result["fill_price"]
+                        else:
+                            continue
+                        fee = fill_price * fill_qty * self.fill_config.fee_rate
                     else:
-                        fill_price *= (1 - self.slippage_bps / 10000)
+                        result = simulate_entry(
+                            entry, side, fill_qty, sym, self.fill_config,
+                            current_bars.get(sym),
+                        )
+                        fill_price, fill_qty, fee = result.fill_price, result.fill_qty, result.fee
+                        if fill_qty <= 0:
+                            del pending[sym]
+                            continue
 
-                    cost = po["qty"] * fill_price
-                    if side == "long":
-                        cash -= cost
-                    else:
-                        cash += cost  # short sale proceeds
-
+                    cost = fill_qty * fill_price
+                    cash += (-cost - fee) if side == "long" else cost - fee
                     positions[sym] = {
-                        "symbol": sym,
-                        "side": side,
-                        "entry_price": fill_price,
-                        "qty": po["qty"],
-                        "sl": po["sl"],
-                        "tp": po["tp"],
-                        "trail_sl_pct": po["trail_sl_pct"],
-                        "trail_act_pct": po["trail_act_pct"],
-                        "peak": fill_price,
-                        "trough": fill_price,
-                        "trailing_active": False,
-                        "entry_date": str(ts),
-                        "bars_held": 0,
+                        "symbol": sym, "side": side, "entry_price": fill_price,
+                        "qty": fill_qty, "entry_fee": fee, "sl": po["sl"],
+                        "tp": po["tp"], "trail_sl_pct": po["trail_sl_pct"],
+                        "trail_act_pct": po["trail_act_pct"], "peak": fill_price,
+                        "trough": fill_price, "trailing_active": False,
+                        "entry_date": str(ts), "bars_held": 0,
                     }
                     del pending[sym]
                     filled_this_bar.add(sym)
@@ -522,11 +549,28 @@ class ScalpScanBacktester:
                         exit_px, exit_reason = px, review.get("exit_reason", "active_exit")
 
                 if exit_px is not None:
-                    cash, pnl = self._close_position(pos, exit_px, ts, cash, trades, exit_reason)
+                    tick_fill_price = None
+                    # Use tick-level exit fill if simulator is available.
+                    if self.fill_simulator is not None:
+                        entry_ts = pd.Timestamp(pos.get("entry_date", str(ts)))
+                        exit_result = self.fill_simulator.simulate_exit(
+                            sym, entry_ts, pos["sl"], pos["tp"], side,
+                            trailing_stop=exit_px if exit_reason == "trailing_stop" else None,
+                            max_bars=pos.get("bars_held", 78) + 1,
+                        )
+                        if exit_result["used_tick_data"]:
+                            exit_px = exit_result["exit_price"]
+                            tick_fill_price = exit_px
+                            exit_reason = exit_result["exit_reason"]
+                    cash, pnl, _ = self._close_position(
+                        pos, exit_px, ts, cash, trades, exit_reason,
+                        current_bars.get(sym), tick_fill_price,
+                    )
                     diagnostics["exit_counts"][exit_reason or "unknown"] += 1
                     losses = 0 if pnl > 0 else losses + 1
                     cooldown[sym] = 3
-                    del positions[sym]
+                    if pos["qty"] <= 1e-12:
+                        del positions[sym]
                 else:
                     pos["bars_held"] += 1
 
@@ -622,10 +666,14 @@ class ScalpScanBacktester:
             df = historical[sym]
             col = col_map[sym]
             final_idx = df.index[df[col] == final_ts].tolist()
-            px = float(df.iloc[final_idx[-1]]["Close"]) if final_idx else pos["entry_price"]
-            cash, _ = self._close_position(pos, px, final_ts, cash, trades, "Backtest end")
+            final_bar = df.iloc[final_idx[-1]] if final_idx else None
+            px = float(final_bar["Close"]) if final_bar is not None else pos["entry_price"]
+            cash, _, _ = self._close_position(
+                pos, px, final_ts, cash, trades, "Backtest end", final_bar, None, True,
+            )
             diagnostics["exit_counts"]["Backtest end"] += 1
-            del positions[sym]
+            if pos["qty"] <= 1e-12:
+                del positions[sym]
 
         report = BacktestReport.calculate_metrics(
             agent_name="ScalpRunner",
@@ -673,41 +721,44 @@ class ScalpScanBacktester:
         }
 
     def _close_position(self, pos: dict, price: float, ts, cash: float,
-                        trades: list[TradeRecord], reason: str) -> tuple[float, float]:
-        side = pos["side"]
-        slip = self.slippage_bps / 10000
-        fill = price * (1 - slip if side == "long" else 1 + slip)
-
-        if side == "long":
-            pnl = (fill - pos["entry_price"]) * pos["qty"]
-            cash += pos["qty"] * fill
-        else:
-            pnl = (pos["entry_price"] - fill) * pos["qty"]
-            cash -= pos["qty"] * fill
-
-        pnl_pct = ((fill - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
-        if side == "short":
-            pnl_pct = ((pos["entry_price"] - fill) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
-
+                        trades: list[TradeRecord], reason: str, bar=None,
+                        precomputed_price: float | None = None,
+                        force_full: bool = False) -> tuple[float, float, float]:
+        config = replace(self.fill_config, enable_partial_fills=False) if force_full else self.fill_config
+        result = (
+            FillResult(
+                precomputed_price, pos["qty"],
+                precomputed_price * pos["qty"] * config.fee_rate,
+                0.0, False,
+            )
+            if precomputed_price is not None else simulate_exit(
+                price, pos["side"], pos["qty"], pos["symbol"], config, bar,
+            )
+        )
+        qty = min(result.fill_qty, pos["qty"])
+        if qty <= 0:
+            return cash, 0.0, 0.0
+        entry_fee = pos.get("entry_fee", 0.0) * qty / pos["qty"]
+        gross_pnl = ((result.fill_price - pos["entry_price"]) if pos["side"] == "long"
+                     else (pos["entry_price"] - result.fill_price)) * qty
+        pnl = gross_pnl - result.fee - entry_fee
+        cash += (qty * result.fill_price - result.fee
+                 if pos["side"] == "long"
+                 else -(qty * result.fill_price + result.fee))
         entry_dt = pd.Timestamp(pos.get("entry_date", str(ts)))
         exit_dt = pd.Timestamp(ts)
         hold_hours = max(0.0, (exit_dt - entry_dt).total_seconds() / 3600)
-
+        pnl_pct = pnl / (pos["entry_price"] * qty) * 100 if pos["entry_price"] > 0 else 0.0
         trades.append(TradeRecord(
-            symbol=pos.get("symbol", ""),
-            side=side,
-            entry_date=str(pos.get("entry_date", "")),
-            exit_date=str(ts),
-            entry_price=pos["entry_price"],
-            exit_price=fill,
-            quantity=pos["qty"],
-            pnl=pnl,
-            pnl_pct=pnl_pct,
-            hold_days=int(hold_hours / 24),
-            hold_hours=hold_hours,
-            reason=reason[:200] if reason else "",
+            symbol=pos.get("symbol", ""), side=pos["side"],
+            entry_date=str(pos.get("entry_date", "")), exit_date=str(ts),
+            entry_price=pos["entry_price"], exit_price=result.fill_price,
+            quantity=qty, pnl=pnl, pnl_pct=pnl_pct, hold_days=int(hold_hours / 24),
+            hold_hours=hold_hours, reason=reason[:200] if reason else "",
         ))
-        return cash, pnl
+        pos["qty"] -= qty
+        pos["entry_fee"] = max(0.0, pos.get("entry_fee", 0.0) - entry_fee)
+        return cash, pnl, qty
 
     def _empty_report(self) -> BacktestReport:
         return BacktestReport.calculate_metrics(

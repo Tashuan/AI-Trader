@@ -183,9 +183,11 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "min_signals": _field("Min Signals", "number", minimum=1, maximum=15, default=4),
                 "min_signal_families": _field("Min Signal Families", "number", minimum=1, maximum=6, default=2),
                 "min_vol_ratio": _field("Min Vol Ratio", "number", minimum=0, maximum=10, default=1.5),
+                "direction_mode": _field("Direction Mode", "enum", choices=["both", "long", "short"], default="both"),
                 "bearish_macro_min_signals": _field("Bearish Macro Min Signals", "number", minimum=1, maximum=15, default=5),
                 "bearish_macro_threshold": _field("Bearish Macro Threshold", "number", minimum=0, maximum=1, default=0.3),
                 "block_on_obv_divergence": _field("Block Entry on OBV Divergence", "bool", default=True),
+                "require_trend_agreement": _field("Require Trend Agreement (SMA50 vs SMA200)", "bool", default=False),
             },
             "position_sizing": {
                 "max_positions": _field("Max Positions", "number", minimum=1, maximum=50, default=1),

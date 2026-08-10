@@ -16,6 +16,7 @@ from base_agent import BaseAgent, TradeDecision
 from market_data import MarketDataClient, TechnicalSnapshot
 from personality import Personality
 from backtest_report import BacktestReport, TradeRecord
+from execution_simulator import FillConfig, simulate_entry, simulate_exit
 
 
 class BacktestAgent(BaseAgent):
@@ -38,6 +39,10 @@ class BacktestAgent(BaseAgent):
         # Slippage in basis points, applied adversely: buys fill higher, sells fill lower.
         # Models the real cost of chasing momentum (buying strength, selling weakness).
         self._slippage_bps = slippage_bps
+        self._fill_config = FillConfig.from_legacy(
+            slippage_bps=slippage_bps, fee_rate=0.001,
+            market="us-stock", interval="1d",
+        )
         self.logger = logging.getLogger(f"Backtest:{personality.name}")
         self.logger.handlers = [logging.StreamHandler()]
         self.logger.setLevel(logging.WARNING)
@@ -120,90 +125,63 @@ class BacktestAgent(BaseAgent):
         if qty <= 0:
             return False
 
-        slip = self._slippage_bps / 10000.0
-
-        if decision.action == "buy":
-            # Buying momentum fills worse (higher) due to slippage.
-            fill_price = raw_price * (1 + slip)
-            cost = qty * fill_price
-            if cost > self.cash:
+        action = decision.action.lower()
+        if action in ("buy", "short"):
+            side = "long" if action == "buy" else "short"
+            result = simulate_entry(
+                raw_price, side, qty, symbol, self._fill_config,
+            )
+            if result.fill_qty <= 0:
                 return False
-            self.cash -= cost
+            notional = result.fill_price * result.fill_qty
+            if action == "buy":
+                if notional + result.fee > self.cash:
+                    return False
+                self.cash -= notional + result.fee
+            else:
+                self.cash += notional - result.fee
             self._positions[symbol] = {
-                "quantity": qty,
-                "entry_price": fill_price,
-                "entry_date": self._current_date,
-                "side": "long",
+                "quantity": result.fill_qty, "entry_price": result.fill_price,
+                "entry_date": self._current_date, "side": side,
+                "entry_fee": result.fee,
             }
             self.trades_made += 1
             return True
 
-        elif decision.action == "short":
-            # Shorting into weakness fills worse (lower) due to slippage — we receive less.
-            fill_price = raw_price * (1 - slip)
-            proceeds = qty * fill_price
-            # Reserve the proceeds as collateral (can't spend them)
-            if proceeds > self.cash:
-                return False
-            self.cash += proceeds  # receive short proceeds
-            self._positions[symbol] = {
-                "quantity": qty,
-                "entry_price": fill_price,
-                "entry_date": self._current_date,
-                "side": "short",
-            }
-            self.trades_made += 1
-            return True
-
-        elif decision.action in ("sell", "cover"):
+        if action in ("sell", "cover"):
             pos = self._positions.get(symbol)
             if not pos or pos["quantity"] <= 0:
                 return False
-
             side = pos.get("side", "long")
             sell_qty = min(qty, pos["quantity"])
-
+            result = simulate_exit(
+                raw_price, side, sell_qty, symbol, self._fill_config,
+            )
+            filled_qty = min(result.fill_qty, pos["quantity"])
+            if filled_qty <= 0:
+                return False
+            entry_fee = pos.get("entry_fee", 0.0) * filled_qty / pos["quantity"]
+            gross_pnl = ((result.fill_price - pos["entry_price"]) if side == "long"
+                         else (pos["entry_price"] - result.fill_price)) * filled_qty
             if side == "short":
-                # Covering: buying back to close short. Fills worse (higher) due to slippage.
-                fill_price = raw_price * (1 + slip)
-                cost = sell_qty * fill_price
-                if cost > self.cash:
-                    return False
-                self.cash -= cost
-                # Short PnL: profit when exit < entry
-                pnl = (pos["entry_price"] - fill_price) * sell_qty
-                pnl_pct = ((pos["entry_price"] - fill_price) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
+                self.cash -= filled_qty * result.fill_price + result.fee
             else:
-                # Selling long: fills worse (lower) due to slippage.
-                fill_price = raw_price * (1 - slip)
-                proceeds = sell_qty * fill_price
-                self.cash += proceeds
-                pnl = (fill_price - pos["entry_price"]) * sell_qty
-                pnl_pct = ((fill_price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
-
-            entry_date = pos.get("entry_date", "")
-            hold_days, hold_hours = self._hold_span(entry_date, self._current_date)
-
+                self.cash += filled_qty * result.fill_price - result.fee
+            pnl = gross_pnl - result.fee - entry_fee
+            hold_days, hold_hours = self._hold_span(pos.get("entry_date", ""), self._current_date)
             self._closed_trades.append(TradeRecord(
-                symbol=symbol,
-                side=side,
-                entry_date=entry_date,
-                exit_date=self._current_date,
-                entry_price=pos["entry_price"],
-                exit_price=fill_price,
-                quantity=sell_qty,
-                pnl=pnl,
-                pnl_pct=pnl_pct,
-                hold_days=hold_days,
-                hold_hours=hold_hours,
+                symbol=symbol, side=side, entry_date=pos.get("entry_date", ""),
+                exit_date=self._current_date, entry_price=pos["entry_price"],
+                exit_price=result.fill_price, quantity=filled_qty, pnl=pnl,
+                pnl_pct=pnl / (pos["entry_price"] * filled_qty) * 100
+                if pos["entry_price"] > 0 else 0.0,
+                hold_days=hold_days, hold_hours=hold_hours,
                 reason=decision.reason[:200] if decision.reason else "",
             ))
-
-            if sell_qty >= pos["quantity"]:
+            pos["quantity"] -= filled_qty
+            pos["entry_fee"] = max(0.0, pos.get("entry_fee", 0.0) - entry_fee)
+            if pos["quantity"] <= 1e-12:
                 del self._positions[symbol]
-            else:
-                pos["quantity"] -= sell_qty
-
             self.trades_made += 1
             return True
 

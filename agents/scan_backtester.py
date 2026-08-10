@@ -12,6 +12,7 @@ backtest results reflect what the live agent would have done.
 
 import bisect
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -19,7 +20,8 @@ import pandas as pd
 
 import scan_core
 from backtest_report import BacktestReport, TradeRecord
-from market_data import MarketDataProvider, YFinanceProvider
+from execution_simulator import FillConfig, simulate_entry, simulate_exit
+from market_data import MarketDataProvider, get_default_equity_provider
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +90,7 @@ class ScanBacktester:
         goal_target: Optional[float] = None,
         goal_max_loss: Optional[float] = None,
         provider: MarketDataProvider | None = None,
+        fill_config: FillConfig | None = None,
     ):
         self.symbols = symbols
         self.params = params
@@ -96,10 +99,14 @@ class ScanBacktester:
         self.initial_capital = initial_capital
         self.interval = interval or "1h"
         self.slippage_bps = slippage_bps
+        self.fill_config = fill_config or FillConfig.from_legacy(
+            slippage_bps=slippage_bps, fee_rate=0.001,
+            market="us-stock", interval=self.interval,
+        )
         self.goal_target = goal_target if goal_target is not None else initial_capital * 0.10
         self.goal_max_loss = goal_max_loss
         self.goal_active = goal_target is not None or goal_max_loss is not None
-        self.provider = provider or YFinanceProvider()
+        self.provider = provider or get_default_equity_provider()
 
     # ─── Historical data fetching ──────────────────────────────────
 
@@ -297,11 +304,13 @@ class ScanBacktester:
             price_lookup: dict[str, float] = {}
             bar_high: dict[str, float] = {}
             bar_low: dict[str, float] = {}
+            current_bars: dict[str, object] = {}
             for sym, df in historical.items():
                 idx = ts_to_idx_map[sym].get(sim_ts)
                 if idx is not None:
                     try:
                         row = df.iloc[idx]
+                        current_bars[sym] = row
                         price_lookup[sym] = float(row["Close"])
                         bar_high[sym] = float(row["High"])
                         bar_low[sym] = float(row["Low"])
@@ -418,23 +427,19 @@ class ScanBacktester:
             # Process closes
             for close_sym, exit_px, exit_reason in to_close:
                 pos = positions[close_sym]
-                self._close_position(pos, exit_px, sim_ts, exit_reason, closed_trades)
-                slip = self.slippage_bps / 10000.0
-                exit_fill = exit_px * (1 - slip if pos["side"] == "long" else 1 + slip)
-                if pos["side"] == "long":
-                    pnl = (exit_fill - pos["entry_price"]) * pos["qty"]
-                    cash += pos["qty"] * exit_fill
-                else:
-                    pnl = (pos["entry_price"] - exit_fill) * pos["qty"]
-                    cash -= pos["qty"] * exit_fill
-
+                cash_delta, pnl, filled_qty = self._close_position(
+                    pos, exit_px, sim_ts, exit_reason, closed_trades,
+                    current_bars.get(close_sym),
+                )
+                cash += cash_delta
                 if pnl > 0:
                     consecutive_losses = 0
                 else:
                     consecutive_losses += 1
 
                 reentry_cooldown[close_sym] = reentry_cooldown_cycles
-                del positions[close_sym]
+                if pos["qty"] <= 1e-12:
+                    del positions[close_sym]
 
             # ── Switch logic (only when single-position) ──────────────
             if max_positions == 1 and len(positions) == 1 and switch_threshold_pct > 0 and scans:
@@ -456,23 +461,21 @@ class ScanBacktester:
                             else:
                                 can_switch = px < entry
                         if improvement > switch_threshold_pct and can_switch and best["symbol"] != pos_sym:
-                            self._close_position(pos, px, sim_ts, f"switch_to_{best['symbol']}", closed_trades)
-                            slip = self.slippage_bps / 10000.0
-                            exit_fill = px * (1 - slip if side == "long" else 1 + slip)
-                            if side == "long":
-                                pnl = (exit_fill - entry) * pos["qty"]
-                                cash += pos["qty"] * exit_fill
-                            else:
-                                pnl = (entry - exit_fill) * pos["qty"]
-                                cash -= pos["qty"] * exit_fill
-
+                            cash_delta, pnl, filled_qty = self._close_position(
+                                pos, px, sim_ts, f"switch_to_{best['symbol']}",
+                                closed_trades, current_bars.get(pos_sym),
+                            )
+                            cash += cash_delta
                             if pnl > 0:
                                 consecutive_losses = 0
                             else:
                                 consecutive_losses += 1
 
                             reentry_cooldown[pos_sym] = reentry_cooldown_cycles
-                            del positions[pos_sym]
+                            if pos["qty"] <= 1e-12:
+                                del positions[pos_sym]
+                            else:
+                                continue
 
                             # Enter new setup
                             new_sym = best["symbol"]
@@ -480,14 +483,11 @@ class ScanBacktester:
                             if new_px > 0 and new_sym not in reentry_cooldown:
                                 new_pos = self._enter_position(
                                     new_sym, best, new_px, sim_ts,
-                                    cash * per_pos_fraction, current_equity, consecutive_losses,
+                                    cash * per_pos_fraction, current_equity,
+                                    consecutive_losses, current_bars.get(new_sym),
                                 )
                                 if new_pos:
-                                    cost = new_pos["qty"] * new_pos["entry_price"]
-                                    if new_pos["side"] == "long":
-                                        cash -= cost
-                                    else:
-                                        cash += cost
+                                    cash += new_pos["cash_delta"]
                                     positions[new_sym] = new_pos
 
             # ── Goal halt check ──────────────────────────────────────
@@ -522,13 +522,10 @@ class ScanBacktester:
                     new_pos = self._enter_position(
                         sym, best, px, sim_ts,
                         alloc, current_equity, consecutive_losses,
+                        current_bars.get(sym),
                     )
                     if new_pos:
-                        cost = new_pos["qty"] * new_pos["entry_price"]
-                        if new_pos["side"] == "long":
-                            cash -= cost
-                        else:
-                            cash += cost
+                        cash += new_pos["cash_delta"]
                         positions[sym] = new_pos
                         available_slots -= 1
 
@@ -544,25 +541,17 @@ class ScanBacktester:
 
         # 5. Close any remaining open positions at the final simulated bar.
         # Do not use the last fetched row: it may be outside the requested range.
-        slip = self.slippage_bps / 10000.0
         for pos_sym, pos in list(positions.items()):
             final_idx = ts_to_idx_map.get(pos_sym, {}).get(actual_end)
-            px = (
-                float(historical[pos_sym].iloc[final_idx]["Close"])
-                if final_idx is not None
-                else pos["entry_price"]
-            )
-            exit_fill = px * (1 - slip if pos["side"] == "long" else 1 + slip)
-
-            self._close_position(
+            final_bar = historical[pos_sym].iloc[final_idx] if final_idx is not None else None
+            px = float(final_bar["Close"]) if final_bar is not None else pos["entry_price"]
+            cash_delta, _, filled_qty = self._close_position(
                 pos, px, actual_end,
-                "Backtest end — position auto-closed", closed_trades,
+                "Backtest end — position auto-closed", closed_trades, final_bar, True,
             )
-            if pos["side"] == "long":
-                cash += pos["qty"] * exit_fill
-            else:
-                cash -= pos["qty"] * exit_fill
-            del positions[pos_sym]
+            cash += cash_delta
+            if pos["qty"] <= 1e-12:
+                del positions[pos_sym]
 
         final_equity = cash
         periods_per_year = _BARS_PER_DAY.get(self.interval, 1) * 252.0
@@ -628,59 +617,29 @@ class ScanBacktester:
         cash: float,
         equity: float,
         consecutive_losses: int,
+        bar=None,
     ) -> Optional[dict]:
-        """Create a new position with goal-aware sizing and slippage."""
+        """Create a position using the shared deterministic fill model."""
         size_pct, is_final_stretch = self._sizing_pct(equity, consecutive_losses)
         notional = equity * (size_pct / 100.0)
-
-        # Apply dollar cap if configured
-        ps_cfg = self.params.get("position_sizing", {})
-        max_dollar = ps_cfg.get("max_position_dollar_cap")
-        if max_dollar is not None and notional > max_dollar:
-            notional = max_dollar
-
-        # Apply slippage buffer
-        slip_buffer = ps_cfg.get("slippage_buffer_pct", 0.1) / 100.0
+        max_dollar = self.params.get("position_sizing", {}).get("max_position_dollar_cap")
+        if max_dollar is not None:
+            notional = min(notional, max_dollar)
         side = setup.get("direction", "long")
-
-        if side == "long":
-            fill_price = price * (1 + slip_buffer)
-        else:
-            fill_price = price * (1 - slip_buffer)
-
-        # Also apply configured slippage bps
-        slip_bps = self.slippage_bps / 10000.0
-        if side == "long":
-            fill_price *= (1 + slip_bps)
-        else:
-            fill_price *= (1 - slip_bps)
-
-        if fill_price <= 0:
+        requested_qty = notional / price if price > 0 else 0.0
+        result = simulate_entry(price, side, requested_qty, symbol, self.fill_config, bar)
+        if result.fill_price <= 0 or result.fill_qty <= 0:
             return None
 
-        qty = notional / fill_price
-        if qty <= 0:
-            return None
-
-        # Determine take-profit threshold for final stretch
-        exit_cfg = self.params.get("exit_rules", {})
-        if is_final_stretch:
-            tp_pct = exit_cfg.get("take_profit_pct", 2.0)  # final_stretch_tp_pct handled at exit review
-        else:
-            tp_pct = exit_cfg.get("take_profit_pct", 2.0)
-
+        entry_notional = result.fill_price * result.fill_qty
+        cash_delta = -(entry_notional + result.fee) if side == "long" else entry_notional - result.fee
         return {
-            "symbol": symbol,
-            "side": side,
-            "entry_price": fill_price,
-            "entry_date": ts,
-            "qty": qty,
-            "entry_score": setup.get("score", 0),
-            "cycles_flat": 0,
-            "bars_held": 0,
-            "peak_price": fill_price,
-            "trough_price": fill_price,
-            "trailing_active": False,
+            "symbol": symbol, "side": side, "entry_price": result.fill_price,
+            "entry_date": ts, "qty": result.fill_qty,
+            "entry_fee": result.fee, "cash_delta": cash_delta,
+            "entry_score": setup.get("score", 0), "cycles_flat": 0,
+            "bars_held": 0, "peak_price": result.fill_price,
+            "trough_price": result.fill_price, "trailing_active": False,
         }
 
     def _close_position(
@@ -690,38 +649,33 @@ class ScanBacktester:
         ts: str,
         reason: str,
         closed_trades: list[TradeRecord],
-    ) -> None:
-        """Record a closed trade."""
-        slip_bps = self.slippage_bps / 10000.0
+        bar=None,
+        force_full: bool = False,
+    ) -> tuple[float, float, float]:
+        """Close as much as the shared fill model permits."""
         side = pos["side"]
-
-        if side == "long":
-            fill_price = price * (1 - slip_bps)
-            pnl = (fill_price - pos["entry_price"]) * pos["qty"]
-        else:
-            fill_price = price * (1 + slip_bps)
-            pnl = (pos["entry_price"] - fill_price) * pos["qty"]
-
-        pnl_pct = ((fill_price - pos["entry_price"]) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
-        if side == "short":
-            pnl_pct = ((pos["entry_price"] - fill_price) / pos["entry_price"] * 100) if pos["entry_price"] > 0 else 0.0
-
+        config = replace(self.fill_config, enable_partial_fills=False) if force_full else self.fill_config
+        result = simulate_exit(price, side, pos["qty"], pos["symbol"], config, bar)
+        qty = min(result.fill_qty, pos["qty"])
+        if qty <= 0:
+            return 0.0, 0.0, 0.0
+        entry_fee = pos.get("entry_fee", 0.0) * qty / pos["qty"]
+        gross_pnl = ((result.fill_price - pos["entry_price"]) if side == "long"
+                     else (pos["entry_price"] - result.fill_price)) * qty
+        pnl = gross_pnl - result.fee - entry_fee
+        cash_delta = (qty * result.fill_price - result.fee if side == "long"
+                      else -(qty * result.fill_price + result.fee))
         hold_days, hold_hours = self._hold_span(pos.get("entry_date", ""), ts)
-
+        pnl_pct = pnl / (pos["entry_price"] * qty) * 100 if pos["entry_price"] > 0 else 0.0
         closed_trades.append(TradeRecord(
-            symbol=pos["symbol"],
-            side=side,
-            entry_date=pos.get("entry_date", ""),
-            exit_date=ts,
-            entry_price=pos["entry_price"],
-            exit_price=fill_price,
-            quantity=pos["qty"],
-            pnl=pnl,
-            pnl_pct=pnl_pct,
-            hold_days=hold_days,
-            hold_hours=hold_hours,
-            reason=reason[:200] if reason else "",
+            symbol=pos["symbol"], side=side, entry_date=pos.get("entry_date", ""),
+            exit_date=ts, entry_price=pos["entry_price"], exit_price=result.fill_price,
+            quantity=qty, pnl=pnl, pnl_pct=pnl_pct, hold_days=hold_days,
+            hold_hours=hold_hours, reason=reason[:200] if reason else "",
         ))
+        pos["qty"] -= qty
+        pos["entry_fee"] = max(0.0, pos.get("entry_fee", 0.0) - entry_fee)
+        return cash_delta, pnl, qty
 
     @staticmethod
     def _hold_span(entry_ts: str, exit_ts: str) -> tuple[int, float]:

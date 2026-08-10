@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import {
   TrendingUp, TrendingDown, Brain, Users, Target, Settings,
   ChevronDown, Wifi, WifiOff, Bot, Circle, Activity, DollarSign,
-  Zap, Award, Loader2,
+  Zap, Award, Loader2, Eye,
 } from 'lucide-react';
 import type { Agent, GoalData } from '../types';
 import { GrowthChart } from './GrowthChart';
@@ -10,6 +10,7 @@ import { PositionTracker } from './PositionTracker';
 import { GoalProgress } from './GoalProgress';
 import { GoalSetter } from './GoalSetter';
 import { StrategySettings } from './StrategySettings';
+import { StockBoyDashboard } from './StockBoyDashboard';
 
 interface AgentDashboardProps {
   agents: Agent[];
@@ -31,6 +32,8 @@ interface AgentDetail {
 }
 
 const DEFAULT_AGENT = 'BlitzTrader';
+const STOCKBOY_SELECTOR = '__stockboy__';
+const STOCKBOY_LABEL = 'StockBoy';
 const STORAGE_KEY = 'arena:selectedAgent';
 
 export function AgentDashboard({ agents }: AgentDashboardProps) {
@@ -49,6 +52,7 @@ export function AgentDashboard({ agents }: AgentDashboardProps) {
     localStorage.setItem(STORAGE_KEY, selectedAgentName);
   }, [selectedAgentName]);
 
+  const isStockBoy = selectedAgentName === STOCKBOY_SELECTOR;
   const selectedAgent = agents.find(a => a.name === selectedAgentName) || null;
   const agentId = selectedAgent?.agent_id;
 
@@ -113,6 +117,10 @@ export function AgentDashboard({ agents }: AgentDashboardProps) {
   const totalEquity = agentCash + totalUnrealizedPnl;
   const cash = agentCash;
 
+  if (isStockBoy) {
+    return <StockBoyDashboard onBack={() => setSelectedAgentName(DEFAULT_AGENT)} />;
+  }
+
   return (
     <div className="flex-1 overflow-y-auto">
       {/* Header bar with agent selector */}
@@ -133,6 +141,17 @@ export function AgentDashboard({ agents }: AgentDashboardProps) {
             </button>
             {dropdownOpen && (
               <div className="absolute top-full left-0 mt-1 z-30 min-w-[200px] card-base p-1 shadow-xl max-h-[400px] overflow-y-auto">
+                <button
+                  onClick={() => { setSelectedAgentName(STOCKBOY_SELECTOR); setDropdownOpen(false); }}
+                  className="w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left transition-colors hover:bg-white/5 border-b border-arena-border/50 mb-1"
+                >
+                  <AgentAvatar name={STOCKBOY_LABEL} size={20} />
+                  <div className="flex flex-col items-start min-w-0">
+                    <span className="text-[11px] font-semibold text-white truncate">{STOCKBOY_LABEL}</span>
+                    <span className="text-[9px] text-arena-purple truncate">Platform supervisor · paper only</span>
+                  </div>
+                  <Eye size={10} className="text-arena-purple shrink-0 ml-auto" />
+                </button>
                 {agents.map(a => (
                   <button
                     key={a.agent_id}

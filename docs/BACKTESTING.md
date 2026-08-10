@@ -39,7 +39,7 @@ The scan core modules (`scan_core.py`, `crypto_scan_core.py`) are **side-effect-
 | Symbols | NVDA, TSLA, META, AMZN |
 | Interval | 1h |
 | Initial capital | $100,000 |
-| Slippage | 0 bps (configurable) |
+| Base slippage | 10 bps (configurable) |
 | Goal target | 10% of initial capital |
 
 **Features**:
@@ -62,7 +62,7 @@ The scan core modules (`scan_core.py`, `crypto_scan_core.py`) are **side-effect-
 | Symbols | BTC, ETH, SOL, DOGE, AVAX, XRP, LINK |
 | Interval | 4h |
 | Initial capital | $10,000 |
-| Slippage | 5 bps |
+| Base slippage | 10 bps (configurable) |
 | Fee rate | 0.1% per trade |
 
 **Features**:
@@ -188,26 +188,24 @@ report.activation_gate()
 
 The gate is intentionally hard to pass. Most strategies will fail at least one check. This is by design — it prevents activating strategies that look good but are statistically fragile.
 
-## Slippage and Fees
+## Slippage, Fees, and Fill Simulation
 
-### Slippage
+All backtesters now use `agents/execution_simulator.py`, a deterministic execution model shared by the runner backtests. It keeps runs reproducible while matching the cost categories used by live paper execution:
 
-Slippage is modeled in **basis points** (1 bp = 0.01%). It is applied adversely:
+1. Adverse base slippage in basis points.
+2. Volatility widening from the current bar's high/low range.
+3. Size-dependent impact relative to estimated daily dollar volume.
+4. Liquidity-constrained partial fills when an order exceeds the configured ADV share.
+5. Transaction fees on both entry and exit.
+6. Adverse tick-size rounding (buyers round up; sellers round down).
 
-- **Entry**: fill_price = entry_price * (1 + slippage_bps / 10000) for longs
-- **Exit**: fill_price = exit_price * (1 - slippage_bps / 10000) for longs
+The API defaults to `realistic_fills=true`, `fee_rate=0.001` (0.1%), and 10 bps base slippage. Set `realistic_fills=false` only for a deliberately idealized bps-only comparison. The selected assumptions are returned in `report.diagnostics` so results are not ambiguous.
 
-Default slippage:
-- BlitzRunner: 0 bps (configurable)
-- CryptoRunner: 5 bps (0.05%)
-
-### Fees
-
-CryptoRunner models a **0.1% fee per trade** (entry and exit). This matches typical crypto exchange taker fees. BlitzRunner does not model fees by default (equity commissions vary by broker).
+The model is deterministic: it does not use the live service's random latency drift. Alpaca paper trading remains the forward-test reference for real NBBO fills, partial-fill behavior, and actual account constraints.
 
 ## Market Data Provider
 
-Both backtesters use the `MarketDataProvider` interface with `YFinanceProvider` as the default implementation:
+The equity backtesters use the `MarketDataProvider` interface with Alpaca historical bars as the default when `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` are configured, and yfinance as the fallback. Crypto backtesting keeps its existing crypto-capable provider path:
 
 ```python
 class MarketDataProvider(Protocol):
@@ -246,10 +244,10 @@ The following are guaranteed to be identical between backtest and live execution
 
 ### Known Parity Considerations
 
-1. **Slippage**: Live fills will have real slippage. Backtest slippage is a configurable constant. Set `slippage_bps` to a realistic value (5–20 bps) for trustworthy results.
-2. **Fill timing**: Backtests fill at the close of the signal bar. Live fills happen at the next available price after the signal is sent. This can cause small discrepancies on fast-moving symbols.
-3. **Data quality**: yfinance has gaps, especially for crypto volume (zero-volume bars are forward-filled). The live runner may use a different data provider with better coverage.
-4. **Fee accuracy**: Crypto fees vary by exchange and tier. The 0.1% default is a conservative estimate.
+1. **Fill timing**: Backtests fill from the signal bar while live orders execute after network and broker latency. Alpaca paper fills against current NBBO, so fast-moving symbols can still diverge.
+2. **Data quality**: Historical bars may have gaps or stale volume. Backtest size impact and partial fills are only as good as the bar's OHLCV data.
+3. **Broker assumptions**: The shared simulator models cost categories but not Alpaca's exact queue-position and order-matching behavior. Use Alpaca paper as the forward-test validation layer.
+4. **Short constraints**: Backtests do not know Alpaca's current easy-to-borrow inventory. A paper short can be rejected even when the backtest accepts it.
 
 ## Key Source Files
 
@@ -269,7 +267,7 @@ The following are guaranteed to be identical between backtest and live execution
 ## Tips for Meaningful Backtests
 
 1. **Use enough data**: 100+ trades is the minimum for statistical significance. With 1h candles, that may require 3–6 months of data. With 4h candles, 6–12 months.
-2. **Set realistic slippage**: 0 bps is optimistic. Use 5–20 bps for liquid stocks, 10–30 bps for crypto.
+2. **Set realistic slippage**: The 10 bps default is a starting point for liquid stocks. Calibrate it with Alpaca paper results by symbol and market regime; do not treat one constant as universal.
 3. **Test out-of-sample**: Run the backtest on a period the strategy was NOT designed around. If it only works on the design period, it's overfit.
 4. **Check the activation gate**: If any gate check fails, the strategy is not ready for live deployment. Don't cherry-pick which checks matter.
 5. **Compare to buy-and-hold**: If the strategy underperforms buying and holding the same symbols, it's adding risk without reward.

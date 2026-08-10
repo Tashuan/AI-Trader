@@ -2102,6 +2102,159 @@ def init_database():
         ON pending_orders(agent_id, status)
     """)
 
+    # ── StockBoy supervisor tables ───────────────────────────────────
+    # Single-row supervisor state: enabled, mode, heartbeat, kill switch.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stockboy_state (
+            id INTEGER PRIMARY KEY,
+            agent_id INTEGER,
+            enabled INTEGER DEFAULT 0,
+            actions_enabled INTEGER DEFAULT 1,
+            mode TEXT DEFAULT 'paper',
+            kill_switch INTEGER DEFAULT 0,
+            last_cycle_at TEXT,
+            next_cycle_at TEXT,
+            last_error TEXT,
+            last_heartbeat_at TEXT,
+            cycles_run INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    # Per-cycle snapshot and outcome records.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stockboy_cycles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cycle_number INTEGER NOT NULL,
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            snapshot_json TEXT,
+            summary TEXT,
+            actions_taken INTEGER DEFAULT 0,
+            error TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stockboy_cycles_created
+        ON stockboy_cycles(created_at DESC)
+    """)
+
+    # Observations/anomalies produced during a cycle.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stockboy_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cycle_id INTEGER,
+            runner_key TEXT,
+            severity TEXT DEFAULT 'info',
+            category TEXT,
+            message TEXT NOT NULL,
+            metadata_json TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (cycle_id) REFERENCES stockboy_cycles(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stockboy_observations_created
+        ON stockboy_observations(created_at DESC)
+    """)
+
+    # Commands and their execution outcomes (audit trail).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stockboy_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            idempotency_key TEXT UNIQUE NOT NULL,
+            cycle_id INTEGER,
+            runner_key TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            target_position_id INTEGER,
+            target_order_id INTEGER,
+            parameters_json TEXT,
+            rationale TEXT,
+            policy_rule TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            result_json TEXT,
+            error TEXT,
+            requested_at TEXT NOT NULL,
+            executed_at TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (cycle_id) REFERENCES stockboy_cycles(id)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stockboy_actions_created
+        ON stockboy_actions(created_at DESC)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stockboy_actions_runner_status
+        ON stockboy_actions(runner_key, status)
+    """)
+
+    # Temporary runner overrides with baseline and rollback.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stockboy_overrides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            runner_key TEXT NOT NULL,
+            field_path TEXT NOT NULL,
+            old_value_json TEXT,
+            new_value_json TEXT NOT NULL,
+            baseline_version TEXT,
+            rationale TEXT,
+            author TEXT DEFAULT 'stockboy',
+            status TEXT NOT NULL DEFAULT 'active',
+            expires_at TEXT,
+            rolled_back_at TEXT,
+            rollback_reason TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stockboy_overrides_runner_status
+        ON stockboy_overrides(runner_key, status)
+    """)
+
+    # Structured per-runner maintenance journal entries.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stockboy_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            runner_key TEXT,
+            entry_type TEXT NOT NULL,
+            title TEXT,
+            content TEXT NOT NULL,
+            metadata_json TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stockboy_journal_created
+        ON stockboy_journal(created_at DESC)
+    """)
+
+    # Dashboard commentary events (deduplicated short messages).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS stockboy_commentary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL DEFAULT 'status',
+            severity TEXT DEFAULT 'info',
+            content TEXT NOT NULL,
+            dedup_key TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_stockboy_commentary_created
+        ON stockboy_commentary(created_at DESC)
+    """)
+
     if previous_autocommit is not None:
         conn.autocommit = previous_autocommit
     conn.close()

@@ -22,6 +22,7 @@ from routes_pending_orders import register_pending_order_routes
 from routes_research import register_research_routes
 from routes_shared import RouteContext
 from routes_signals import register_signal_routes
+from routes_stockboy import register_stockboy_routes
 from routes_team_missions import register_team_mission_routes
 from routes_trading import register_trading_routes
 from routes_users import register_user_routes
@@ -49,7 +50,11 @@ def create_app() -> FastAPI:
     register_market_routes(app, ctx)
     register_agent_routes(app, ctx)
     register_agent_manager_routes(app, ctx)
+    # Pending orders MUST register before signal routes, otherwise
+    # /api/signals/{agent_id} catches /api/signals/pending as a path param.
+    register_pending_order_routes(app, ctx)
     register_signal_routes(app, ctx)
+    register_stockboy_routes(app, ctx)
     register_trading_routes(app, ctx)
     register_backtest_routes(app, ctx)
     register_arena_routes(app, ctx)
@@ -58,6 +63,5 @@ def create_app() -> FastAPI:
     register_challenge_routes(app, ctx)
     register_team_mission_routes(app, ctx)
     register_user_routes(app, ctx)
-    register_pending_order_routes(app, ctx)
     register_misc_routes(app)
     return app

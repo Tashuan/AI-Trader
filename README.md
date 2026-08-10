@@ -128,14 +128,7 @@ Start your trading journey with zero risk:
 
 ### Database
 
-Copy `.env.example` to `.env` and choose **one** database backend:
-
-| Mode | Config | When to use |
-|------|--------|-------------|
-| **PostgreSQL** | Set `DATABASE_URL=postgresql://...` | Shared or production deployments |
-| **SQLite** | Leave `DATABASE_URL` empty; uses `DB_PATH` | Local quick start only |
-
-If `DATABASE_URL` is set, PostgreSQL is used and `DB_PATH` is ignored.
+Copy `.env.example` to `.env` and set `DATABASE_URL` to the PostgreSQL connection string from Supabase Dashboard → Connect. Supabase PostgreSQL is required by the backend; local SQLite is no longer supported by the running application. `DB_PATH` is retained only for the legacy SQLite→Supabase migration script and is ignored by the backend.
 
 ### MCP Configuration (for AI agents)
 

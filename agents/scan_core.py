@@ -16,6 +16,29 @@ import numpy as np
 import pandas as pd
 
 
+def direction_allowed(direction: str, direction_mode: str = "both") -> bool:
+    """Return whether a signal direction is allowed by entry configuration."""
+    mode = str(direction_mode or "both").lower()
+    return mode not in {"long", "short"} or direction.lower() == mode
+
+
+def trend_agrees(direction: str, sma50: float, sma200: float) -> bool:
+    """Return whether a signal direction agrees with the medium/long-term trend.
+
+    Uses SMA50 vs SMA200 (on the scan's candle interval) as a regime proxy —
+    independent of the SMA20/50 signal already counted in the composite score.
+    Longs require an established uptrend (sma50 > sma200); shorts require an
+    established downtrend (sma50 < sma200). This exists because a symbol in a
+    strong multi-week trend punishes counter-trend entries taken purely off
+    short-horizon momentum signals.
+    """
+    if sma200 <= 0:
+        return True  # insufficient history to judge trend — don't block
+    if direction.lower() == "long":
+        return sma50 > sma200
+    return sma50 < sma200
+
+
 # ============================================================
 # Canonical Default Strategy Parameters
 #
@@ -42,6 +65,8 @@ DEFAULT_PARAMS: dict[str, Any] = {
         "min_signals": 4,
         "min_signal_families": 2,
         "min_vol_ratio": 1.5,
+        "direction_mode": "both",
+        "require_trend_agreement": False,
         "bearish_macro_min_signals": 5,
         "bearish_macro_threshold": 0.3,
         "block_on_obv_divergence": True,
@@ -534,14 +559,20 @@ def deep_scan_from_precomputed(symbol: str, pre: dict[str, Any], bar_idx: int, p
     min_signals = entry_cfg.get("min_signals", 4)
     min_families = entry_cfg.get("min_signal_families", 2)
     min_vol = entry_cfg.get("min_vol_ratio", 1.5)
+    direction_mode = entry_cfg.get("direction_mode", "both")
     block_on_obv_div = entry_cfg.get("block_on_obv_divergence", True)
+    require_trend = entry_cfg.get("require_trend_agreement", False)
 
     direction = "long" if bullish_count > bearish_count else "short"
     directional_count = max(bullish_count, bearish_count)
+    mode_allowed = direction_allowed(direction, direction_mode)
+    trend_ok = (not require_trend) or trend_agrees(direction, sma50, sma200)
     qualifies = (
         directional_count >= min_signals
         and len(families) >= min_families
         and vol_ratio > min_vol
+        and mode_allowed
+        and trend_ok
         and not (block_on_obv_div and obv_div)
     )
 
@@ -714,14 +745,20 @@ def deep_scan_symbol_from_df(symbol: str, df: pd.DataFrame, params: dict[str, An
     min_signals = entry_cfg.get("min_signals", 4)
     min_families = entry_cfg.get("min_signal_families", 2)
     min_vol = entry_cfg.get("min_vol_ratio", 1.5)
+    direction_mode = entry_cfg.get("direction_mode", "both")
     block_on_obv_div = entry_cfg.get("block_on_obv_divergence", True)
+    require_trend = entry_cfg.get("require_trend_agreement", False)
 
     direction = "long" if bullish_count > bearish_count else "short"
     directional_count = max(bullish_count, bearish_count)
+    mode_allowed = direction_allowed(direction, direction_mode)
+    trend_ok = (not require_trend) or trend_agrees(direction, sma50, sma200)
     qualifies = (
         directional_count >= min_signals
         and len(families) >= min_families
         and vol_ratio > min_vol
+        and mode_allowed
+        and trend_ok
         and not (block_on_obv_div and obv_div)
     )
 

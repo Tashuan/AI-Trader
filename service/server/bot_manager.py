@@ -326,3 +326,32 @@ def get_crypto_runner_status() -> dict:
             _bots.pop(_CRYPTO_RUNNER_KEY, None)
             return {"running": False, "pid": None, "thread": None, "bot_type": "runner", "last_error": _get_dead_error(_CRYPTO_RUNNER_KEY)}
         return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
+
+
+# ── StockBoy supervisor management ─────────────────────────────────────
+
+def start_stockboy() -> dict:
+    """Start the StockBoy platform supervisor loop."""
+    try:
+        from stockboy_manager import start
+        return start()
+    except Exception as exc:
+        return {"success": False, "message": f"Failed to start StockBoy: {exc}"}
+
+
+def stop_stockboy() -> dict:
+    """Stop StockBoy without stopping runners or modifying positions."""
+    try:
+        from stockboy_manager import stop
+        return stop()
+    except Exception as exc:
+        return {"success": False, "message": f"Failed to stop StockBoy: {exc}"}
+
+
+def get_stockboy_status() -> dict:
+    """Return StockBoy supervisor status."""
+    try:
+        from stockboy_manager import status
+        return status()
+    except Exception as exc:
+        return {"running": False, "bot_type": "supervisor", "last_error": str(exc)}

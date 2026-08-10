@@ -38,6 +38,18 @@ class YFinanceProvider:
         return float(frame["Close"].iloc[-1])
 
 
+def get_default_equity_provider():
+    """Prefer Alpaca historical equity bars, with yfinance as fallback."""
+    try:
+        from equity_data_providers import AlpacaProvider
+        provider = AlpacaProvider()
+        if provider.available:
+            return provider
+    except Exception:
+        pass
+    return YFinanceProvider()
+
+
 # Re-export crypto providers for convenient import:
 #   from market_data import HyperliquidProvider, BinanceProvider, CoinbaseProvider, CryptoFallbackProvider
 from crypto_data_providers import (  # noqa: E402

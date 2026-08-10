@@ -93,6 +93,163 @@ export interface Agent {
   goal_data?: GoalData;
 }
 
+export interface StockBoySupervisorStatus {
+  enabled: boolean;
+  actions_enabled: boolean;
+  mode: string;
+  kill_switch: boolean;
+  running: boolean;
+  agent_id?: number | null;
+  last_cycle_at?: string | null;
+  next_cycle_at?: string | null;
+  last_heartbeat_at?: string | null;
+  last_error?: string | null;
+  cycles_run: number;
+  controlled_runners: string[];
+  thread?: string | null;
+  bot_type?: string;
+}
+
+export interface StockBoyRunnerHealth {
+  runner_key: string;
+  agent_name: string;
+  agent_id?: number | null;
+  running: boolean;
+  bot_type: string;
+  last_error?: string | null;
+  cash: number;
+  portfolio_value: number;
+  open_positions: number;
+  unrealized_pnl: number;
+  today_pnl: number;
+  active_overrides: number;
+  heartbeat_age_seconds?: number | null;
+  last_cycle_at?: string | null;
+}
+
+export interface StockBoyPosition {
+  position_id: number;
+  agent_id: number;
+  agent_name: string;
+  runner_key: string;
+  symbol: string;
+  market: string;
+  side: string;
+  quantity: number;
+  entry_price: number;
+  current_price?: number | null;
+  current_price_age_seconds?: number | null;
+  unrealized_pnl?: number | null;
+  unrealized_pnl_pct?: number | null;
+  stop_loss_price?: number | null;
+  take_profit_price?: number | null;
+  trailing_sl_pct?: number | null;
+  trailing_activation_pct?: number | null;
+  opened_at?: string | null;
+  age_seconds?: number | null;
+  missing_protection: boolean;
+  stale_price: boolean;
+  latest_assessment?: string | null;
+}
+
+export interface StockBoyPendingOrder {
+  order_id: number;
+  agent_id: number;
+  agent_name: string;
+  runner_key: string;
+  symbol: string;
+  market: string;
+  side: string;
+  stop_price: number;
+  limit_price?: number | null;
+  quantity: number;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  age_seconds?: number | null;
+  stale: boolean;
+}
+
+export interface StockBoyOverride {
+  override_id: number;
+  runner_key: string;
+  field_path: string;
+  old_value?: unknown;
+  new_value: unknown;
+  baseline_version?: string | null;
+  rationale: string;
+  author: string;
+  status: string;
+  expires_at?: string | null;
+  rolled_back_at?: string | null;
+  created_at: string;
+}
+
+export interface StockBoyAction {
+  action_id: number;
+  idempotency_key: string;
+  cycle_id?: number | null;
+  runner_key: string;
+  action_type: string;
+  target_position_id?: number | null;
+  target_order_id?: number | null;
+  parameters: Record<string, unknown>;
+  rationale: string;
+  policy_rule: string;
+  status: string;
+  result: Record<string, unknown>;
+  error?: string | null;
+  requested_at: string;
+  executed_at?: string | null;
+  created_at: string;
+}
+
+export interface StockBoyObservation {
+  observation_id: number;
+  cycle_id?: number | null;
+  runner_key?: string | null;
+  severity: string;
+  category: string;
+  message: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface StockBoyCommentary {
+  commentary_id: number;
+  kind: string;
+  severity: string;
+  content: string;
+  created_at: string;
+}
+
+export interface StockBoySnapshot {
+  timestamp: string;
+  supervisor: StockBoySupervisorStatus;
+  portfolio: {
+    total_equity: number;
+    total_cash: number;
+    total_unrealized_pnl: number;
+    total_today_pnl: number;
+    gross_exposure: number;
+    net_exposure: number;
+    open_position_count: number;
+    pending_order_count: number;
+    controlled_runner_count: number;
+    active_override_count: number;
+    data_fresh: boolean;
+  };
+  runners: StockBoyRunnerHealth[];
+  positions: StockBoyPosition[];
+  pending_orders: StockBoyPendingOrder[];
+  overrides: StockBoyOverride[];
+  recent_actions: StockBoyAction[];
+  recent_observations: StockBoyObservation[];
+  recent_commentary: StockBoyCommentary[];
+  risk_anomalies: { category: string; severity: string; message: string; runner_key?: string | null; symbol?: string | null; metadata: Record<string, unknown> }[];
+  broader_agent_summary: Record<string, unknown>[];
+}
+
 export interface MarketData {
   price: number;
   change_pct: number;

@@ -72,6 +72,12 @@ interface BacktestReport {
     same_bar_exit_skipped?: number;
     exit_counts?: Record<string, number>;
     sample_warning?: string;
+    fills_with_tick_data?: number;
+    fills_fallback_bar_close?: number;
+    avg_fill_slippage_bps?: number;
+    avg_spread_bps?: number;
+    fill_model?: string;
+    fee_rate?: number;
   };
 }
 
@@ -94,10 +100,13 @@ export function BacktestPage() {
   const [llmLoading, setLlmLoading] = useState(false);
   const [llmAvailable, setLlmAvailable] = useState<boolean | null>(null);
   const [candleInterval, setCandleInterval] = useState('1d');
-  const [slippageBps, setSlippageBps] = useState('5');
+  const [slippageBps, setSlippageBps] = useState('10');
+  const [feeRate, setFeeRate] = useState('0.1');
+  const [realisticFills, setRealisticFills] = useState(true);
   const [goalTarget, setGoalTarget] = useState('');
   const [activeTestPreset, setActiveTestPreset] = useState('');
   const [paramsOverride, setParamsOverride] = useState<Record<string, unknown> | null>(null);
+  const [useMassiveFills, setUseMassiveFills] = useState(false);
   const [walkForwardRunning, setWalkForwardRunning] = useState(false);
   const [walkForwardResult, setWalkForwardResult] = useState<Record<string, any> | null>(null);
 
@@ -302,6 +311,8 @@ export function BacktestPage() {
     setCapital(preset.capital);
     setCandleInterval(preset.interval);
     setSlippageBps(preset.slippage);
+    setFeeRate('0.1');
+    setRealisticFills(true);
     setGoalTarget(preset.goalTarget);
     setParamsOverride(preset.paramsOverride || null);
     setSignalAnalysis(null);
@@ -348,7 +359,9 @@ export function BacktestPage() {
           step_days: 30,
           initial_capital: parseFloat(capital) || 10000,
           interval: candleInterval,
-          slippage_bps: parseFloat(slippageBps) || 5,
+          slippage_bps: parseFloat(slippageBps) || 10,
+          fee_rate: (parseFloat(feeRate) || 0.1) / 100,
+          realistic_fills: realisticFills,
         }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -433,12 +446,17 @@ export function BacktestPage() {
         body.symbols = symbolsInput.split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
       }
       body.interval = candleInterval;
-      body.slippage_bps = parseFloat(slippageBps) || 0;
+      body.slippage_bps = parseFloat(slippageBps) || 10;
+      body.fee_rate = (parseFloat(feeRate) || 0.1) / 100;
+      body.realistic_fills = realisticFills;
       if (goalTarget.trim()) {
         body.goal_target = parseFloat(goalTarget) || undefined;
       }
       if (paramsOverride) {
         body.params_override = paramsOverride;
+      }
+      if (useMassiveFills && selectedKey === 'scalprunner') {
+        body.use_massive_fills = true;
       }
 
       const resp = await fetch('/api/backtest/run', {
@@ -800,6 +818,7 @@ export function BacktestPage() {
     lines.push(`Symbols Tested: ${report.symbols.join(', ')}`);
     lines.push(`Candle Interval: ${report.interval || '1d'}`);
     lines.push(`Slippage: ${report.slippage_bps ?? 0} bps`);
+    lines.push(`Fill model: ${report.diagnostics?.fill_model || 'shared deterministic execution simulator'} | Fee: ${((report.diagnostics?.fee_rate ?? 0.001) * 100).toFixed(3)}%`);
     if (symbolsInput.trim()) {
       lines.push(`Symbols Override: ${symbolsInput}`);
     }
@@ -824,6 +843,9 @@ export function BacktestPage() {
       lines.push(`Orders: ${report.diagnostics.orders_placed ?? 0} placed / ${report.diagnostics.orders_filled ?? 0} filled`);
       lines.push(`Expired pending orders: ${report.diagnostics.orders_expired ?? 0}`);
       lines.push(`Same-bar exits skipped: ${report.diagnostics.same_bar_exit_skipped ?? 0}`);
+      if ((report.diagnostics.fills_with_tick_data ?? 0) > 0) {
+        lines.push(`Massive tick fills: ${report.diagnostics.fills_with_tick_data ?? 0} (avg slippage ${(report.diagnostics.avg_fill_slippage_bps ?? 0).toFixed(1)} bps, avg spread ${(report.diagnostics.avg_spread_bps ?? 0).toFixed(1)} bps)`);
+      }
     }
     lines.push('');
     lines.push('--- Per-Symbol Breakdown ---');
@@ -1033,7 +1055,30 @@ export function BacktestPage() {
               min="0"
               step="1"
             />
-            <div className="mt-1 text-[9px] text-arena-text-dim">5 bps = 0.05% adverse fill per trade. Set 0 for idealized fills.</div>
+            <div className="mt-1 text-[9px] text-arena-text-dim">Base adverse slippage before volatility widening and size impact.</div>
+          </div>
+
+          {/* Fill model */}
+          <div>
+            <label className="text-[10px] text-arena-text-dim mb-1 block uppercase tracking-wider">Transaction Fee (%)</label>
+            <input
+              type="number"
+              className="form-input"
+              value={feeRate}
+              onChange={e => setFeeRate(e.target.value)}
+              min="0"
+              step="0.01"
+            />
+            <div className="mt-1 text-[9px] text-arena-text-dim">Applied on entries and exits; default matches paper trading (0.1%).</div>
+            <label className="mt-2 flex items-center gap-2 text-[10px] text-arena-text-secondary cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={realisticFills}
+                onChange={e => setRealisticFills(e.target.checked)}
+                className="accent-arena-green w-3.5 h-3.5"
+              />
+              Enable volatility, size impact, partial fills and tick rounding
+            </label>
           </div>
 
           {/* Goal Target */}
@@ -1085,6 +1130,17 @@ export function BacktestPage() {
               {analysisRunning ? <Loader2 size={14} className="animate-spin" /> : <Stethoscope size={14} />}
               {analysisRunning ? 'Analyzing...' : 'Analyze Signals'}
             </button>
+          )}
+          {selectedKey === 'scalprunner' && (
+            <label className="flex items-center gap-2 text-[10px] text-arena-text-dim cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={useMassiveFills}
+                onChange={(e) => setUseMassiveFills(e.target.checked)}
+                className="accent-arena-green w-3.5 h-3.5"
+              />
+              Realistic Fills (Massive)
+            </label>
           )}
           {error && (
             <span className="text-xs text-arena-red">{error}</span>
@@ -1217,6 +1273,17 @@ export function BacktestPage() {
                   <span>Expired: {report.diagnostics.orders_expired ?? 0}</span>
                   <span>Same-bar exits skipped: {report.diagnostics.same_bar_exit_skipped ?? 0}</span>
                 </div>
+                {(report.diagnostics.fills_with_tick_data ?? 0) > 0 || (report.diagnostics.fills_fallback_bar_close ?? 0) > 0 ? (
+                  <div className="mt-2 pt-2 border-t border-arena-border/40">
+                    <div className="font-semibold text-arena-green mb-1">Massive Fill Quality</div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      <span>Tick fills: {report.diagnostics.fills_with_tick_data ?? 0}</span>
+                      <span>Bar-close fallbacks: {report.diagnostics.fills_fallback_bar_close ?? 0}</span>
+                      <span>Avg slippage: {(report.diagnostics.avg_fill_slippage_bps ?? 0).toFixed(1)} bps</span>
+                      <span>Avg spread: {(report.diagnostics.avg_spread_bps ?? 0).toFixed(1)} bps</span>
+                    </div>
+                  </div>
+                ) : null}
                 {report.diagnostics.sample_warning && (
                   <div className="mt-1 text-arena-yellow">{report.diagnostics.sample_warning}</div>
                 )}

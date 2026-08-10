@@ -13,7 +13,11 @@ import sys
 import os
 import argparse
 import json
+from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from personality import PERSONALITIES, list_personalities
@@ -84,7 +88,7 @@ def main():
     parser.add_argument("--end", type=str, default="", help="End date (YYYY-MM-DD)")
     parser.add_argument("--capital", type=float, default=100000.0, help="Initial capital (default: $100,000)")
     parser.add_argument("--interval", type=str, default="", help="Candle interval override for runner backtests")
-    parser.add_argument("--slippage", type=float, default=5.0, help="Slippage in basis points")
+    parser.add_argument("--slippage", type=float, default=10.0, help="Base slippage in basis points")
     parser.add_argument("--json", type=str, default="", help="Save full report as JSON to this path")
     parser.add_argument("--goal-target", type=float, default=None, help="Goal target profit in $ (e.g. 100 for $100 profit)")
     parser.add_argument("--goal-max-loss", type=float, default=None, help="Goal max loss in $ (e.g. 500 stops trading at -$500)")

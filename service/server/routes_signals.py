@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import FastAPI, Header, HTTPException
+
+from permissions import agent_role
 from zoneinfo import ZoneInfo
 
 from cache import get_json, set_json
@@ -114,6 +116,11 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
             raise HTTPException(status_code=401, detail='Invalid token')
 
         agent_id = agent['id']
+        if agent_role(agent) == 'supervisor' and data.action.lower() in {'buy', 'short'}:
+            raise HTTPException(
+                status_code=403,
+                detail='Supervisor agents cannot create new entries',
+            )
         experiment_contexts = _agent_experiment_context(agent_id)
         now = utc_now_iso_z()
         side = data.action

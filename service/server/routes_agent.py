@@ -680,6 +680,21 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
             token = secrets.token_urlsafe(32)
             cursor.execute('UPDATE agents SET token = ? WHERE id = ?', (token, agent_id))
 
+            # Seed paper_account_budget so the profit-history baseline matches the
+            # actual funding when an agent self-registers with less than the system
+            # default (INITIAL_CAPITAL). Without this, profit_history falls back to
+            # the 100000 default and reports a phantom loss (e.g. 10000 - 100000).
+            if initial_cash < INITIAL_CAPITAL:
+                seeded_config = {
+                    'strategy_params': {
+                        'risk_controls': {'paper_account_budget': initial_cash}
+                    }
+                }
+                cursor.execute(
+                    'INSERT INTO agent_configs (agent_id, config_json, created_at, updated_at) VALUES (?, ?, ?, ?)',
+                    (agent_id, json.dumps(seeded_config), now, now),
+                )
+
             if initial_positions:
                 for pos in initial_positions:
                     cursor.execute(
@@ -1199,11 +1214,16 @@ def register_agent_routes(app: FastAPI, ctx: RouteContext) -> None:
     # ─── Strategy params endpoints (self-service) ─────────────────
 
     def _effective_for_agent(agent: dict, stored: dict | None = None) -> dict:
-        return effective_params(
+        effective = effective_params(
             agent_name=agent.get('name', ''),
             strategy_type=agent.get('strategy_type', ''),
             stored=stored or {},
         )
+        try:
+            from stockboy_overrides import apply_active_overrides
+            return apply_active_overrides(agent.get('name', ''), effective)
+        except Exception:
+            return effective
 
     @app.get('/api/claw/agents/me/config-schema')
     async def get_agent_config_schema(authorization: str = Header(None)):
