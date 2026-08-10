@@ -36,30 +36,37 @@ def _interval() -> int:
 
 
 def _cycle() -> None:
+    """Run one deterministic supervisor cycle.
+
+    The backend loop is intentionally deterministic — it builds snapshots,
+    detects anomalies, expires overrides, and writes commentary/journal.
+    AI reasoning happens in a separate Devin workspace session that calls
+    the same /api/stockboy/* endpoints via curl. Both coexist.
+    """
     status = get_status()
     now = datetime.now(timezone.utc)
     cycle_number = status.cycles_run + 1
     set_state(last_heartbeat_at=now.isoformat().replace("+00:00", "Z"), last_error=None, cycles_run=cycle_number)
-    conn = None
-    cycle_id = None
     try:
-        # Snapshot construction is deliberately read-only. Policy/action execution
-        # happens only through the dedicated action endpoint/service.
         expired = expire_overrides()
-        snapshot = build_snapshot()
-        issues = len(snapshot.risk_anomalies)
         if expired:
             add_commentary(f"Expired {expired} StockBoy runner override(s); defaults remain authoritative", kind="maintenance", severity="info")
+
+        snapshot = build_snapshot()
+        issues = len(snapshot.risk_anomalies)
         summary = (
             f"Overwatch cycle {cycle_number}: {len(snapshot.runners)} runners, "
             f"{snapshot.portfolio.open_position_count} positions, "
             f"{issues} anomalies, ${snapshot.portfolio.total_unrealized_pnl:,.2f} unrealized P&L."
         )
-        add_commentary(summary, kind="cycle", severity="warning" if issues else "info", dedup_key=f"cycle:{issues}")
+        add_commentary(summary, kind="cycle", severity="warning" if issues else "info", dedup_key=f"cycle:{cycle_number}")
         if issues:
-            add_journal(summary, entry_type="anomaly", title="Overwatch anomaly review")
+            add_journal(summary, entry_type="anomaly", title=f"Overwatch cycle {cycle_number} — anomaly review")
         else:
-            add_journal(summary, entry_type="cycle", title="Overwatch cycle")
+            add_journal(summary, entry_type="cycle", title=f"Overwatch cycle {cycle_number}")
+
+        logger.info("Cycle %d complete: %d runners, %d positions, %d anomalies", cycle_number, len(snapshot.runners), snapshot.portfolio.open_position_count, issues)
+
         next_at = (datetime.now(timezone.utc) + timedelta(seconds=_interval())).isoformat().replace("+00:00", "Z")
         set_state(last_cycle_at=now.isoformat().replace("+00:00", "Z"), next_cycle_at=next_at, last_error=None)
     except Exception as exc:

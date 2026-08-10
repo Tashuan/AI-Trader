@@ -112,7 +112,15 @@ def set_state(**fields: Any) -> StockBoySupervisorStatus:
         "enabled", "actions_enabled", "mode", "kill_switch", "last_cycle_at",
         "next_cycle_at", "last_error", "last_heartbeat_at", "cycles_run", "agent_id",
     }
-    updates = {key: value for key, value in fields.items() if key in allowed}
+    _BOOL_FIELDS = {"enabled", "actions_enabled", "kill_switch"}
+    updates = {}
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        if key in _BOOL_FIELDS:
+            updates[key] = int(bool(value))
+        else:
+            updates[key] = value
     updates["updated_at"] = utc_now_iso_z()
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -475,7 +483,8 @@ def execute_action(request: StockBoyActionRequest) -> StockBoyActionResponse:
 def add_commentary(content: str, kind: str = "status", severity: str = "info", dedup_key: Optional[str] = None) -> None:
     conn = get_db_connection(); cursor = conn.cursor()
     if dedup_key:
-        cursor.execute("SELECT id FROM stockboy_commentary WHERE dedup_key = ? AND created_at > datetime('now', '-30 minutes')", (dedup_key,))
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        cursor.execute("SELECT id FROM stockboy_commentary WHERE dedup_key = ? AND created_at > ?", (dedup_key, cutoff))
         if cursor.fetchone():
             conn.close(); return
     cursor.execute("INSERT INTO stockboy_commentary (kind, severity, content, dedup_key) VALUES (?, ?, ?, ?)", (kind, severity, content[:2000], dedup_key))

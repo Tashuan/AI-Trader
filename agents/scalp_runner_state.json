@@ -1,7 +1,12 @@
 {
   "consecutive_losses": 0,
   "reentry_cooldown": {},
-  "pending_order_ids": {},
-  "last_cycle_time": "2026-08-10T14:56:50.368877+00:00",
-  "cycles_run": 144
+  "pending_order_ids": {
+    "NFLX": 2556,
+    "DKNG": 2557,
+    "INTC": 2558,
+    "AMD": 2559
+  },
+  "last_cycle_time": "2026-08-10T23:43:37.447043+00:00",
+  "cycles_run": 230
 }

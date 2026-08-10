@@ -42,6 +42,7 @@ from cache import get_cache_status
 from database import init_database, get_database_status, get_db_connection
 from routes import create_app
 from routes_shared import api_access_log_enabled
+from stockboy_provision import provision_supervisor
 from tasks import (
     _update_trending_cache,
     background_tasks_enabled_for_api,
@@ -72,6 +73,16 @@ async def startup_event():
         db_status.get("backend"),
         {key: value for key, value in db_status.items() if key != "backend"},
     )
+
+    # Auto-provision StockBoy supervisor and start the deterministic loop.
+    if os.getenv("STOCKBOY_AUTOSTART", "true").strip().lower() not in {"0", "false", "no", "off"}:
+        try:
+            provision_supervisor()
+            from stockboy_manager import start as start_stockboy
+            result = start_stockboy()
+            logger.info("StockBoy supervisor: %s", result.get("message"))
+        except Exception:
+            logger.exception("Failed to auto-start StockBoy supervisor")
     cache_status = get_cache_status()
     logger.info(
         "Cache ready: enabled=%s configured=%s available=%s prefix=%s client_installed=%s error=%s",
