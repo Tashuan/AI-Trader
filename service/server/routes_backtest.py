@@ -38,6 +38,16 @@ class BacktestRequest(BaseModel):
     params_override: Optional[dict] = None  # Temporary strategy test override
 
 
+class ScalpAnalysisRequest(BaseModel):
+    symbols: list[str]
+    start_date: str
+    end_date: str
+    interval: str = "5m"
+    horizons: list[int] = [1, 3, 6, 12]
+    cooldown_bars: int = 6
+    params_override: Optional[dict] = None
+
+
 class WalkForwardRequest(BaseModel):
     agent_key: str
     symbols: list[str]
@@ -256,6 +266,38 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
             report = await asyncio.to_thread(bt.run)
             return {"report": report.to_dict()}
 
+    @app.post("/api/backtest/scalp-analysis")
+    async def analyze_scalp_signals(req: ScalpAnalysisRequest):
+        """Measure forward MFE/MAE outcomes for ScalpRunner signals."""
+        if not req.symbols:
+            raise HTTPException(status_code=400, detail="At least one symbol is required")
+        if req.interval != "5m":
+            raise HTTPException(status_code=400, detail="Cached ScalpRunner analysis currently requires interval=5m")
+        if req.cooldown_bars < 0 or req.cooldown_bars > 100:
+            raise HTTPException(status_code=400, detail="cooldown_bars must be between 0 and 100")
+
+        try:
+            import asyncio
+            from data_cache import CacheOnlyProvider
+            from scalp_signal_analyzer import ScalpSignalAnalyzer
+
+            params = _load_runner_params("ScalpRunner", "scalp_4step", req.params_override)
+            analyzer = ScalpSignalAnalyzer(
+                symbols=req.symbols,
+                params=params,
+                start_date=req.start_date,
+                end_date=req.end_date,
+                provider=CacheOnlyProvider(),
+                base_interval=req.interval,
+            )
+            result = await asyncio.to_thread(analyzer.run, req.horizons, req.cooldown_bars)
+            return {"analysis": result}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Scalp signal analysis error")
+            raise HTTPException(status_code=500, detail=str(exc))
+
         try:
             from personality import PERSONALITIES
         except ImportError as e:
@@ -310,6 +352,38 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
         import asyncio
         report = await asyncio.to_thread(bt.run)
         return {"report": report.to_dict()}
+
+    @app.post("/api/backtest/scalp-analysis")
+    async def analyze_scalp_signals(req: ScalpAnalysisRequest):
+        """Measure forward MFE/MAE outcomes for ScalpRunner signals."""
+        if not req.symbols:
+            raise HTTPException(status_code=400, detail="At least one symbol is required")
+        if req.interval != "5m":
+            raise HTTPException(status_code=400, detail="Cached ScalpRunner analysis currently requires interval=5m")
+        if req.cooldown_bars < 0 or req.cooldown_bars > 100:
+            raise HTTPException(status_code=400, detail="cooldown_bars must be between 0 and 100")
+
+        try:
+            import asyncio
+            from data_cache import CacheOnlyProvider
+            from scalp_signal_analyzer import ScalpSignalAnalyzer
+
+            params = _load_runner_params("ScalpRunner", "scalp_4step", req.params_override)
+            analyzer = ScalpSignalAnalyzer(
+                symbols=req.symbols,
+                params=params,
+                start_date=req.start_date,
+                end_date=req.end_date,
+                provider=CacheOnlyProvider(),
+                base_interval=req.interval,
+            )
+            result = await asyncio.to_thread(analyzer.run, req.horizons, req.cooldown_bars)
+            return {"analysis": result}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Scalp signal analysis error")
+            raise HTTPException(status_code=500, detail=str(exc))
 
     @app.post("/api/backtest/diagnose")
     async def diagnose_backtest(report: dict):

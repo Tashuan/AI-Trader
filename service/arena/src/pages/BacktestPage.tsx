@@ -83,6 +83,8 @@ export function BacktestPage() {
   const [symbolsInput, setSymbolsInput] = useState('');
   const [capital, setCapital] = useState('10000');
   const [running, setRunning] = useState(false);
+  const [signalAnalysis, setSignalAnalysis] = useState<Record<string, any> | null>(null);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
   const [report, setReport] = useState<BacktestReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [strategiesLoading, setStrategiesLoading] = useState(true);
@@ -302,6 +304,7 @@ export function BacktestPage() {
     setSlippageBps(preset.slippage);
     setGoalTarget(preset.goalTarget);
     setParamsOverride(preset.paramsOverride || null);
+    setSignalAnalysis(null);
     setActivePreset('');
   };
 
@@ -457,6 +460,40 @@ export function BacktestPage() {
       setError(e instanceof Error ? e.message : 'Backtest failed');
     } finally {
       setRunning(false);
+    }
+  };
+
+  const handleAnalyzeSignals = async () => {
+    if (selectedKey !== 'scalprunner' || !startDate || !endDate) return;
+    setAnalysisRunning(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = {
+        symbols: symbolsInput.trim()
+          ? symbolsInput.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+          : (selectedStrategy?.watchlist || []),
+        start_date: startDate,
+        end_date: endDate,
+        interval: '5m',
+        horizons: [1, 3, 6, 12],
+        cooldown_bars: 6,
+      };
+      if (paramsOverride) body.params_override = paramsOverride;
+      const resp = await fetch('/api/backtest/scalp-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        throw Error(errData.detail || `HTTP ${resp.status}`);
+      }
+      const data = await resp.json();
+      setSignalAnalysis(data.analysis || null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Signal analysis failed');
+    } finally {
+      setAnalysisRunning(false);
     }
   };
 
@@ -914,6 +951,7 @@ export function BacktestPage() {
                 onChange={e => {
                   setSelectedKey(e.target.value);
                   setParamsOverride(null);
+                  setSignalAnalysis(null);
                   setActiveTestPreset('');
                 }}
               >
@@ -1038,11 +1076,70 @@ export function BacktestPage() {
             {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
             {running ? 'Running...' : 'Run Backtest'}
           </button>
+          {selectedKey === 'scalprunner' && (
+            <button
+              onClick={handleAnalyzeSignals}
+              disabled={analysisRunning || running || !startDate || !endDate}
+              className="flex items-center gap-2 px-4 py-2 bg-arena-yellow/10 border border-arena-yellow/30 rounded-lg text-arena-yellow text-xs font-semibold hover:bg-arena-yellow/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {analysisRunning ? <Loader2 size={14} className="animate-spin" /> : <Stethoscope size={14} />}
+              {analysisRunning ? 'Analyzing...' : 'Analyze Signals'}
+            </button>
+          )}
           {error && (
             <span className="text-xs text-arena-red">{error}</span>
           )}
         </div>
       </div>
+
+      {signalAnalysis && (
+        <div className="card-base p-4 mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Stethoscope size={13} className="text-arena-yellow" />
+                Entry Outcome Analysis
+              </h2>
+              <div className="text-[10px] text-arena-text-dim mt-1">
+                Forward MFE/MAE on qualifying signals; no portfolio sizing or trade simulation.
+              </div>
+            </div>
+            <div className="text-[10px] text-arena-text-dim">
+              {signalAnalysis.signal_count} signals · {signalAnalysis.triggered_count} triggered
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-[10px]">
+            <MetricCard label="Fill Rate" value={`${((signalAnalysis.fill_rate || 0) * 100).toFixed(1)}%`} />
+            <MetricCard label="Resolved" value={String(signalAnalysis.resolved_count || 0)} />
+            <MetricCard label="Resolved Win Rate" value={`${((signalAnalysis.resolved_win_rate || 0) * 100).toFixed(1)}%`} />
+            <MetricCard label="Expectancy (R)" value={(signalAnalysis.expectancy_r || 0).toFixed(3)} />
+            <MetricCard label="Target First" value={String(signalAnalysis.outcomes?.target_first || 0)} />
+          </div>
+          <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2">
+            {Object.entries(signalAnalysis.horizon_stats || {}).map(([horizon, stats]: [string, any]) => (
+              <div key={horizon} className="rounded-lg border border-arena-border/60 bg-white/[0.02] p-2 text-[10px] text-arena-text-dim">
+                <div className="font-semibold text-arena-text-secondary">{horizon} bars forward</div>
+                <div>MFE {(stats.avg_mfe_pct || 0).toFixed(2)}%</div>
+                <div>MAE {(stats.avg_mae_pct || 0).toFixed(2)}%</div>
+                <div>Close {(stats.avg_close_return_pct || 0).toFixed(2)}%</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Object.entries(signalAnalysis.per_symbol || {}).map(([symbol, stats]: [string, any]) => (
+              <div key={symbol} className="rounded-lg border border-arena-border/60 bg-white/[0.02] px-2 py-1.5 text-[10px] text-arena-text-dim">
+                <span className="font-semibold text-arena-text-secondary">{symbol}</span>
+                {' · '}{stats.signals} signals
+                {' · '}{((stats.win_rate || 0) * 100).toFixed(0)}% resolved win
+                {' · '}{stats.outcomes?.target_first || 0}T / {stats.outcomes?.stop_first || 0}S
+              </div>
+            ))}
+          </div>
+          {signalAnalysis.sample_warning && (
+            <div className="mt-3 text-[10px] text-arena-yellow">{signalAnalysis.sample_warning}</div>
+          )}
+        </div>
+      )}
 
       {/* Results */}
       {report && (
