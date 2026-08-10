@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "massive": {
+      "command": "/Users/dopestoremac/.local/bin/mcp_massive",
+      "args": [],
+      "env": {
+        "MASSIVE_API_KEY": "${env:MASSIVE_API_KEY}",
+        "HOME": "/Users/dopestoremac"
+      }
+    }
+  }
+}

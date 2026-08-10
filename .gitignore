@@ -134,5 +134,8 @@ change.md
 # Local agent config symlink
 .codex
 
+# Devin MCP local overrides (personal API keys)
+.devin/mcp_config.local.json
+
 # Runtime data caches
 .data_cache/

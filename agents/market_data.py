@@ -51,6 +51,10 @@ from crypto_data_providers import (  # noqa: E402
 #   from market_data import SchwabProvider
 from schwab_provider import SchwabProvider, get_schwab_provider  # noqa: E402
 
+# Re-export Alpaca real-time provider (primary data source for ScalpRunner):
+#   from market_data import AlpacaRealtimeProvider, get_alpaca_provider
+from alpaca_realtime_provider import AlpacaRealtimeProvider, get_alpaca_provider  # noqa: E402
+
 
 # ============================================================
 # Technical Analysis Data Structure

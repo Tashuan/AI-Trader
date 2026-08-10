@@ -896,6 +896,37 @@ def _get_alphavantage_fx_price(pair: str, executed_at: str) -> Optional[float]:
     return None
 
 
+def _get_alpaca_stock_price(symbol: str) -> Optional[float]:
+    """Fetch real-time stock price from Alpaca API (if configured).
+
+    Returns the last trade price, or None if Alpaca is not configured
+    or the fetch fails. Preferred over Schwab/yfinance because Alpaca
+    provides real-time quotes and trades on the free tier.
+    """
+    if not (os.environ.get("APCA_API_KEY_ID") or os.environ.get("ALPACA_API_KEY")):
+        return None
+    try:
+        import sys
+        agents_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "agents")
+        if agents_dir not in sys.path:
+            sys.path.insert(0, agents_dir)
+        from alpaca_realtime_provider import get_alpaca_provider
+
+        provider = get_alpaca_provider()
+        if not provider.is_configured:
+            return None
+        trade = provider.last_trade(symbol)
+        if trade and trade.get("price", 0) > 0:
+            return float(trade["price"])
+        # Fallback to quote mid price
+        q = provider.quote(symbol)
+        if q and q.get("last", 0) > 0:
+            return float(q["last"])
+    except Exception as e:
+        _price_log(f"[Price API] Alpaca fetch failed for {symbol}: {e}")
+    return None
+
+
 def _get_schwab_stock_price(symbol: str) -> Optional[float]:
     """Fetch real-time stock price from Schwab API (if configured).
 
@@ -963,16 +994,21 @@ def get_price_from_market(
             price = _get_polymarket_mid_price(symbol, token_id=token_id, outcome=outcome)
         elif market == "us-stock":
             price = None
-            # Try Schwab first (real-time, if configured)
-            schwab_price = _get_schwab_stock_price(symbol)
-            if schwab_price is not None:
-                price = schwab_price
-            elif ALPHA_VANTAGE_API_KEY and ALPHA_VANTAGE_API_KEY != "demo":
-                price = _get_us_stock_price(symbol, executed_at)
-            else:
-                _price_log("Warning: ALPHA_VANTAGE_API_KEY not set, trying yfinance fallback")
+            # Try Alpaca first (real-time trades + quotes, free tier)
+            alpaca_price = _get_alpaca_stock_price(symbol)
+            if alpaca_price is not None:
+                price = alpaca_price
+            # Try Schwab next (real-time, if configured)
+            elif True:
+                schwab_price = _get_schwab_stock_price(symbol)
+                if schwab_price is not None:
+                    price = schwab_price
+                elif ALPHA_VANTAGE_API_KEY and ALPHA_VANTAGE_API_KEY != "demo":
+                    price = _get_us_stock_price(symbol, executed_at)
+                else:
+                    _price_log("Warning: ALPHA_VANTAGE_API_KEY not set, trying yfinance fallback")
             if price is None:
-                _price_log(f"[Price API] Schwab/Alpha Vantage unavailable for {symbol}; trying yfinance fallback")
+                _price_log(f"[Price API] Alpaca/Schwab/Alpha Vantage unavailable for {symbol}; trying yfinance fallback")
                 price = _get_yfinance_us_stock_price(symbol, executed_at)
         elif market == "forex":
             price = _get_forex_price(symbol, executed_at)
