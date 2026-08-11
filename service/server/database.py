@@ -692,6 +692,7 @@ def init_database():
             quantity REAL NOT NULL,
             entry_price REAL NOT NULL,
             current_price REAL,
+            current_price_updated_at TEXT,
             opened_at TEXT NOT NULL,
             FOREIGN KEY (agent_id) REFERENCES agents(id),
             FOREIGN KEY (leader_id) REFERENCES agents(id)
@@ -1330,6 +1331,11 @@ def init_database():
 
     try:
         cursor.execute("ALTER TABLE positions ADD COLUMN trailing_activated INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE positions ADD COLUMN current_price_updated_at TEXT")
     except Exception:
         pass
 
@@ -2168,6 +2174,7 @@ def init_database():
         CREATE TABLE IF NOT EXISTS stockboy_actions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             idempotency_key TEXT UNIQUE NOT NULL,
+            request_hash TEXT,
             cycle_id INTEGER,
             runner_key TEXT NOT NULL,
             action_type TEXT NOT NULL,
@@ -2195,6 +2202,11 @@ def init_database():
         CREATE INDEX IF NOT EXISTS idx_stockboy_actions_runner_status
         ON stockboy_actions(runner_key, status)
     """)
+
+    try:
+        cursor.execute("ALTER TABLE stockboy_actions ADD COLUMN request_hash TEXT")
+    except Exception:
+        pass
 
     # Temporary runner overrides with baseline and rollback.
     cursor.execute("""

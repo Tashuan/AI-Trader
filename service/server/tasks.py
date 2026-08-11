@@ -620,11 +620,12 @@ async def update_position_prices():
                 conn = get_db_connection()
                 try:
                     cursor = conn.cursor()
+                    price_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                     cursor.executemany("""
                         UPDATE positions
-                        SET current_price = ?
+                        SET current_price = ?, current_price_updated_at = ?
                         WHERE symbol = ? AND market = ? AND COALESCE(token_id, '') = COALESCE(?, '')
-                    """, updates)
+                    """, [(p, price_ts, s, m, t) for p, s, m, t in updates])
                     conn.commit()
                 finally:
                     conn.close()

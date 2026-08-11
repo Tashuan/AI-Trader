@@ -52,7 +52,7 @@ def _cycle() -> None:
         if expired:
             add_commentary(f"Expired {expired} StockBoy runner override(s); defaults remain authoritative", kind="maintenance", severity="info")
 
-        snapshot = build_snapshot()
+        snapshot = build_snapshot(running=True)
         issues = len(snapshot.risk_anomalies)
         summary = (
             f"Overwatch cycle {cycle_number}: {len(snapshot.runners)} runners, "

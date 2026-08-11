@@ -209,11 +209,12 @@ def _position_details(cursor, agent_ids: dict[str, int]) -> list[StockBoyPositio
             agent_name=data["agent_name"], runner_key=_runner_key(data["agent_name"]),
             symbol=data.get("symbol") or "", market=data.get("market") or "",
             side=side, quantity=qty, entry_price=entry, current_price=current,
+            current_price_age_seconds=_age(data.get("current_price_updated_at")),
             unrealized_pnl=pnl, unrealized_pnl_pct=pnl_pct,
             stop_loss_price=data.get("stop_loss_price"), take_profit_price=data.get("take_profit_price"),
             trailing_sl_pct=data.get("trailing_sl_pct"), trailing_activation_pct=data.get("trailing_activation_pct"),
             opened_at=data.get("opened_at"), age_seconds=_age(data.get("opened_at")),
-            missing_protection=(data.get("stop_loss_price") is None and data.get("take_profit_price") is None),
+            missing_protection=(data.get("stop_loss_price") is None),
             stale_price=current is None,
         ))
     return result
@@ -276,7 +277,7 @@ def _recent(cursor, table: str, model, limit: int = 20):
     return result
 
 
-def build_snapshot(*, manager_status: Optional[StockBoySupervisorStatus] = None) -> StockBoySnapshot:
+def build_snapshot(*, manager_status: Optional[StockBoySupervisorStatus] = None, running: bool = False) -> StockBoySnapshot:
     conn = get_db_connection()
     cursor = conn.cursor()
     row = _status_row(cursor)
@@ -300,7 +301,7 @@ def build_snapshot(*, manager_status: Optional[StockBoySupervisorStatus] = None)
         if position.missing_protection:
             anomalies.append(StockBoyRiskAnomaly(
                 category="missing_protection", severity="warning",
-                message=f"{position.agent_name} position {position.symbol} has no stop or target",
+                message=f"{position.agent_name} position {position.symbol} has no stop-loss",
                 runner_key=position.runner_key, symbol=position.symbol,
             ))
         if position.stale_price:
@@ -320,6 +321,7 @@ def build_snapshot(*, manager_status: Optional[StockBoySupervisorStatus] = None)
     status = manager_status or StockBoySupervisorStatus(
         enabled=bool(row.get("enabled")), actions_enabled=bool(row.get("actions_enabled", 1)),
         mode=row.get("mode") or "paper", kill_switch=bool(row.get("kill_switch")),
+        running=running,
         last_cycle_at=row.get("last_cycle_at"), next_cycle_at=row.get("next_cycle_at"),
         last_heartbeat_at=row.get("last_heartbeat_at"), last_error=row.get("last_error"),
         cycles_run=int(row.get("cycles_run") or 0), controlled_runners=list(CONTROLLED_RUNNERS),
@@ -343,16 +345,30 @@ def build_snapshot(*, manager_status: Optional[StockBoySupervisorStatus] = None)
 _COOLDOWNS = CooldownTracker()
 
 
+def _request_hash(request: StockBoyActionRequest) -> str:
+    """Compute a stable hash of the request payload for idempotency conflict detection."""
+    payload = request.model_dump_json(exclude={"idempotency_key"})
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def execute_action(request: StockBoyActionRequest) -> StockBoyActionResponse:
     conn = get_db_connection()
     cursor = conn.cursor()
     state = _status_row(cursor)
-    existing = None
+    req_hash = _request_hash(request)
     cursor.execute("SELECT * FROM stockboy_actions WHERE idempotency_key = ?", (request.idempotency_key,))
     existing = cursor.fetchone()
     if existing:
-        conn.close()
         data = dict(existing)
+        stored_hash = data.get("request_hash")
+        if stored_hash and stored_hash != req_hash:
+            conn.close()
+            return StockBoyActionResponse(
+                success=False, action_id=int(data["id"]),
+                status="rejected",
+                message="Idempotency key reused with a different request payload",
+            )
+        conn.close()
         return StockBoyActionResponse(
             success=data.get("status") == "executed", action_id=int(data["id"]),
             status=data.get("status") or "pending", message="Idempotent replay", result=_loads(data.get("result_json"), {}),
@@ -361,6 +377,7 @@ def execute_action(request: StockBoyActionRequest) -> StockBoyActionResponse:
     target = None
     price = None
     price_age = None
+    target_order = None
     if request.target_position_id:
         cursor.execute(
             """SELECT p.*, a.name AS agent_name FROM positions p JOIN agents a ON a.id = p.agent_id WHERE p.id = ?""",
@@ -370,6 +387,16 @@ def execute_action(request: StockBoyActionRequest) -> StockBoyActionResponse:
         target = dict(row) if row else None
         if target:
             price = target.get("current_price")
+            price_age = _age(target.get("current_price_updated_at"))
+
+    if request.action_type == "cancel_order" and request.target_order_id:
+        cursor.execute(
+            """SELECT o.*, a.name AS agent_name FROM pending_orders o
+               JOIN agents a ON a.id = o.agent_id WHERE o.id = ?""",
+            (request.target_order_id,),
+        )
+        order_row = cursor.fetchone()
+        target_order = dict(order_row) if order_row else None
 
     try:
         validate_action(
@@ -379,6 +406,7 @@ def execute_action(request: StockBoyActionRequest) -> StockBoyActionResponse:
             paper_only=(state.get("mode") or "paper") == "paper",
             target_position=target, current_price=float(price) if price else None,
             current_price_age_seconds=price_age,
+            target_order=target_order,
         )
         if request.target_position_id and not _COOLDOWNS.check_and_record(
             action_cooldown_key(request.runner_key, request.target_position_id, request.action_type),
@@ -388,10 +416,10 @@ def execute_action(request: StockBoyActionRequest) -> StockBoyActionResponse:
     except PolicyViolation as exc:
         cursor.execute(
             """INSERT INTO stockboy_actions
-               (idempotency_key, runner_key, action_type, target_position_id, target_order_id,
+               (idempotency_key, request_hash, runner_key, action_type, target_position_id, target_order_id,
                 parameters_json, rationale, policy_rule, status, error, requested_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'rejected', ?, ?)""",
-            (request.idempotency_key, request.runner_key, request.action_type, request.target_position_id,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'rejected', ?, ?)""",
+            (request.idempotency_key, req_hash, request.runner_key, request.action_type, request.target_position_id,
              request.target_order_id, _json(request.model_dump()), request.rationale, request.policy_rule,
              exc.reason, utc_now_iso_z()),
         )
@@ -403,10 +431,10 @@ def execute_action(request: StockBoyActionRequest) -> StockBoyActionResponse:
     try:
         cursor.execute(
             """INSERT INTO stockboy_actions
-               (idempotency_key, runner_key, action_type, target_position_id, target_order_id,
+               (idempotency_key, request_hash, runner_key, action_type, target_position_id, target_order_id,
                 parameters_json, rationale, policy_rule, status, requested_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'executing', ?)""",
-            (request.idempotency_key, request.runner_key, request.action_type, request.target_position_id,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'executing', ?)""",
+            (request.idempotency_key, req_hash, request.runner_key, request.action_type, request.target_position_id,
              request.target_order_id, _json(request.model_dump()), request.rationale, request.policy_rule, now),
         )
         action_id = cursor.lastrowid
@@ -467,10 +495,10 @@ def execute_action(request: StockBoyActionRequest) -> StockBoyActionResponse:
             if cursor.rowcount == 0:
                 cursor.execute(
                     """INSERT INTO stockboy_actions
-                       (idempotency_key, runner_key, action_type, target_position_id, target_order_id,
+                       (idempotency_key, request_hash, runner_key, action_type, target_position_id, target_order_id,
                         parameters_json, rationale, policy_rule, status, error, requested_at, executed_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, ?)""",
-                    (request.idempotency_key, request.runner_key, request.action_type,
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, ?)""",
+                    (request.idempotency_key, req_hash, request.runner_key, request.action_type,
                      request.target_position_id, request.target_order_id, _json(request.model_dump()),
                      request.rationale, request.policy_rule, str(exc), now, now),
                 )

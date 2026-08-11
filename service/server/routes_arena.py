@@ -521,15 +521,18 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
 
     # ── StockBoy supervisor endpoints ────────────────────────────────
     @app.post("/api/arena/stockboy/start")
-    async def arena_start_stockboy():
+    async def arena_start_stockboy(authorization: str = Header(None)):
+        require_admin(authorization)
         return start_stockboy()
 
     @app.post("/api/arena/stockboy/stop")
-    async def arena_stop_stockboy():
+    async def arena_stop_stockboy(authorization: str = Header(None)):
+        require_admin(authorization)
         return stop_stockboy()
 
     @app.get("/api/arena/stockboy/status")
-    async def arena_stockboy_status():
+    async def arena_stockboy_status(authorization: str = Header(None)):
+        require_admin(authorization)
         return get_stockboy_status()
 
     @app.post("/api/arena/agent/{agent_id}/disconnect")

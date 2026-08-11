@@ -168,6 +168,7 @@ def validate_action(
     target_position: Optional[Dict[str, Any]] = None,
     current_price: Optional[float] = None,
     current_price_age_seconds: Optional[float] = None,
+    target_order: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Validate a proposed StockBoy action against all policy guardrails.
 
@@ -291,6 +292,24 @@ def validate_action(
     if request.action_type == "cancel_order":
         if request.target_order_id is None:
             raise PolicyViolation("Cancel order requires a target_order_id", "missing_target")
+        if target_order is None:
+            raise PolicyViolation(
+                f"Order {request.target_order_id} not found",
+                "missing_target",
+            )
+        order_agent_name = (target_order.get("agent_name") or "").strip()
+        expected_name = CONTROLLED_RUNNERS.get(request.runner_key, "")
+        if order_agent_name != expected_name:
+            raise PolicyViolation(
+                f"Order belongs to '{order_agent_name}', not controlled runner '{expected_name}'",
+                "ownership_mismatch",
+            )
+        order_status = (target_order.get("status") or "").upper()
+        if order_status != "PENDING":
+            raise PolicyViolation(
+                f"Order is not pending (status={order_status})",
+                "invalid_order_state",
+            )
 
 
 def validate_override(

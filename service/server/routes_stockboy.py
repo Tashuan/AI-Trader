@@ -27,12 +27,15 @@ def _supervisor_agent(authorization: str | None) -> dict:
 
 def register_stockboy_routes(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/stockboy/status")
-    async def stockboy_status():
+    async def stockboy_status(authorization: str = Header(None)):
+        _supervisor_agent(authorization)
         return status()
 
     @app.get("/api/stockboy/snapshot")
-    async def stockboy_snapshot():
-        return build_snapshot().model_dump()
+    async def stockboy_snapshot(authorization: str = Header(None)):
+        _supervisor_agent(authorization)
+        mgr_status = status()
+        return build_snapshot(running=bool(mgr_status.get("running"))).model_dump()
 
     @app.post("/api/stockboy/start")
     async def stockboy_start(authorization: str = Header(None)):
