@@ -10,27 +10,62 @@ Usage:
   1. Set env vars: SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET
   2. Run: python schwab_oauth_flow.py
   3. Open the printed URL in your browser, log in to Schwab
-  4. Copy the redirect URL (it contains the authorization code)
-  5. Paste it when prompted
-  6. The refresh token is saved to ~/.config/devin/schwab_tokens.json
+  4. Schwab redirects back to https://127.0.0.1:8182 — we capture the code
+  5. The refresh token is saved to ~/.config/devin/schwab_tokens.json
 
 Prerequisites:
   - Register at developer.schwab.com
-  - Create an app with a redirect URI (use http://localhost:8787/callback)
+  - Create an app with redirect URI: https://127.0.0.1:8182
+  - Schwab requires HTTPS for callback URLs; this script generates a
+    self-signed certificate at runtime for the local listener.
 """
 
 import json
 import os
+import ssl
 import sys
+import tempfile
+import subprocess
 import urllib.request
 import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 
 from schwab_auth import _TOKEN_URL, _TOKEN_FILE
 
-REDIRECT_URI = "http://localhost:8787/callback"
+REDIRECT_URI = "https://127.0.0.1:8182"
 AUTH_BASE = "https://api.schwabapi.com/v1/oauth/authorize"
-LOCAL_PORT = 8787
+LOCAL_HOST = "127.0.0.1"
+LOCAL_PORT = 8182
+
+
+def _generate_self_signed_cert(tmp_dir: Path) -> tuple[Path, Path]:
+    """Generate a self-signed cert + key using openssl.
+
+    Returns (cert_path, key_path). Falls back to Python's ssl module
+    if openssl is not available (though openssl is standard on macOS/Linux).
+    """
+    cert_path = tmp_dir / "schwab_callback.crt"
+    key_path = tmp_dir / "schwab_callback.key"
+
+    cmd = [
+        "openssl", "req", "-x509", "-newkey", "rsa:2048",
+        "-keyout", str(key_path),
+        "-out", str(cert_path),
+        "-days", "1", "-nodes",
+        "-subj", "/CN=127.0.0.1",
+        "-addext", "subjectAltName=IP:127.0.0.1",
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=10)
+    except FileNotFoundError:
+        print("ERROR: openssl not found. Install it via Homebrew: brew install openssl")
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: Failed to generate self-signed cert: {e.stderr.decode()}")
+        sys.exit(1)
+
+    return cert_path, key_path
 
 
 def build_auth_url(client_id: str) -> str:
@@ -104,12 +139,21 @@ def main():
     print(f"\n1. Open this URL in your browser:\n")
     print(f"   {auth_url}\n")
     print("2. Log in to your Schwab account and authorize the app.")
-    print("3. You'll be redirected back — we'll capture the code automatically.\n")
+    print(f"3. You'll be redirected to {REDIRECT_URI} — we'll capture the code.")
+    print("   (Your browser will warn about the self-signed cert — click Advanced → Proceed.)\n")
 
-    # Start local server to capture callback
-    server = HTTPServer(("localhost", LOCAL_PORT), CallbackHandler)
-    print(f"   Waiting for callback on http://localhost:{LOCAL_PORT}...")
-    server.handle_request()  # Handle one request (the callback)
+    # Generate self-signed cert for HTTPS callback listener
+    with tempfile.TemporaryDirectory(prefix="schwab_oauth_") as tmp:
+        tmp_dir = Path(tmp)
+        cert_path, key_path = _generate_self_signed_cert(tmp_dir)
+
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_ctx.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+
+        server = HTTPServer((LOCAL_HOST, LOCAL_PORT), CallbackHandler)
+        server.socket = ssl_ctx.wrap_socket(server.socket, server_side=True)
+        print(f"   Waiting for callback on {REDIRECT_URI}...")
+        server.handle_request()  # Handle one request (the callback)
 
     code = CallbackHandler.captured_code
     if not code:
