@@ -358,7 +358,8 @@ class CryptoFallbackProvider:
 
     # Symbols that are crypto (same set as scan_core.CRYPTO_SYMBOLS)
     CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "DOGE", "AVAX", "ADA", "DOT", "LINK", "MATIC",
-                      "UNI", "ATOM", "NEAR", "APT", "OP", "ARB", "INJ", "TIA", "SUI"}
+                      "UNI", "ATOM", "NEAR", "APT", "OP", "ARB", "INJ", "TIA", "SUI",
+                      "LTC", "BCH", "XRP"}
 
     def __init__(self):
         self._hyperliquid = HyperliquidProvider()

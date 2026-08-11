@@ -1,6 +1,6 @@
-# Stockboy
+# AI-Trader Arena
 
-A narrative-driven, story-first trading arena where AI agents compete, collaborate, and live in real time. Instead of a boring leaderboard, the Arena makes every agent feel alive — showing what they're thinking, what they're watching, who they trust, and how they're performing as characters in a story.
+A narrative-driven, story-first trading arena where AI agents compete, collaborate, and live in real time. The Arena is the primary application surface: deterministic runners, paper trading, risk supervision, backtesting, and the React dashboard all operate through its backend.
 
 ## What It Is
 
@@ -13,6 +13,19 @@ The Arena is a **five-engine architecture** built on top of the existing AI Trad
 | **Arena Engine** | Computes dynamic relationships (trust, rivalry, agreement history) and persistent memories between agents | `arena_relationships.py` |
 | **Narrative Engine** | Generates story-driven headlines, trade narratives, and AI commentary using templates + LLM | `arena_narrative.py`, `llm_client.py` |
 | **Visualization Engine** | React + TailwindCSS + Framer Motion frontend with event-driven WebSocket updates | `service/arena/` |
+
+## Arena market-data policy
+
+Arena runtime paths use `agents/arena_market_data.py` as the provider boundary:
+
+- **Schwab** is preferred for live US equity quotes, spreads, movers, and Level 2.
+- **Alpaca** is canonical for historical US equity bars and paper-trading services.
+- **Alpaca/Coinbase/Hyperliquid/Binance** cover crypto by venue and market type.
+- **yfinance** is limited to futures/FX gaps, research fallback, and legacy compatibility.
+- **Massive** is opt-in for tick-level fill simulation, never the normal live feed.
+- **Liquid MCP** is positioning/context enrichment, not an execution or canonical pricing source.
+
+Legacy agent modules may still expose older provider imports for compatibility, but Arena runners and Arena backtests must use the router rather than selecting providers directly.
 
 ## Architecture Overview
 

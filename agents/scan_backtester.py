@@ -21,7 +21,7 @@ import pandas as pd
 import scan_core
 from backtest_report import BacktestReport, TradeRecord
 from execution_simulator import FillConfig, simulate_entry, simulate_exit
-from market_data import MarketDataProvider, get_default_equity_provider
+from arena_market_data import ArenaMarketDataProvider, get_arena_market_data
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ class ScanBacktester:
         slippage_bps: float = 0.0,
         goal_target: Optional[float] = None,
         goal_max_loss: Optional[float] = None,
-        provider: MarketDataProvider | None = None,
+        provider: ArenaMarketDataProvider | None = None,
         fill_config: FillConfig | None = None,
     ):
         self.symbols = symbols
@@ -106,7 +106,7 @@ class ScanBacktester:
         self.goal_target = goal_target if goal_target is not None else initial_capital * 0.10
         self.goal_max_loss = goal_max_loss
         self.goal_active = goal_target is not None or goal_max_loss is not None
-        self.provider = provider or get_default_equity_provider()
+        self.provider = provider or get_arena_market_data()
 
     # ─── Historical data fetching ──────────────────────────────────
 
@@ -115,9 +115,9 @@ class ScanBacktester:
         try:
             yf_symbol = scan_core.yf_ticker(symbol)
             is_intraday = self.interval != "1d"
-            # yfinance clamps intraday history to ~60d; non-yfinance providers
-            # (Alpaca, crypto exchanges) don't have this limit, so skip clamping.
-            is_yfinance = type(self.provider).__name__ == "YFinanceProvider"
+            # The Arena router uses provider-native history limits. Only its
+            # explicit research fallback needs yfinance's intraday clamp.
+            is_yfinance = getattr(self.provider, "uses_yfinance_fallback", False)
 
             if is_intraday:
                 now = datetime.now()

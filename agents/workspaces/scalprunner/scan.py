@@ -36,8 +36,9 @@ if _AGENTS_DIR not in sys.path:
 
 import scalp_scan_core
 from scalp_scan_core import SCALP_DEFAULT_PARAMS, deep_merge
-from market_data import YFinanceProvider, SchwabProvider, get_schwab_provider
-from market_data import AlpacaRealtimeProvider, get_alpaca_provider
+from arena_market_data import get_arena_market_data
+from schwab_provider import get_schwab_provider
+from alpaca_realtime_provider import get_alpaca_provider
 
 # Default equity universe for the scanner (broad sweep)
 _SCANNER_UNIVERSE = [
@@ -87,60 +88,24 @@ def _load_config(token: Optional[str], inline_config: Optional[str]) -> dict[str
 # ============================================================
 
 def _fetch_history(symbol: str, interval: str, lookback_bars: int = 200) -> Optional[pd.DataFrame]:
-    """Fetch OHLCV history. Tries Alpaca → Schwab → yfinance."""
-    # Use at least 5d to ensure we get data over weekends/holidays
+    """Fetch Arena history through the canonical provider router."""
     period = "5d" if interval in ("1m", "5m", "15m") else "1mo"
-
-    # Try Alpaca first (real-time, free tier, data back to 2016)
-    alpaca = get_alpaca_provider()
-    if alpaca.is_configured:
-        try:
-            df = alpaca.history(symbol, period=period, interval=interval)
-            if df is not None and not df.empty and len(df) >= 30:
-                return df.tail(lookback_bars)
-        except Exception as e:
-            print(f"[ScalpScan] Alpaca history failed for {symbol} {interval}: {e}")
-
-    # Try Schwab
-    provider = get_schwab_provider()
-    if provider.is_configured:
-        try:
-            df = provider.history(symbol, period=period, interval=interval)
-            if df is not None and not df.empty and len(df) >= 30:
-                return df.tail(lookback_bars)
-        except Exception as e:
-            print(f"[ScalpScan] Schwab history failed for {symbol} {interval}: {e}")
-
-    # Fallback to yfinance
     try:
-        yf_provider = YFinanceProvider()
-        df = yf_provider.history(symbol, period=period, interval=interval)
-        if df is not None and not df.empty:
+        df = get_arena_market_data().history(symbol, period=period, interval=interval)
+        if df is not None and not df.empty and len(df) >= 30:
             return df.tail(lookback_bars)
     except Exception as e:
-        print(f"[ScalpScan] yfinance history failed for {symbol} {interval}: {e}")
-
+        print(f"[ScalpScan] history failed for {symbol} {interval}: {e}")
     return None
 
 
 def _fetch_quote(symbol: str) -> Optional[dict]:
-    """Fetch real-time quote. Tries Alpaca → Schwab, falls back to None."""
-    alpaca = get_alpaca_provider()
-    if alpaca.is_configured:
-        try:
-            q = alpaca.quote(symbol)
-            if q and q.get("last", 0) > 0:
-                return q
-        except Exception:
-            pass
-
-    provider = get_schwab_provider()
-    if provider.is_configured:
-        try:
-            return provider.quote(symbol)
-        except Exception:
-            pass
-    return None
+    """Fetch a live quote through Schwab-first Arena routing."""
+    try:
+        quote = get_arena_market_data().quote(symbol)
+        return quote if quote and quote.get("last", 0) > 0 else None
+    except Exception:
+        return None
 
 
 def _fetch_level2(symbol: str) -> Optional[dict]:
@@ -183,8 +148,25 @@ def _discover_shortlist(params: dict, token: Optional[str] = None) -> list[str]:
     max_shortlist = discovery_cfg.get("max_shortlist", 15)
     candidates: dict[str, dict] = {}
 
-    # 1a. Alpaca Movers (screen universe for top gainers/losers via snapshots)
+    # 1a. Schwab movers are the live-equity discovery source.
     if discovery_cfg.get("movers_enabled", True):
+        provider = get_schwab_provider()
+        if provider.is_configured:
+            try:
+                movers = provider.movers_all()
+                for m in movers:
+                    sym = m.get("symbol", "")
+                    if sym and sym not in candidates:
+                        candidates[sym] = {
+                            "symbol": sym,
+                            "change_pct": abs(m.get("change_pct", 0)),
+                            "source": "schwab_movers",
+                        }
+            except Exception as e:
+                print(f"[ScalpScan] Schwab movers failed: {e}")
+
+    # Alpaca snapshots remain the discovery fallback.
+    if discovery_cfg.get("movers_enabled", True) and not candidates:
         alpaca = get_alpaca_provider()
         if alpaca.is_configured:
             try:
@@ -198,24 +180,7 @@ def _discover_shortlist(params: dict, token: Optional[str] = None) -> list[str]:
                             "source": "alpaca_movers",
                         }
             except Exception as e:
-                print(f"[ScalpScan] Alpaca movers screen failed: {e}")
-
-    # 1a-2. Schwab Movers (fallback if Alpaca unavailable)
-    if discovery_cfg.get("movers_enabled", True) and not candidates:
-        provider = get_schwab_provider()
-        if provider.is_configured:
-            try:
-                movers = provider.movers_all()
-                for m in movers:
-                    sym = m.get("symbol", "")
-                    if sym and sym not in candidates:
-                        candidates[sym] = {
-                            "symbol": sym,
-                            "change_pct": abs(m.get("change_pct", 0)),
-                            "source": "movers",
-                        }
-            except Exception as e:
-                print(f"[ScalpScan] Movers fetch failed: {e}")
+                print(f"[ScalpScan] Alpaca movers failed: {e}")
 
     # 1b. Platform News (extract tickers from recent news)
     if discovery_cfg.get("news_enabled", True) and token:

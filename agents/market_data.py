@@ -1,9 +1,15 @@
 """
-Market Data Module
+Market Data Module (LEGACY)
 
-Fetches news from the AI-Trader platform API and price/technical data
-from yfinance. Provides a unified interface for agents to get both
-fundamental (news/sentiment) and technical (charts/indicators) data.
+LEGACY PROVIDER MODULE - kept for original AI-Trader platform agent
+compatibility only. New Arena runners and backtests should use
+`arena_market_data` instead of importing from this file directly.
+
+This module still fetches news from the AI-Trader platform API and
+price/technical data from yfinance, but its provider selection logic is
+intentionally simple and does not reflect the consolidated Alpaca/Schwab
+routing used by the Arena runtime. See docs/MARKET_DATA_PROVIDERS.md for
+current provider policy.
 """
 
 import os

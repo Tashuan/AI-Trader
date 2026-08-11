@@ -19,7 +19,7 @@ import pandas as pd
 import scalp_scan_core as core
 from backtest_report import BacktestReport, TradeRecord
 from execution_simulator import FillConfig, FillResult, simulate_entry, simulate_exit
-from market_data import MarketDataProvider, get_default_equity_provider
+from arena_market_data import ArenaMarketDataProvider, get_arena_market_data
 from strategy_registry import position_notional
 
 logger = logging.getLogger(__name__)
@@ -77,8 +77,8 @@ class ScalpScanBacktester:
         Starting portfolio value.
     slippage_bps : float
         Slippage applied to fills (adverse direction).
-    provider : MarketDataProvider | None
-        Optional data provider; defaults to YFinanceProvider.
+    provider : ArenaMarketDataProvider | None
+        Optional data provider; defaults to the Arena provider router.
     goal_target : float | None
         Dollar profit target for goal-aware sizing.
     goal_max_loss : float | None
@@ -97,7 +97,7 @@ class ScalpScanBacktester:
         end_date: str = "",
         initial_capital: float = 100_000.0,
         slippage_bps: float = 2.0,
-        provider: MarketDataProvider | None = None,
+        provider: ArenaMarketDataProvider | None = None,
         goal_target: float | None = None,
         goal_max_loss: float | None = None,
         base_interval: str = "1m",
@@ -110,7 +110,7 @@ class ScalpScanBacktester:
         self.end_date = end_date
         self.initial_capital = initial_capital
         self.slippage_bps = slippage_bps
-        self.provider = provider or get_default_equity_provider()
+        self.provider = provider or get_arena_market_data()
         self.goal_target = goal_target
         self.goal_max_loss = goal_max_loss
         self.goal_active = goal_target is not None or goal_max_loss is not None

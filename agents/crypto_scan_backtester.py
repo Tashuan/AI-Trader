@@ -15,7 +15,7 @@ import crypto_scan_core as core
 from backtest_report import BacktestReport, TradeRecord
 from execution_simulator import FillConfig, simulate_entry, simulate_exit
 from strategy_registry import position_notional
-from market_data import MarketDataProvider, YFinanceProvider
+from arena_market_data import ArenaMarketDataProvider, get_arena_market_data
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class CryptoScanBacktester:
         interval: str = "4h",
         slippage_bps: float = 5.0,
         fee_rate: float = 0.001,
-        provider: MarketDataProvider | None = None,
+        provider: ArenaMarketDataProvider | None = None,
         goal_target: float | None = None,
         goal_max_loss: float | None = None,
         fill_config: FillConfig | None = None,
@@ -50,7 +50,7 @@ class CryptoScanBacktester:
             slippage_bps=slippage_bps, fee_rate=fee_rate,
             market="crypto", interval=self.interval,
         )
-        self.provider = provider or YFinanceProvider()
+        self.provider = provider or get_arena_market_data()
         self.goal_target = goal_target
         self.goal_max_loss = goal_max_loss
         self.goal_active = goal_target is not None or goal_max_loss is not None

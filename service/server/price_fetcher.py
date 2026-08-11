@@ -994,21 +994,18 @@ def get_price_from_market(
             price = _get_polymarket_mid_price(symbol, token_id=token_id, outcome=outcome)
         elif market == "us-stock":
             price = None
-            # Try Alpaca first (real-time trades + quotes, free tier)
-            alpaca_price = _get_alpaca_stock_price(symbol)
-            if alpaca_price is not None:
-                price = alpaca_price
-            # Try Schwab next (real-time, if configured)
-            elif True:
-                schwab_price = _get_schwab_stock_price(symbol)
-                if schwab_price is not None:
-                    price = schwab_price
+            # Schwab is the Arena live-equity source; Alpaca is the fallback.
+            schwab_price = _get_schwab_stock_price(symbol)
+            if schwab_price is not None:
+                price = schwab_price
+            else:
+                alpaca_price = _get_alpaca_stock_price(symbol)
+                if alpaca_price is not None:
+                    price = alpaca_price
                 elif ALPHA_VANTAGE_API_KEY and ALPHA_VANTAGE_API_KEY != "demo":
                     price = _get_us_stock_price(symbol, executed_at)
-                else:
-                    _price_log("Warning: ALPHA_VANTAGE_API_KEY not set, trying yfinance fallback")
             if price is None:
-                _price_log(f"[Price API] Alpaca/Schwab/Alpha Vantage unavailable for {symbol}; trying yfinance fallback")
+                _price_log(f"[Price API] Schwab/Alpaca/Alpha Vantage unavailable for {symbol}; trying yfinance fallback")
                 price = _get_yfinance_us_stock_price(symbol, executed_at)
         elif market == "forex":
             price = _get_forex_price(symbol, executed_at)

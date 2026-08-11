@@ -35,9 +35,9 @@ _AGENTS_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 if _AGENTS_DIR not in sys.path:
     sys.path.insert(0, _AGENTS_DIR)
 import scan_core
-from market_data import MarketDataProvider, YFinanceProvider
+from arena_market_data import ArenaMarketDataProvider, get_arena_market_data
 
-_DATA_PROVIDER: MarketDataProvider = YFinanceProvider()
+_DATA_PROVIDER: ArenaMarketDataProvider = get_arena_market_data()
 
 
 # ============================================================
