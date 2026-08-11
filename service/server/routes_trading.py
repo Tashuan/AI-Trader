@@ -1,3 +1,4 @@
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -642,9 +643,18 @@ def register_trading_routes(app: FastAPI, ctx: RouteContext) -> None:
         positions = []
         now_str = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         resolved_prices = resolve_position_prices(rows, now_str)
+        try:
+            from alpaca_broker import get_alpaca_broker_for_agent
+            alpaca_broker = get_alpaca_broker_for_agent(agent['id'])
+        except Exception:
+            alpaca_broker = None
 
         for row in rows:
             current_price = resolved_prices.get(position_price_cache_key(row))
+            if row['market'] == 'us-stock' and row.get('alpaca_managed') and alpaca_broker:
+                alpaca_position = await asyncio.to_thread(alpaca_broker.get_position_cached, row['symbol'])
+                if alpaca_position:
+                    current_price = float(alpaca_position.get('current_price') or current_price or 0) or current_price
             pnl = None
             if current_price and row['entry_price']:
                 if row['side'] == 'long':
@@ -652,7 +662,7 @@ def register_trading_routes(app: FastAPI, ctx: RouteContext) -> None:
                 else:
                     pnl = (row['entry_price'] - current_price) * abs(row['quantity'])
 
-            source = 'self' if row['leader_id'] is None else f"copied:{row['leader_id']}"
+            source = 'alpaca' if row.get('alpaca_managed') else ('self' if row['leader_id'] is None else f"copied:{row['leader_id']}")
             positions.append({
                 'id': row['id'],
                 'symbol': row['symbol'],

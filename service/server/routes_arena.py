@@ -703,6 +703,20 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
         for row in pos_rows:
             pos = dict(row)
             pos['current_price'] = resolved_prices.get(position_price_cache_key(row), row['current_price'])
+            if pos.get('market') == 'us-stock' and pos.get('alpaca_managed'):
+                try:
+                    from alpaca_broker import get_alpaca_broker_for_agent
+                    broker = get_alpaca_broker_for_agent(agent_id)
+                    if broker:
+                        alpaca_pos = await asyncio.to_thread(broker.get_position_cached, pos['symbol'])
+                        if alpaca_pos:
+                            pos['quantity'] = float(alpaca_pos.get('qty') or pos['quantity'])
+                            pos['entry_price'] = float(alpaca_pos.get('avg_entry_price') or pos['entry_price'])
+                            pos['current_price'] = float(alpaca_pos.get('current_price') or pos['current_price'])
+                            pos['unrealized_pl'] = alpaca_pos.get('unrealized_pl')
+                            pos['data_source'] = 'alpaca'
+                except Exception as exc:
+                    pos['data_source_error'] = str(exc)
             positions.append(pos)
 
         # Recent trades (operation + auto-close signals)

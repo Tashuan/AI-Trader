@@ -1,3 +1,5 @@
+import asyncio
+import json
 import math
 import time
 from datetime import datetime, timedelta, timezone
@@ -315,6 +317,18 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         reward_context = experiment_contexts[0] if experiment_contexts else None
         reward_metadata: dict[str, Any] = {'reward_mode': 'fixed', 'base_points': SIGNAL_PUBLISH_REWARD}
 
+        alpaca_broker = None
+        alpaca_managed = market == 'us-stock'
+        if alpaca_managed:
+            try:
+                from alpaca_broker import get_alpaca_broker_for_agent
+                alpaca_broker = get_alpaca_broker_for_agent(agent_id)
+                alpaca_managed = alpaca_broker is not None and alpaca_broker.enabled
+            except Exception as exc:
+                print(f"[Alpaca] broker lookup failed for agent {agent_id}: {exc}")
+                alpaca_broker = None
+                alpaca_managed = False
+
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
@@ -362,6 +376,45 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                     if qty > abs(current_qty) + 1e-12:
                         raise HTTPException(status_code=400, detail='Insufficient short position quantity')
 
+            alpaca_execution = None
+            alpaca_pending = False
+            if alpaca_managed and alpaca_broker is not None and market == 'us-stock':
+                client_order_id = f"ai-trader:{agent_id}:{signal_id}"
+                try:
+                    alpaca_execution = await __import__('asyncio').to_thread(
+                        alpaca_broker.execute_order,
+                        symbol=symbol,
+                        quantity=qty,
+                        action=action_lower,
+                        client_order_id=client_order_id,
+                        order_type=data.order_type or 'market',
+                        limit_price=data.limit_price,
+                        stop_loss_price=stop_loss_price if action_lower in ('buy', 'short') else None,
+                        take_profit_price=take_profit_price if action_lower in ('buy', 'short') else None,
+                    ) if action_lower in ('buy', 'short') else await __import__('asyncio').to_thread(
+                        alpaca_broker.execute_close,
+                        symbol=symbol,
+                        quantity=qty,
+                        side='long' if action_lower == 'sell' else 'short',
+                        client_order_id=client_order_id,
+                    )
+                except Exception as exc:
+                    raise HTTPException(status_code=502, detail=f'Alpaca execution failed: {exc}') from exc
+                execution_status = alpaca_execution.get('status')
+                if execution_status in {'rejected', 'cancelled', 'expired'}:
+                    raise HTTPException(status_code=422, detail=alpaca_execution.get('error', f'Alpaca order {execution_status}'))
+                if execution_status not in {'filled', 'partially_filled'}:
+                    raise HTTPException(status_code=202, detail={
+                        'status': execution_status or 'unknown',
+                        'alpaca_order_id': alpaca_execution.get('alpaca_order_id'),
+                    })
+                actual_qty = float(alpaca_execution.get('filled_qty') or qty)
+                actual_fill_price = float(alpaca_execution.get('filled_price') or price)
+                qty = actual_qty
+                fill_price = actual_fill_price
+                trade_value = fill_price * qty
+                fee = trade_value * TRADE_FEE_RATE
+
             if action_lower in ['buy', 'short']:
                 total_deduction = trade_value + fee
                 cursor.execute('SELECT cash FROM agents WHERE id = ?', (agent_id,))
@@ -399,6 +452,33 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 ),
             )
 
+            if alpaca_managed and alpaca_execution:
+                execution_order = alpaca_execution.get('order') or {}
+                cursor.execute(
+                    """
+                    INSERT INTO alpaca_order_executions
+                    (agent_id, signal_id, alpaca_order_id, alpaca_parent_order_id,
+                     client_order_id, symbol, market, side, order_role, status,
+                     requested_qty, filled_qty, filled_avg_price, requested_price,
+                     stop_loss_price, take_profit_price, submitted_at, filled_at,
+                     raw_order_json, last_error)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        agent_id, signal_id, alpaca_execution.get('alpaca_order_id'),
+                        execution_order.get('parent_order_id'),
+                        alpaca_execution.get('client_order_id'), symbol, market, side,
+                        'entry' if action_lower in ('buy', 'short') else 'exit',
+                        alpaca_execution.get('status', 'unknown'), data.quantity,
+                        alpaca_execution.get('filled_qty', 0), alpaca_execution.get('filled_price'),
+                        price, stop_loss_price, take_profit_price,
+                        now if alpaca_execution.get('alpaca_order_id') else None,
+                        executed_at if alpaca_execution.get('status') == 'filled' else None,
+                        json.dumps(execution_order) if execution_order else None,
+                        alpaca_execution.get('error'),
+                    ),
+                )
+
             _update_position_from_signal(
                 agent_id,
                 symbol,
@@ -415,16 +495,23 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 trailing_sl_pct=data.trailing_sl_pct,
                 trailing_activation_pct=data.trailing_activation_pct,
             )
+            if alpaca_managed and alpaca_execution and action_lower in ('buy', 'short'):
+                cursor.execute(
+                    "UPDATE positions SET alpaca_managed = 1, alpaca_order_id = ?, alpaca_client_order_id = ? "
+                    "WHERE agent_id = ? AND market = ? AND symbol = ?",
+                    (alpaca_execution.get('alpaca_order_id'), alpaca_execution.get('client_order_id'), agent_id, market, symbol),
+                )
 
-            if action_lower in ['buy', 'short']:
-                cursor.execute('UPDATE agents SET cash = cash - ? WHERE id = ?', (trade_value + fee, agent_id))
-            elif action_lower == 'sell':
-                cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (trade_value - fee, agent_id))
-            else:
-                if position_entry_price is None:
-                    raise HTTPException(status_code=400, detail='Short position entry price is missing')
-                cover_credit = ((2 * position_entry_price) - fill_price) * qty - fee
-                cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (cover_credit, agent_id))
+            if not alpaca_managed:
+                if action_lower in ['buy', 'short']:
+                    cursor.execute('UPDATE agents SET cash = cash - ? WHERE id = ?', (trade_value + fee, agent_id))
+                elif action_lower == 'sell':
+                    cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (trade_value - fee, agent_id))
+                else:
+                    if position_entry_price is None:
+                        raise HTTPException(status_code=400, detail='Short position entry price is missing')
+                    cover_credit = ((2 * position_entry_price) - fill_price) * qty - fee
+                    cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (cover_credit, agent_id))
 
             signal_quality = score_signal_quality(
                 {
@@ -648,6 +735,13 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
 
             conn.commit()
             conn.close()
+        except HTTPException:
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
+            raise
         except Exception:
             try:
                 conn.rollback()
@@ -689,6 +783,8 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         }
         if market == 'polymarket':
             decorate_polymarket_item(payload, fetch_remote=fetch_price_in_request)
+        payload['alpaca_managed'] = bool(alpaca_managed)
+        payload['alpaca_mirror_queued'] = False
         return attach_experiment_unread_notice(payload, agent_id, ctx=ctx)
 
     @app.post('/api/signals/strategy')
@@ -2031,3 +2127,209 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
             )
 
         return {'success': True, 'reply_id': reply_id, 'points_earned': points_earned}
+
+    # ─── Alpaca mirror status & sync ──────────────────────────────
+
+    @app.get('/api/alpaca/status')
+    @app.get('/api/alpaca-mirror/status')
+    async def alpaca_mirror_status():
+        """Check if Alpaca paper trade mirroring is enabled and connected."""
+        from alpaca_broker import get_alpaca_broker
+        broker = get_alpaca_broker()
+        if not broker.configured:
+            return {
+                'enabled': False,
+                'configured': False,
+                'message': 'Alpaca API keys not set. Add APCA_API_KEY_ID / APCA_API_SECRET_KEY to .env',
+            }
+        if not broker.enabled:
+            return {
+                'enabled': False,
+                'configured': True,
+                'message': 'Set ALPACA_MIRROR_TRADES=true in .env to enable mirroring',
+            }
+        account = broker.get_account()
+        if account is None:
+            return {
+                'enabled': True,
+                'configured': True,
+                'connected': False,
+                'message': 'Failed to connect to Alpaca paper trading API',
+            }
+        return {
+            'enabled': True,
+            'configured': True,
+            'connected': True,
+            'account': {
+                'id': account.get('id'),
+                'equity': account.get('equity'),
+                'cash': account.get('cash'),
+                'buying_power': account.get('buying_power'),
+                'status': account.get('status'),
+            },
+        }
+
+    @app.get('/api/alpaca/positions')
+    @app.get('/api/alpaca-mirror/positions')
+    async def alpaca_mirror_positions():
+        """List all open positions on Alpaca paper account."""
+        from alpaca_broker import get_alpaca_broker
+        broker = get_alpaca_broker()
+        if not broker.enabled:
+            return {'enabled': False, 'positions': []}
+        positions = broker.list_positions()
+        return {'enabled': True, 'positions': positions}
+
+    @app.get('/api/alpaca/orders')
+    @app.get('/api/alpaca-mirror/orders')
+    async def alpaca_mirror_orders(status: str = 'open'):
+        """List orders on Alpaca paper account (default: open orders)."""
+        from alpaca_broker import get_alpaca_broker
+        broker = get_alpaca_broker()
+        if not broker.enabled:
+            return {'enabled': False, 'orders': []}
+        orders = broker.list_orders(status=status)
+        return {'enabled': True, 'orders': orders}
+
+    @app.get('/api/alpaca-mirror/sync')
+    async def alpaca_mirror_sync():
+        """Side-by-side comparison of internal vs Alpaca positions with drift report."""
+        from alpaca_broker import get_alpaca_broker
+        from database import get_db_connection
+        broker = get_alpaca_broker()
+        if not broker.enabled:
+            return {'enabled': False, 'message': 'Alpaca mirroring not enabled'}
+
+        # Fetch internal US-equity positions
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT p.symbol, p.side, p.quantity, p.entry_price, p.current_price,
+                       p.stop_loss_price, p.take_profit_price, a.name as agent_name
+                FROM positions p
+                JOIN agents a ON a.id = p.agent_id
+                WHERE p.market = 'us-stock'
+            """)
+            internal_rows = cursor.fetchall()
+        finally:
+            conn.close()
+
+        internal_positions = [dict(row) for row in internal_rows]
+        result = broker.reconcile_positions(internal_positions)
+
+        return {
+            'enabled': True,
+            'internal_count': len(internal_positions),
+            'reconciliation': result,
+        }
+
+    @app.post('/api/alpaca-mirror/force-sync')
+    async def alpaca_mirror_force_sync():
+        """Force-align: close internal positions that Alpaca doesn't have,
+        and re-submit entries for positions Alpaca has but internal doesn't."""
+        from alpaca_broker import get_alpaca_broker
+        from database import get_db_connection
+        from services import _update_position_from_signal, _reserve_signal_id
+        broker = get_alpaca_broker()
+        if not broker.enabled:
+            return {'enabled': False, 'message': 'Alpaca mirroring not enabled'}
+
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT p.id, p.agent_id, p.symbol, p.side, p.quantity, p.entry_price,
+                       p.stop_loss_price, p.take_profit_price, a.name as agent_name
+                FROM positions p
+                JOIN agents a ON a.id = p.agent_id
+                WHERE p.market = 'us-stock'
+            """)
+            internal_rows = cursor.fetchall()
+        finally:
+            conn.close()
+
+        internal_positions = [dict(row) for row in internal_rows]
+        result = broker.reconcile_positions(internal_positions)
+        actions_taken = []
+
+        # Close internal positions that Alpaca already closed
+        for entry in result.get('internal_only', []):
+            sym = entry['symbol']
+            internal_pos = entry['internal']
+            side = internal_pos.get('side', 'long')
+            qty = abs(float(internal_pos.get('quantity', 0)))
+
+            recent_orders = broker.get_recent_orders_for_symbol(sym, limit=10)
+            alpaca_fill_price = None
+            for order in recent_orders:
+                if order.get('status') == 'filled':
+                    order_side = order.get('side', '')
+                    if (side == 'long' and order_side == 'sell') or (side == 'short' and order_side == 'buy'):
+                        alpaca_fill_price = float(order.get('filled_avg_price', 0) or 0)
+                        break
+
+            if alpaca_fill_price and alpaca_fill_price > 0:
+                close_action = 'sell' if side == 'long' else 'cover'
+                now = datetime.now(timezone.utc)
+                executed_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    begin_write_transaction(cursor)
+                    _update_position_from_signal(
+                        agent_id=internal_pos['agent_id'],
+                        symbol=sym, market='us-stock',
+                        action=close_action, quantity=qty,
+                        price=alpaca_fill_price, executed_at=executed_at, cursor=cursor,
+                    )
+                    trade_value = alpaca_fill_price * qty
+                    if side == 'long':
+                        cursor.execute("UPDATE agents SET cash = cash + ? WHERE id = ?",
+                                       (trade_value, internal_pos['agent_id']))
+                    else:
+                        entry_price = float(internal_pos.get('entry_price', 0))
+                        cover_credit = ((2 * entry_price) - alpaca_fill_price) * qty
+                        cursor.execute("UPDATE agents SET cash = cash + ? WHERE id = ?",
+                                       (cover_credit, internal_pos['agent_id']))
+                    signal_id = _reserve_signal_id(cursor)
+                    cursor.execute(
+                        """INSERT INTO signals
+                            (signal_id, agent_id, message_type, market, signal_type,
+                             symbol, title, content, tags, timestamp, created_at, executed_at)
+                           VALUES (?, ?, 'trade', ?, 'alpaca_force_sync', ?, ?, ?, 'alpaca-sync,force', ?, ?, ?)""",
+                        (signal_id, internal_pos['agent_id'], 'us-stock', sym,
+                         f"Force sync: {sym} — closed to match Alpaca",
+                         f"Position closed by force-sync at Alpaca fill price {alpaca_fill_price}",
+                         int(now.timestamp()), now.isoformat(), executed_at),
+                    )
+                    conn.commit()
+                    actions_taken.append(f"Closed internal {sym} {side} {qty} @ {alpaca_fill_price}")
+                except Exception as exc:
+                    conn.rollback()
+                    actions_taken.append(f"FAILED to close {sym}: {exc}")
+                finally:
+                    conn.close()
+            else:
+                # Re-submit entry to Alpaca
+                broker.mirror_trade(
+                    action='buy' if side == 'long' else 'short',
+                    symbol=sym, quantity=qty, market='us-stock',
+                    order_type='market',
+                    stop_loss_price=internal_pos.get('stop_loss_price'),
+                    take_profit_price=internal_pos.get('take_profit_price'),
+                )
+                actions_taken.append(f"Re-submitted entry to Alpaca: {sym} {side} {qty}")
+
+        # Close Alpaca-only positions (Alpaca has, internal doesn't)
+        for entry in result.get('alpaca_only', []):
+            sym = entry['symbol']
+            broker.close_position(sym)
+            actions_taken.append(f"Closed Alpaca-only position {sym}")
+
+        return {
+            'enabled': True,
+            'actions': actions_taken,
+            'reconciliation': result['summary'],
+        }

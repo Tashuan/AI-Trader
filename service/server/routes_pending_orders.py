@@ -7,7 +7,9 @@ GET    /api/signals/pending/{id}     — Get single pending order
 DELETE /api/signals/pending/{id}     — Cancel a pending order
 """
 
+import asyncio
 import json
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
@@ -68,6 +70,27 @@ def register_pending_order_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         scan_json = json.dumps(data.scan_data) if data.scan_data else None
 
+        alpaca_broker = None
+        try:
+            from alpaca_broker import get_alpaca_broker_for_agent
+            alpaca_broker = get_alpaca_broker_for_agent(agent_id) if data.market == 'us-stock' else None
+        except Exception as exc:
+            print(f"[Alpaca] pending broker lookup failed: {exc}")
+        alpaca_managed = alpaca_broker is not None and alpaca_broker.enabled
+        client_order_id = f"ai-trader:pending:{agent_id}:{uuid.uuid4().hex[:12]}"
+        alpaca_order = None
+        if alpaca_managed:
+            alpaca_order = await asyncio.to_thread(
+                alpaca_broker.submit_order,
+                data.symbol,
+                data.quantity,
+                'buy' if data.side == 'long' else 'sell',
+                'stop_limit' if data.order_type == 'stop_limit' else 'stop',
+                'gtc', data.limit_price, data.stop_price, client_order_id,
+            )
+            if not alpaca_order:
+                raise HTTPException(status_code=422, detail='Alpaca rejected pending order')
+
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
@@ -75,13 +98,16 @@ def register_pending_order_routes(app: FastAPI, ctx: RouteContext) -> None:
                 """INSERT INTO pending_orders
                     (agent_id, symbol, market, side, order_type, stop_price, limit_price,
                      quantity, stop_loss_price, take_profit_price, trailing_sl_pct,
-                     trailing_activation_pct, status, created_at, expires_at, entry_score, scan_data)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)""",
+                     trailing_activation_pct, status, created_at, expires_at, entry_score, scan_data,
+                     alpaca_managed, alpaca_order_id, alpaca_client_order_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?, ?, ?)""",
                 (agent_id, data.symbol, data.market, data.side, data.order_type,
                  data.stop_price, data.limit_price, data.quantity,
                  data.stop_loss_price, data.take_profit_price,
                  data.trailing_sl_pct, data.trailing_activation_pct,
-                 utc_now_iso_z(), expires_at, data.entry_score, scan_json),
+                 utc_now_iso_z(), expires_at, data.entry_score, scan_json,
+                 int(alpaca_managed), alpaca_order.get('id') if alpaca_order else None,
+                 client_order_id if alpaca_managed else None),
             )
             order_id = cursor.lastrowid
             conn.commit()
@@ -178,8 +204,19 @@ def register_pending_order_routes(app: FastAPI, ctx: RouteContext) -> None:
             raise HTTPException(status_code=401, detail="Invalid token")
 
         conn = get_db_connection()
+        symbol = None
+        alpaca_order_id = None
+        alpaca_managed = False
         try:
             cursor = conn.cursor()
+            cursor.execute(
+                "SELECT symbol, alpaca_order_id, alpaca_managed FROM pending_orders WHERE id = ? AND agent_id = ? AND status = 'PENDING'",
+                (order_id, agent["id"]),
+            )
+            row = cursor.fetchone()
+            symbol = row["symbol"] if row else None
+            alpaca_order_id = row["alpaca_order_id"] if row else None
+            alpaca_managed = bool(row["alpaca_managed"]) if row else False
             cursor.execute(
                 """UPDATE pending_orders SET status = 'CANCELLED'
                    WHERE id = ? AND agent_id = ? AND status = 'PENDING'""",
@@ -196,5 +233,14 @@ def register_pending_order_routes(app: FastAPI, ctx: RouteContext) -> None:
             raise HTTPException(status_code=500, detail=f"Failed to cancel: {e}")
         finally:
             conn.close()
+
+        if alpaca_managed and alpaca_order_id:
+            try:
+                from alpaca_broker import get_alpaca_broker_for_agent
+                broker = get_alpaca_broker_for_agent(agent["id"])
+                if broker:
+                    await asyncio.to_thread(broker.cancel_order, alpaca_order_id)
+            except Exception as alpaca_err:
+                print(f"[Alpaca] pending order cancel failed: {alpaca_err}")
 
         return {"order_id": order_id, "status": "CANCELLED"}

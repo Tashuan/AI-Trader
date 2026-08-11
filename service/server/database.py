@@ -472,6 +472,20 @@ def init_database():
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alpaca_account_config (
+            agent_id INTEGER PRIMARY KEY,
+            alpaca_api_key TEXT NOT NULL,
+            alpaca_secret_key TEXT NOT NULL,
+            base_url TEXT NOT NULL DEFAULT 'https://paper-api.alpaca.markets/v2',
+            websocket_url TEXT NOT NULL DEFAULT 'wss://paper-api.alpaca.markets/stream',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS agent_leaderboard_exclusions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             agent_id INTEGER NOT NULL UNIQUE,
@@ -704,6 +718,62 @@ def init_database():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at TEXT DEFAULT (datetime('now'))
         )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alpaca_order_executions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            signal_id INTEGER,
+            position_id INTEGER,
+            pending_order_id INTEGER,
+            alpaca_order_id TEXT,
+            alpaca_parent_order_id TEXT,
+            client_order_id TEXT NOT NULL UNIQUE,
+            symbol TEXT NOT NULL,
+            market TEXT NOT NULL,
+            side TEXT NOT NULL,
+            order_role TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'intent_created',
+            requested_qty REAL NOT NULL,
+            filled_qty REAL NOT NULL DEFAULT 0,
+            filled_avg_price REAL,
+            requested_price REAL,
+            stop_loss_price REAL,
+            take_profit_price REAL,
+            submitted_at TEXT,
+            filled_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_event_id TEXT,
+            raw_order_json TEXT,
+            last_error TEXT,
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_alpaca_exec_agent_status
+        ON alpaca_order_executions(agent_id, status)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_alpaca_exec_order
+        ON alpaca_order_executions(alpaca_order_id)
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS alpaca_order_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            alpaca_order_id TEXT NOT NULL,
+            event_key TEXT NOT NULL UNIQUE,
+            event_type TEXT NOT NULL,
+            event_timestamp TEXT,
+            payload_json TEXT NOT NULL,
+            received_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (agent_id) REFERENCES agents(id)
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_alpaca_events_order
+        ON alpaca_order_events(agent_id, alpaca_order_id)
     """)
 
     cursor.execute("SELECT COALESCE(MAX(CAST(signal_id AS INTEGER)), 0) AS max_signal_id FROM signals WHERE CAST(signal_id AS TEXT) = CAST(CAST(signal_id AS INTEGER) AS TEXT) AND CAST(signal_id AS INTEGER) > 0")
@@ -1338,6 +1408,16 @@ def init_database():
         cursor.execute("ALTER TABLE positions ADD COLUMN current_price_updated_at TEXT")
     except Exception:
         pass
+
+    for column, definition in (
+        ("alpaca_managed", "INTEGER DEFAULT 0"),
+        ("alpaca_order_id", "TEXT"),
+        ("alpaca_client_order_id", "TEXT"),
+    ):
+        try:
+            cursor.execute(f"ALTER TABLE positions ADD COLUMN {column} {definition}")
+        except Exception:
+            pass
 
     # Goal Runner: position state columns for deterministic cycle tracking
     try:
@@ -2107,6 +2187,16 @@ def init_database():
         CREATE INDEX IF NOT EXISTS idx_pending_orders_agent_status
         ON pending_orders(agent_id, status)
     """)
+
+    for column, definition in (
+        ("alpaca_managed", "INTEGER DEFAULT 0"),
+        ("alpaca_order_id", "TEXT"),
+        ("alpaca_client_order_id", "TEXT"),
+    ):
+        try:
+            cursor.execute(f"ALTER TABLE pending_orders ADD COLUMN {column} {definition}")
+        except Exception:
+            pass
 
     # ── StockBoy supervisor tables ───────────────────────────────────
     # Single-row supervisor state: enabled, mode, heartbeat, kill switch.
