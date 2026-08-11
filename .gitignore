@@ -140,3 +140,6 @@ change.md
 # Runtime data caches
 .data_cache/
 agents/workspaces/stockboy/.supervisor_token
+
+# Database files
+*.db
