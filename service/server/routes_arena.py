@@ -693,7 +693,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         # Positions
         cursor.execute(
-            "SELECT symbol, market, token_id, outcome, side, quantity, entry_price, current_price, opened_at, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct, peak_favorable_price, trailing_activated FROM positions WHERE agent_id = ?",
+            "SELECT symbol, market, token_id, outcome, side, quantity, entry_price, current_price, opened_at, COALESCE(alpaca_managed, 0) AS alpaca_managed, stop_loss_price, take_profit_price, trailing_sl_pct, trailing_activation_pct, peak_favorable_price, trailing_activated FROM positions WHERE agent_id = ?",
             (agent_id,),
         )
         pos_rows = cursor.fetchall()
@@ -815,6 +815,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 """
                 SELECT p.agent_id, a.name as agent_name, p.symbol, p.market, p.token_id, p.outcome, p.side,
                        p.quantity, p.entry_price, p.current_price, p.opened_at,
+                       COALESCE(p.alpaca_managed, 0) AS alpaca_managed,
                        p.stop_loss_price, p.take_profit_price,
                        p.trailing_sl_pct, p.trailing_activation_pct, p.peak_favorable_price, p.trailing_activated
                 FROM positions p
@@ -829,6 +830,7 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 """
                 SELECT p.agent_id, a.name as agent_name, p.symbol, p.market, p.token_id, p.outcome, p.side,
                        p.quantity, p.entry_price, p.current_price, p.opened_at,
+                       COALESCE(p.alpaca_managed, 0) AS alpaca_managed,
                        p.stop_loss_price, p.take_profit_price,
                        p.trailing_sl_pct, p.trailing_activation_pct, p.peak_favorable_price, p.trailing_activated
                 FROM positions p
@@ -848,6 +850,25 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             entry_price = row["entry_price"]
             current_price = resolved_prices.get(position_price_cache_key(row), row["current_price"])
             quantity = abs(row["quantity"]) if row["quantity"] else 0
+            data_source = "database"
+            data_source_error = None
+            alpaca_managed = bool(row["alpaca_managed"])
+            if alpaca_managed and row["market"] == "us-stock":
+                try:
+                    from alpaca_broker import get_alpaca_broker_for_agent
+                    broker = get_alpaca_broker_for_agent(row["agent_id"])
+                    alpaca_pos = await asyncio.to_thread(
+                        broker.get_position_cached, row["symbol"]
+                    ) if broker else None
+                    if alpaca_pos:
+                        quantity = abs(float(alpaca_pos.get("qty") or quantity))
+                        entry_price = float(alpaca_pos.get("avg_entry_price") or entry_price)
+                        current_price = float(alpaca_pos.get("current_price") or current_price)
+                        data_source = "alpaca"
+                    else:
+                        data_source_error = "Managed position is missing from Alpaca"
+                except Exception as exc:
+                    data_source_error = str(exc)
             pnl = 0
             pnl_pct = 0
             if current_price and entry_price:
@@ -862,6 +883,9 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
                 "agent_id": row["agent_id"],
                 "agent_name": row["agent_name"],
                 "symbol": row["symbol"],
+                "alpaca_managed": alpaca_managed,
+                "data_source": data_source,
+                "data_source_error": data_source_error,
                 "market": row["market"],
                 "side": row["side"],
                 "quantity": row["quantity"],

@@ -176,3 +176,28 @@ class AdminPermissionTests(unittest.TestCase):
         self.assertEqual(second_join.status_code, 200, second_join.text)
         self.assertFalse(second_join.json()["joined"])
         self.assertTrue(second_join.json()["idempotent"])
+
+    def test_alpaca_config_is_admin_only_and_redacted(self):
+        denied = self.client.put(
+            f"/api/agents/manage/{self.regular_id}/alpaca",
+            headers={"Authorization": "Bearer token-regular-agent"},
+            json={"api_key": "key", "secret_key": "secret"},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
+
+        saved = self.client.put(
+            f"/api/agents/manage/{self.regular_id}/alpaca",
+            headers={"Authorization": "Bearer token-admin-agent"},
+            json={"api_key": "alpaca-key-1234", "secret_key": "alpaca-secret"},
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertTrue(saved.json()["configured"])
+
+        config = self.client.get(
+            f"/api/agents/manage/{self.regular_id}/alpaca",
+            headers={"Authorization": "Bearer token-admin-agent"},
+        )
+        self.assertEqual(config.status_code, 200, config.text)
+        self.assertEqual(config.json()["api_key_last4"], "1234")
+        self.assertNotIn("alpaca_secret", config.json())
+        self.assertNotIn("alpaca-secret", config.text)

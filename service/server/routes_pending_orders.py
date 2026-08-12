@@ -238,9 +238,19 @@ def register_pending_order_routes(app: FastAPI, ctx: RouteContext) -> None:
             try:
                 from alpaca_broker import get_alpaca_broker_for_agent
                 broker = get_alpaca_broker_for_agent(agent["id"])
-                if broker:
-                    await asyncio.to_thread(broker.cancel_order, alpaca_order_id)
+                if broker and not await asyncio.to_thread(broker.cancel_order, alpaca_order_id):
+                    raise RuntimeError("Alpaca did not confirm order cancellation")
             except Exception as alpaca_err:
-                print(f"[Alpaca] pending order cancel failed: {alpaca_err}")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE pending_orders SET status = 'PENDING' WHERE id = ? AND agent_id = ?",
+                        (order_id, agent["id"]),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                raise HTTPException(status_code=502, detail=f"Alpaca pending order cancellation failed: {alpaca_err}") from alpaca_err
 
         return {"order_id": order_id, "status": "CANCELLED"}

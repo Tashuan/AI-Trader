@@ -388,6 +388,14 @@ class GoalUpdateRequest(BaseModel):
     status: Optional[str] = None
 
 
+class AlpacaAccountConfigRequest(BaseModel):
+    api_key: str
+    secret_key: str
+    base_url: str = "https://paper-api.alpaca.markets/v2"
+    websocket_url: str = "wss://paper-api.alpaca.markets/stream"
+    enabled: bool = True
+
+
 class StrategyParamsUpdate(BaseModel):
     exit_rules: Optional[Dict[str, Any]] = None
     entry_criteria: Optional[Dict[str, Any]] = None

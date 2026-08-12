@@ -15,6 +15,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
+from database import get_db_connection
+
 # Global trending cache (shared with routes)
 trending_cache: list = []
 _last_profit_history_prune_at: float = time.time()
@@ -27,6 +29,7 @@ _POLYMARKET_SETTLEMENT_RECHECK_AFTER: Dict[tuple[str, str, str], float] = {}
 _POLYMARKET_UPDOWN_RE = re.compile(r"^(btc|eth|sol|xrp)-updown-(5m|15m|1h|4h)-(\d+)$", re.IGNORECASE)
 _profit_history_prune_lock = threading.Lock()
 _POLYMARKET_SETTLEMENT_CURSOR = 0
+_orphan_first_seen: dict[str, datetime] = {}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -1006,16 +1009,8 @@ async def auto_close_positions_loop():
                         closed_count += 1
                         print(f"[Auto-Close] {agent_name} {symbol} {side} — {close_reason} — closed at {current_price}")
 
-                        # ─── Mirror close to Alpaca paper account ───────────
-                        try:
-                            from alpaca_broker import get_alpaca_broker
-                            broker = get_alpaca_broker()
-                            if broker.enabled and market == 'us-stock':
-                                await asyncio.to_thread(
-                                    broker.mirror_close, symbol, quantity, side
-                                )
-                        except Exception as alpaca_err:
-                            print(f"[Auto-Close] Alpaca mirror close failed for {symbol}: {alpaca_err}")
+                        # Non-managed positions are internal-only; managed positions
+                        # are closed by Alpaca SL/TP and projected by reconciliation.
                     except Exception as write_err:
                         conn.rollback()
                         print(f"[Auto-Close] Write failed for {symbol}: {write_err}")
@@ -1636,12 +1631,14 @@ async def limit_order_processor_loop():
             try:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT id, agent_id, symbol, market, token_id, outcome, side, quantity,
-                           limit_price, stop_loss_price, take_profit_price, time_in_force,
-                           expires_at, content, created_at
-                    FROM limit_orders
-                    WHERE status = 'open'
-                      AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+                    SELECT lo.id, lo.agent_id, lo.symbol, lo.market, lo.token_id, lo.outcome, lo.side, lo.quantity,
+                           lo.limit_price, lo.stop_loss_price, lo.take_profit_price, lo.time_in_force,
+                           lo.expires_at, lo.content, lo.created_at,
+                           a.name as agent_name
+                    FROM limit_orders lo
+                    JOIN agents a ON a.id = lo.agent_id
+                    WHERE lo.status = 'open'
+                      AND (lo.expires_at IS NULL OR datetime(lo.expires_at) > datetime('now'))
                 """)
                 orders = cursor.fetchall()
             finally:
@@ -1770,20 +1767,8 @@ async def limit_order_processor_loop():
                     filled_count += 1
                     print(f"[Limit Order] Filled {symbol} {side} {qty} @ {fill_price} (limit {limit_price})")
 
-                    # ─── Mirror fill to Alpaca paper account ───────────
-                    try:
-                        from alpaca_broker import get_alpaca_broker
-                        broker = get_alpaca_broker()
-                        if broker.enabled and market == "us-stock":
-                            await asyncio.to_thread(
-                                broker.mirror_trade,
-                                side, symbol, qty, market, "market",
-                                None,  # limit_price
-                                order["stop_loss_price"],
-                                order["take_profit_price"],
-                            )
-                    except Exception as alpaca_err:
-                        print(f"[Limit Order] Alpaca mirror failed for {symbol}: {alpaca_err}")
+                    # Managed orders are submitted through the per-agent execution
+                    # layer; non-managed orders remain internal-only.
                 except Exception as exc:
                     conn.rollback()
                     print(f"[Limit Order] Fill failed for {symbol} order {order['id']}: {exc}")
@@ -1823,14 +1808,16 @@ async def pending_order_filler_loop():
             try:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT id, agent_id, symbol, market, side, order_type,
-                           stop_price, limit_price, quantity, stop_loss_price,
-                           take_profit_price, trailing_sl_pct,
-                           trailing_activation_pct, expires_at, entry_score,
-                           COALESCE(alpaca_managed, 0) AS alpaca_managed
-                    FROM pending_orders
-                    WHERE status = 'PENDING'
-                      AND datetime(expires_at) > datetime('now')
+                    SELECT po.id, po.agent_id, po.symbol, po.market, po.side, po.order_type,
+                           po.stop_price, po.limit_price, po.quantity, po.stop_loss_price,
+                           po.take_profit_price, po.trailing_sl_pct,
+                           po.trailing_activation_pct, po.expires_at, po.entry_score,
+                           COALESCE(po.alpaca_managed, 0) AS alpaca_managed,
+                           a.name as agent_name
+                    FROM pending_orders po
+                    JOIN agents a ON a.id = po.agent_id
+                    WHERE po.status = 'PENDING'
+                      AND datetime(po.expires_at) > datetime('now')
                 """)
                 orders = cursor.fetchall()
             finally:
@@ -1965,25 +1952,8 @@ async def pending_order_filler_loop():
                     filled_count += 1
                     print(f"[Pending Order] Filled {symbol} {side} {qty} @ {fill_price} (stop {stop_price})")
 
-                    # ─── Mirror fill to Alpaca paper account ───────────
-                    try:
-                        from alpaca_broker import get_alpaca_broker
-                        broker = get_alpaca_broker()
-                        if broker.enabled and order["market"] == "us-stock":
-                            # Check if Alpaca already has this position (from mirrored stop order)
-                            alpaca_pos = await asyncio.to_thread(broker.get_position, symbol)
-                            if alpaca_pos:
-                                print(f"[Pending Order] Alpaca already has {symbol}, skipping mirror")
-                            else:
-                                await asyncio.to_thread(
-                                    broker.mirror_trade,
-                                    action, symbol, qty, order["market"], "market",
-                                    None,  # limit_price
-                                    order["stop_loss_price"],
-                                    order["take_profit_price"],
-                                )
-                    except Exception as alpaca_err:
-                        print(f"[Pending Order] Alpaca mirror failed for {symbol}: {alpaca_err}")
+                    # Managed pending orders are excluded above and are filled by
+                    # Alpaca; non-managed orders remain internal-only.
                 except Exception as exc:
                     conn.rollback()
                     print(f"[Pending Order] Fill failed for {symbol} order {order['id']}: {exc}")
@@ -2047,11 +2017,21 @@ def _apply_alpaca_trade_update(agent_id: int, payload: dict) -> None:
         if execution:
             filled_qty = float(order.get("filled_qty") or 0)
             filled_price = float(order.get("filled_avg_price") or 0) or None
+            parent_order_id = order.get("parent_order_id")
+            effective_role = execution["order_role"]
+            if parent_order_id and effective_role == "entry":
+                effective_role = "exit"
             cursor.execute(
-                "UPDATE alpaca_order_executions SET status = ?, filled_qty = ?, filled_avg_price = COALESCE(?, filled_avg_price), last_event_id = ?, updated_at = ?, raw_order_json = ? WHERE id = ?",
-                (execution_status, filled_qty, filled_price, event_key, datetime.now(timezone.utc).isoformat(), json.dumps(order), execution["id"]),
+                """UPDATE alpaca_order_executions
+                   SET status = ?, order_role = ?, filled_qty = ?,
+                       filled_avg_price = COALESCE(?, filled_avg_price),
+                       last_event_id = ?, updated_at = ?, raw_order_json = ?
+                   WHERE id = ?""",
+                (execution_status, effective_role, filled_qty, filled_price,
+                 event_key, datetime.now(timezone.utc).isoformat(),
+                 json.dumps(order), execution["id"]),
             )
-            if execution_status == "filled" and execution["order_role"] in ("take_profit", "stop_loss", "exit"):
+            if execution_status == "filled" and effective_role in ("take_profit", "stop_loss", "exit"):
                 cursor.execute(
                     "DELETE FROM positions WHERE agent_id = ? AND market = 'us-stock' AND symbol = ? AND COALESCE(alpaca_managed, 0) = 1",
                     (agent_id, execution["symbol"]),
@@ -2128,6 +2108,10 @@ async def alpaca_fallback_reconcile_loop():
                 positions = await asyncio.to_thread(broker.list_positions)
                 orders = await asyncio.to_thread(broker.list_orders, "all")
                 order_by_id = {str(order.get("id")): order for order in orders}
+                order_by_client_id = {
+                    str(order.get("client_order_id")): order
+                    for order in orders if order.get("client_order_id")
+                }
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM alpaca_order_executions WHERE agent_id = ? AND status NOT IN ('filled', 'rejected', 'cancelled', 'expired')", (agent_id,))
@@ -2135,6 +2119,8 @@ async def alpaca_fallback_reconcile_loop():
                 conn.close()
                 for execution in executions:
                     order = order_by_id.get(str(execution["alpaca_order_id"]))
+                    if order is None:
+                        order = order_by_client_id.get(str(execution["client_order_id"]))
                     if order and str(order.get("status", "")).lower() in {"filled", "partially_filled", "rejected", "canceled", "expired"}:
                         await asyncio.to_thread(_apply_alpaca_trade_update, agent_id, {"event": order.get("status"), "order": order})
                 if positions:
@@ -2192,7 +2178,7 @@ async def alpaca_reconciliation_loop():
                 await asyncio.sleep(_env_int("ALPACA_RECONCILE_INTERVAL", 60, minimum=30))
                 continue
 
-            # Fetch internal US-equity positions
+            # Fetch only positions explicitly managed by Alpaca.
             conn = get_db_connection()
             try:
                 cursor = conn.cursor()
@@ -2204,6 +2190,7 @@ async def alpaca_reconciliation_loop():
                     FROM positions p
                     JOIN agents a ON a.id = p.agent_id
                     WHERE p.market = 'us-stock'
+                      AND COALESCE(p.alpaca_managed, 0) = 1
                 """)
                 internal_rows = cursor.fetchall()
             finally:
@@ -2306,17 +2293,24 @@ async def alpaca_reconciliation_loop():
                     finally:
                         conn.close()
                 else:
-                    # Alpaca doesn't have it and didn't recently close it — entry was likely rejected
-                    # Re-submit the entry to Alpaca
-                    print(f"[Alpaca Reconcile] Re-submitting entry for {sym} {side} {qty} (Alpaca missing position)")
-                    await asyncio.to_thread(
-                        broker.mirror_trade,
-                        'buy' if side == 'long' else 'short',
-                        sym, qty, 'us-stock', 'market',
-                        None,  # limit_price
-                        internal_pos.get('stop_loss_price'),
-                        internal_pos.get('take_profit_price'),
-                    )
+                    # A managed position missing at Alpaca must be recovered
+                    # through its per-agent execution broker, never the legacy mirror.
+                    from alpaca_broker import get_alpaca_broker_for_agent
+                    agent_broker = get_alpaca_broker_for_agent(internal_pos['agent_id'])
+                    if agent_broker and agent_broker.enabled:
+                        print(f"[Alpaca Reconcile] Re-submitting entry for {sym} {side} {qty}")
+                        await asyncio.to_thread(
+                            agent_broker.execute_order,
+                            symbol=sym,
+                            quantity=qty,
+                            action='buy' if side == 'long' else 'short',
+                            client_order_id=f"ai-trader:reconcile:{internal_pos['agent_id']}:{sym}",
+                            order_type='market',
+                            stop_loss_price=internal_pos.get('stop_loss_price'),
+                            take_profit_price=internal_pos.get('take_profit_price'),
+                        )
+                    else:
+                        print(f"[Alpaca Reconcile] No managed broker for agent {internal_pos['agent_id']}")
 
             # ── Log qty/side mismatches ──
             for entry in result.get('qty_mismatch', []):
@@ -2331,6 +2325,120 @@ async def alpaca_reconciliation_loop():
             print(f"[Alpaca Reconcile Error] {e}")
 
         await asyncio.sleep(_env_int("ALPACA_RECONCILE_INTERVAL", 60, minimum=30))
+
+
+async def alpaca_orphan_cleanup_loop():
+    """Close orphaned Alpaca positions that don't exist in the internal DB.
+
+    These are positions that were created by the old mirror path (now removed)
+    or by rejected/cancelled orders that left residue. Only runs when the market
+    is open, since Alpaca can't process orders outside market hours.
+    """
+    await asyncio.sleep(_env_int("ALPACA_ORPHAN_CLEANUP_STARTUP_DELAY", 120, minimum=30))
+
+    while True:
+        try:
+            from alpaca_broker import get_alpaca_broker
+            broker = get_alpaca_broker()
+            if not broker.enabled:
+                await asyncio.sleep(_env_int("ALPACA_ORPHAN_CLEANUP_INTERVAL", 300, minimum=60))
+                continue
+
+            # Only attempt cleanup when market is open
+            import requests as _requests
+            clock_resp = _requests.get(
+                f"{broker._base_url}/clock",
+                headers=broker._headers(),
+                timeout=10,
+            )
+            clock = clock_resp.json()
+            if not clock.get("is_open"):
+                await asyncio.sleep(_env_int("ALPACA_ORPHAN_CLEANUP_INTERVAL", 300, minimum=60))
+                continue
+
+            # Get all Alpaca positions
+            alpaca_positions = await asyncio.to_thread(broker.list_positions)
+            if not alpaca_positions:
+                await asyncio.sleep(_env_int("ALPACA_ORPHAN_CLEANUP_INTERVAL", 300, minimum=60))
+                continue
+
+            # Get internal us-stock positions (managed and non-managed)
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("SELECT symbol FROM positions WHERE market = 'us-stock'")
+                internal_symbols = {row["symbol"] for row in cursor.fetchall()}
+            finally:
+                conn.close()
+
+            # Find orphaned positions (on Alpaca but not in internal DB).
+            # Skip positions that were very recently opened to avoid race
+            # conditions with managed trades that haven't been recorded yet.
+            now_utc = datetime.now(timezone.utc)
+            orphans = []
+            for p in alpaca_positions:
+                sym = p.get("symbol")
+                if sym in internal_symbols:
+                    continue
+                # Check if this position was opened very recently (race window)
+                # Alpaca doesn't expose opened_at on positions, so we use a
+                # simple two-pass approach: skip on first sighting, close on second
+                cache_key = f"_orphan_seen:{sym}"
+                first_seen = _orphan_first_seen.get(cache_key)
+                if first_seen is None:
+                    _orphan_first_seen[cache_key] = now_utc
+                    print(f"[Alpaca Orphan Cleanup] First sighting of orphaned {sym} — waiting to confirm")
+                    continue
+                elapsed = (now_utc - first_seen).total_seconds()
+                if elapsed < _env_int("ALPACA_ORPHAN_CONFIRM_SECONDS", 120, minimum=30):
+                    print(f"[Alpaca Orphan Cleanup] {sym} orphaned for {elapsed:.0f}s — waiting {_env_int('ALPACA_ORPHAN_CONFIRM_SECONDS', 120, minimum=30)}s to confirm")
+                    continue
+                orphans.append(p)
+
+            # Clean up stale entries from the first-seen cache
+            stale_keys = [k for k, v in _orphan_first_seen.items() if (now_utc - v).total_seconds() > 3600]
+            for k in stale_keys:
+                _orphan_first_seen.pop(k, None)
+
+            if not orphans:
+                await asyncio.sleep(_env_int("ALPACA_ORPHAN_CLEANUP_INTERVAL", 300, minimum=60))
+                continue
+
+            for pos in orphans:
+                sym = pos.get("symbol")
+                qty = abs(float(pos.get("qty", 0)))
+                side = "long" if float(pos.get("qty", 0)) > 0 else "short"
+                print(f"[Alpaca Orphan Cleanup] Closing confirmed orphaned {sym} {side} {qty}...")
+
+                # Cancel any open orders for this symbol first
+                try:
+                    await asyncio.to_thread(broker._cancel_open_orders_for_symbol, sym)
+                except Exception as cancel_err:
+                    print(f"[Alpaca Orphan Cleanup] Cancel orders failed for {sym}: {cancel_err}")
+                    continue
+
+                # Close the position
+                try:
+                    result = await asyncio.to_thread(broker.close_position, sym)
+                    if result:
+                        print(f"[Alpaca Orphan Cleanup] Closed {sym}: {result}")
+                        _orphan_first_seen.pop(f"_orphan_seen:{sym}", None)
+                    else:
+                        print(f"[Alpaca Orphan Cleanup] close_position returned None for {sym}, retrying with market order")
+                        # Fallback: submit a market order directly
+                        close_side = "sell" if side == "long" else "buy"
+                        await asyncio.to_thread(
+                            broker.submit_order, sym, qty, close_side,
+                            "market", "day",
+                        )
+                        print(f"[Alpaca Orphan Cleanup] Submitted market {close_side} for {sym} {qty}")
+                except Exception as close_err:
+                    print(f"[Alpaca Orphan Cleanup] Failed to close {sym}: {close_err}")
+
+        except Exception as e:
+            print(f"[Alpaca Orphan Cleanup Error] {e}")
+
+        await asyncio.sleep(_env_int("ALPACA_ORPHAN_CLEANUP_INTERVAL", 300, minimum=60))
 
 
 BACKGROUND_TASK_REGISTRY = {

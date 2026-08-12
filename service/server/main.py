@@ -54,9 +54,10 @@ if not api_access_log_enabled():
     logging.getLogger("uvicorn.access").disabled = True
     logging.getLogger("uvicorn.access").propagate = False
 
-# Initialize database (skip for existing Supabase schema)
-if not os.getenv("DATABASE_URL"):
-    init_database()
+# Initialize database — always run so new columns/tables get migrated.
+# init_database() uses CREATE TABLE IF NOT EXISTS and ALTER TABLE ADD COLUMN IF NOT EXISTS,
+# so it's safe to run on an existing Supabase schema.
+init_database()
 
 # Create app
 app = create_app()

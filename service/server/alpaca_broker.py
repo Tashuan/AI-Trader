@@ -1,13 +1,8 @@
-"""Alpaca paper trading broker — mirrors internal AI-Trader trades to Alpaca.
+"""Alpaca paper-trading execution client.
 
-When enabled (ALPACA_MIRROR_TRADES=true), every internal paper trade executed
-via POST /api/signals/realtime is also submitted to Alpaca's paper trading
-API. This lets you compare positions and PnL side-by-side.
-
-Alpaca paper trading endpoint: https://paper-api.alpaca.markets/v2
-Requires APCA_API_KEY_ID / APCA_API_SECRET_KEY (same keys used for market data).
-
-Only US equities are mirrored. Crypto, polymarket, and other markets are skipped.
+Managed agents use per-agent credentials from ``alpaca_account_config`` and
+Alpaca is the execution source of truth. The legacy global mirror methods remain
+only for compatibility and are disabled by default.
 """
 
 from __future__ import annotations
@@ -30,9 +25,22 @@ _SECRET_KEY = os.environ.get("APCA_API_SECRET_KEY") or os.environ.get("ALPACA_SE
 # Paper trading endpoint (NOT the data endpoint)
 _PAPER_TRADING_URL = os.environ.get("ALPACA_PAPER_TRADING_URL", "https://paper-api.alpaca.markets/v2")
 
-_MIRROR_ENABLED = os.environ.get("ALPACA_MIRROR_TRADES", "true").strip().lower() in {"1", "true", "yes", "on"}
+_MIRROR_ENABLED = os.environ.get("ALPACA_MIRROR_TRADES", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+# Only these agents are allowed to mirror trades to Alpaca.
+# Comma-separated agent names (case-insensitive). Default: ScalpRunner only.
+_MIRROR_AGENT_ALLOWLIST = {
+    name.strip().lower()
+    for name in os.environ.get("ALPACA_MIRROR_AGENTS", "ScalpRunner").split(",")
+    if name.strip()
+}
 
 _REQUEST_TIMEOUT = 15
+
+
+def is_agent_allowed_to_mirror(agent_name: str) -> bool:
+    """Check if an agent is in the Alpaca mirror allowlist."""
+    return (agent_name or "").strip().lower() in _MIRROR_AGENT_ALLOWLIST
 
 # Actions that map to Alpaca order sides
 # buy  → buy   (open long)
@@ -564,9 +572,16 @@ class AlpacaBroker:
         }
 
     def execute_close(self, *, symbol: str, quantity: float, side: str, client_order_id: str) -> dict:
-        self._cancel_open_orders_for_symbol(symbol)
-        close_side = "sell" if side == "long" else "buy"
-        order = self.submit_order(symbol, quantity, close_side, order_type="market", time_in_force="gtc", client_order_id=client_order_id)
+        existing = self.find_order_by_client_order_id(client_order_id)
+        if existing is not None:
+            order = existing
+        else:
+            self._cancel_open_orders_for_symbol(symbol)
+            close_side = "sell" if side == "long" else "buy"
+            order = self.submit_order(
+                symbol, quantity, close_side, order_type="market",
+                time_in_force="gtc", client_order_id=client_order_id,
+            )
         if not order:
             return {"status": "unknown", "client_order_id": client_order_id}
         result = self._order_result(order)
@@ -751,6 +766,11 @@ def get_alpaca_broker_for_agent(agent_id: int) -> Optional[AlpacaBroker]:
     )
     _agent_brokers[int(agent_id)] = broker
     return broker
+
+
+def clear_alpaca_broker_cache(agent_id: int) -> None:
+    """Drop a cached per-agent broker after configuration changes."""
+    _agent_brokers.pop(int(agent_id), None)
 
 
 def get_alpaca_broker() -> AlpacaBroker:

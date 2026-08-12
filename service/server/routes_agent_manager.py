@@ -17,7 +17,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Header, HTTPException
 
 from database import get_db_connection
-from routes_models import AgentConfigCreate, AgentConfigUpdate, GoalCreateRequest, GoalUpdateRequest, StrategyParamsUpdate
+from permissions import require_admin
+from routes_models import (
+    AgentConfigCreate, AgentConfigUpdate, AlpacaAccountConfigRequest,
+    GoalCreateRequest, GoalUpdateRequest, StrategyParamsUpdate,
+)
 from routes_shared import RouteContext, utc_now_iso_z
 from services import _get_agent_by_id, _get_agent_by_name, _get_agent_by_token
 from utils import _extract_token, hash_password
@@ -437,6 +441,110 @@ def _compute_agent_stats(agent_id: int, cursor) -> Dict[str, Any]:
 
 def register_agent_manager_routes(app: FastAPI, ctx: RouteContext) -> None:
     """Register all agent manager routes."""
+
+    @app.get('/api/agents/manage/{agent_id}/alpaca')
+    async def get_alpaca_config(agent_id: int, authorization: str = Header(None)):
+        require_admin(authorization)
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT base_url, websocket_url, enabled, alpaca_api_key, alpaca_secret_key '
+                'FROM alpaca_account_config WHERE agent_id = ?',
+                (agent_id,),
+            )
+            row = cursor.fetchone()
+        finally:
+            conn.close()
+        if not row:
+            return {'configured': False, 'agent_id': agent_id, 'agent_name': agent['name']}
+        return {
+            'configured': True,
+            'agent_id': agent_id,
+            'agent_name': agent['name'],
+            'base_url': row['base_url'],
+            'websocket_url': row['websocket_url'],
+            'enabled': bool(row['enabled']),
+            'api_key_last4': str(row['alpaca_api_key'])[-4:],
+            'secret_key_configured': bool(row['alpaca_secret_key']),
+        }
+
+    @app.put('/api/agents/manage/{agent_id}/alpaca')
+    async def set_alpaca_config(
+        agent_id: int,
+        data: AlpacaAccountConfigRequest,
+        authorization: str = Header(None),
+    ):
+        require_admin(authorization)
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+        api_key = data.api_key.strip()
+        secret_key = data.secret_key.strip()
+        if not api_key or not secret_key:
+            raise HTTPException(status_code=400, detail='Alpaca API credentials are required')
+        if not data.base_url.startswith('https://'):
+            raise HTTPException(status_code=400, detail='Alpaca base_url must use HTTPS')
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT 1 FROM alpaca_account_config WHERE agent_id = ?', (agent_id,))
+            if cursor.fetchone():
+                cursor.execute(
+                    """UPDATE alpaca_account_config
+                       SET alpaca_api_key = ?, alpaca_secret_key = ?, base_url = ?,
+                           websocket_url = ?, enabled = ?, updated_at = ?
+                       WHERE agent_id = ?""",
+                    (api_key, secret_key, data.base_url, data.websocket_url,
+                     int(data.enabled), utc_now_iso_z(), agent_id),
+                )
+            else:
+                cursor.execute(
+                    """INSERT INTO alpaca_account_config
+                       (agent_id, alpaca_api_key, alpaca_secret_key, base_url,
+                        websocket_url, enabled, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (agent_id, api_key, secret_key, data.base_url, data.websocket_url,
+                     int(data.enabled), utc_now_iso_z(), utc_now_iso_z()),
+                )
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=f'Failed to save Alpaca config: {exc}')
+        finally:
+            conn.close()
+        from alpaca_broker import clear_alpaca_broker_cache, get_alpaca_broker_for_agent
+        clear_alpaca_broker_cache(agent_id)
+        broker = get_alpaca_broker_for_agent(agent_id) if data.enabled else None
+        return {
+            'success': True,
+            'agent_id': agent_id,
+            'enabled': bool(data.enabled),
+            'configured': bool(broker and broker.configured),
+        }
+
+    @app.delete('/api/agents/manage/{agent_id}/alpaca')
+    async def disable_alpaca_config(agent_id: int, authorization: str = Header(None)):
+        require_admin(authorization)
+        agent = _get_agent_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail='Agent not found')
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                'UPDATE alpaca_account_config SET enabled = 0, updated_at = ? WHERE agent_id = ?',
+                (utc_now_iso_z(), agent_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        from alpaca_broker import clear_alpaca_broker_cache
+        clear_alpaca_broker_cache(agent_id)
+        return {'success': True, 'agent_id': agent_id, 'enabled': False}
 
     @app.get('/api/agents/manage/templates')
     async def get_strategy_templates():
