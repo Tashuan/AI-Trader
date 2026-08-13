@@ -47,7 +47,8 @@ _SESSION_BARS_PER_DAY = {
 _RESAMPLE_MAP = {
     "1m": ("5min", "15min"),
     "5m": ("15min", "30min"),
-    "15m": ("30min", "1H"),
+    "15m": ("30min", "1h"),
+    "30m": ("1h", "2h"),
 }
 
 # Min bars needed at the highest TF (30 for indicator precompute).
@@ -252,6 +253,71 @@ class ScalpScanBacktester:
 
     # ─── Scan at a single bar ─────────────────────────────────────
 
+    def _scan_symbol_precomputed(
+        self, symbol: str, prepared: dict, base_idx: int, mid_idx: int, high_idx: int,
+        lookback: int,
+    ) -> Optional[dict]:
+        """Run a scan using indicators and resampled frames prepared once per symbol."""
+        try:
+            base_df = prepared["base"]
+            mid_df = prepared["mid"]
+            high_df = prepared["high"]
+            pre = prepared["pre"]
+            base_start = max(0, base_idx - lookback + 1)
+            mid_start = max(0, mid_idx - lookback + 1)
+            high_start = max(0, high_idx - lookback + 1)
+            w_base = base_df.iloc[base_start:base_idx + 1]
+            w_mid = mid_df.iloc[mid_start:mid_idx + 1]
+            w_high = high_df.iloc[high_start:high_idx + 1]
+            if len(w_base) < 30 or len(w_mid) < 10 or len(w_high) < 10:
+                return None
+
+            mtf = core.deep_scan_multi_tf(
+                symbol, pre, base_idx, self.params,
+                bar_idx_5m=mid_idx, bar_idx_15m=high_idx,
+            )
+            if not mtf.get("qualifies_for_entry"):
+                return mtf
+
+            swings = core.detect_swing_highs_lows(
+                w_mid, self.params.get("levels", {}).get("sr_lookback_bars", 50),
+            )
+            swing_highs = swings.get("swing_highs", [])
+            swing_lows = swings.get("swing_lows", [])
+            direction = mtf.get("entry_direction", "long")
+            fib_levels = {}
+            fib_extensions = {}
+            if swing_highs and swing_lows:
+                recent_high = max(p for _, p in swing_highs[-3:])
+                recent_low = min(p for _, p in swing_lows[-3:])
+                fib_levels = core.compute_fib_retracement(recent_high, recent_low, direction)
+                fib_extensions = core.compute_fib_extension(recent_high, recent_low, direction)
+
+            sr = core.detect_support_resistance(
+                w_mid,
+                lookback=self.params.get("levels", {}).get("sr_lookback_bars", 50),
+                min_touches=self.params.get("levels", {}).get("sr_min_touches", 2),
+                tolerance_pct=self.params.get("levels", {}).get("sr_tolerance_pct", 0.15),
+            )
+            breakout = core.detect_breakout_level(w_mid, sr, self.params)
+            pattern = core.detect_pattern(w_mid)
+            last_price = float(w_base["Close"].iloc[-1])
+            liq = core.liquidity_score(
+                {"bid": last_price, "ask": last_price}, None, w_mid, self.params,
+            )
+            setup = core.score_scalp_setup(
+                mtf, fib_levels, sr, breakout, pattern, liq, self.params,
+            )
+            return {
+                "mtf": mtf, "setup": setup, "fib_levels": fib_levels,
+                "fib_extensions": fib_extensions, "sr_levels": sr,
+                "breakout": breakout, "pattern": pattern, "liquidity": liq,
+                "price": last_price,
+            }
+        except Exception as exc:
+            logger.debug("Precomputed scan failed for %s: %s", symbol, exc)
+            return None
+
     def _scan_symbol(self, symbol: str, df_1m: pd.DataFrame, df_5m: pd.DataFrame,
                      df_15m: pd.DataFrame) -> Optional[dict]:
         """Run the 4-step scalp analysis on one bar's data windows."""
@@ -382,6 +448,81 @@ class ScalpScanBacktester:
             int(configured_lookback or 0),
             _BASE_LOOKBACK.get(self.base_interval, 200),
         )
+        # Prepare each symbol once. The previous implementation rebuilt and
+        # resampled a rolling window, then recomputed every indicator, for
+        # every bar. Full-history preparation keeps the replay causal while
+        # making the hot loop mostly array/index lookups.
+        prepared: dict[str, dict] = {}
+        for sym, df in historical.items():
+            base_col = col_map[sym]
+            mid_rule, high_rule = _RESAMPLE_MAP.get(self.base_interval, ("5min", "15min"))
+            mid_df = self._resample_window(df, mid_rule, max(len(df), lookback))
+            high_df = self._resample_window(df, high_rule, max(len(df), lookback))
+            if mid_df is None or high_df is None:
+                continue
+            base_pre = core.precompute_indicators(df, self.params)
+            mid_pre = core.precompute_indicators(mid_df, self.params)
+            high_pre = core.precompute_indicators(high_df, self.params)
+            if not base_pre or not mid_pre or not high_pre:
+                continue
+            prepared[sym] = {
+                "base": df, "mid": mid_df, "high": high_df,
+                "pre": {"1m": base_pre, "5m": mid_pre, "15m": high_pre},
+                "base_indices": {ts: idx for idx, ts in enumerate(df[base_col])},
+                "mid_times": mid_df["Datetime" if "Datetime" in mid_df.columns else "Date"].array,
+                "high_times": high_df["Datetime" if "Datetime" in high_df.columns else "Date"].array,
+            }
+        historical = {sym: historical[sym] for sym in prepared}
+        if not prepared:
+            return self._empty_report()
+
+        # ── Pre-compute regime filter EMAs ──────────────────────────
+        regime_cfg = self.params.get("regime_filter", {})
+        regime_ema: dict[str, pd.Series] = {}
+        if regime_cfg.get("enabled", False):
+            ema_period = int(regime_cfg.get("ema_period", 50))
+            for sym, df in historical.items():
+                regime_ema[sym] = df["Close"].ewm(span=ema_period, adjust=False).mean()
+
+        # ── Pre-compute pre-move filter rolling returns ─────────────
+        premove_cfg = self.params.get("premove_filter", {})
+        premove_lookup: dict[str, pd.Series] = {}
+        if premove_cfg.get("enabled", False):
+            lookback_bars = int(premove_cfg.get("lookback_bars", 8))
+            for sym, df in historical.items():
+                closes = df["Close"]
+                premove_lookup[sym] = (closes / closes.shift(lookback_bars) - 1.0) * 100.0
+
+        # ── Pre-compute SPY market regime filter ────────────────────
+        # Uses SPY daily EMA to determine market regime.
+        # Blocks short trades when SPY > daily EMA (bull regime).
+        # Blocks long trades when SPY < daily EMA (bear regime).
+        spy_regime_cfg = self.params.get("market_regime", {})
+        spy_regime_lookup: dict[str, float] = {}  # date_str -> regime ("bull"|"bear"|"neutral")
+        if spy_regime_cfg.get("enabled", False):
+            spy_symbol = spy_regime_cfg.get("symbol", "SPY")
+            spy_ema_period = int(spy_regime_cfg.get("daily_ema_period", 20))
+            spy_df = self._fetch(spy_symbol, "1d")
+            if spy_df is not None and not spy_df.empty:
+                spy_col = self._time_col(spy_df)
+                spy_df = spy_df.copy()
+                spy_df[spy_col] = pd.to_datetime(spy_df[spy_col])
+                spy_df["ema"] = spy_df["Close"].ewm(span=spy_ema_period, adjust=False).mean()
+                # Build a date -> regime map. Date keyed by YYYY-MM-DD.
+                for _, row in spy_df.iterrows():
+                    ts = row[spy_col]
+                    date_key = ts.strftime("%Y-%m-%d")
+                    close = float(row["Close"])
+                    ema = float(row["ema"])
+                    if pd.isna(ema):
+                        spy_regime_lookup[date_key] = "neutral"
+                    elif close > ema * (1 + float(spy_regime_cfg.get("threshold_pct", 0.0)) / 100.0):
+                        spy_regime_lookup[date_key] = "bull"
+                    elif close < ema * (1 - float(spy_regime_cfg.get("threshold_pct", 0.0)) / 100.0):
+                        spy_regime_lookup[date_key] = "bear"
+                    else:
+                        spy_regime_lookup[date_key] = "neutral"
+
         diagnostics = self._new_diagnostics()
         diagnostics.update({
             "base_interval": self.base_interval,
@@ -419,22 +560,27 @@ class ScalpScanBacktester:
             highs: dict[str, float] = {}
             lows: dict[str, float] = {}
             current_bars: dict[str, object] = {}
+            cur_base_idx: dict[str, int] = {}
             scans: dict[str, dict] = {}
 
             for sym, df in historical.items():
-                col = col_map[sym]
-                idx = df.index[df[col] == ts].tolist()
-                if not idx:
+                info = prepared[sym]
+                base_idx = info["base_indices"].get(ts)
+                if base_idx is None:
                     continue
-                row = df.iloc[idx[-1]]
+                cur_base_idx[sym] = base_idx
+                row = df.iloc[base_idx]
                 current_bars[sym] = row
                 prices[sym] = float(row["Close"])
                 highs[sym] = float(row["High"])
                 lows[sym] = float(row["Low"])
 
-                w1m, w5m, w15m = self._build_mtf_window({"base": df}, ts, lookback)
-                if w1m is not None and w5m is not None and w15m is not None:
-                    scan = self._scan_symbol(sym, w1m, w5m, w15m)
+                mid_idx = int(info["mid_times"].searchsorted(ts, side="right") - 1)
+                high_idx = int(info["high_times"].searchsorted(ts, side="right") - 1)
+                if mid_idx >= 0 and high_idx >= 0:
+                    scan = self._scan_symbol_precomputed(
+                        sym, info, base_idx, mid_idx, high_idx, lookback,
+                    )
                     self._record_scan_diagnostic(scan, diagnostics)
                     if scan:
                         scans[sym] = scan
@@ -619,6 +765,67 @@ class ScalpScanBacktester:
                 reverse=True,
             )
 
+            direction_mode = self.params.get("entry_criteria", {}).get("direction_mode", "both")
+            if direction_mode in ("long", "short"):
+                ranked = [s for s in ranked if s["direction"] == direction_mode]
+
+            # ── Regime filter: only trade in direction of EMA trend ──
+            regime_cfg = self.params.get("regime_filter", {})
+            if regime_cfg.get("enabled", False) and regime_ema:
+                for setup in ranked:
+                    sym = setup["symbol"]
+                    if sym not in regime_ema or sym not in prices:
+                        setup["_regime_blocked"] = True
+                        continue
+                    ema_val = regime_ema[sym].iloc[cur_base_idx.get(sym, 0)] if sym in cur_base_idx else None
+                    if ema_val is None or pd.isna(ema_val):
+                        setup["_regime_blocked"] = True
+                        continue
+                    px = prices[sym]
+                    if setup["direction"] == "long" and px < ema_val:
+                        setup["_regime_blocked"] = True
+                    elif setup["direction"] == "short" and px > ema_val:
+                        setup["_regime_blocked"] = True
+                ranked = [s for s in ranked if not s.get("_regime_blocked", False)]
+
+            # ── Pre-move filter: reject setups where stock already moved too far ──
+            premove_cfg = self.params.get("premove_filter", {})
+            if premove_cfg.get("enabled", False) and premove_lookup:
+                max_move = float(premove_cfg.get("max_move_pct", 3.0))
+                for setup in ranked:
+                    sym = setup["symbol"]
+                    if sym not in premove_lookup or sym not in cur_base_idx:
+                        setup["_premove_blocked"] = True
+                        continue
+                    idx = cur_base_idx[sym]
+                    recent_ret = premove_lookup[sym].iloc[idx] if idx < len(premove_lookup[sym]) else None
+                    if recent_ret is None or pd.isna(recent_ret):
+                        setup["_premove_blocked"] = True
+                        continue
+                    # For longs: recent_ret > 0 means stock already rose (late entry)
+                    # For shorts: recent_ret < 0 means stock already fell (late entry)
+                    if setup["direction"] == "long" and recent_ret > max_move:
+                        setup["_premove_blocked"] = True
+                    elif setup["direction"] == "short" and recent_ret < -max_move:
+                        setup["_premove_blocked"] = True
+                ranked = [s for s in ranked if not s.get("_premove_blocked", False)]
+
+            # ── SPY market regime filter ───────────────────────────────
+            # Block shorts in bull regime, longs in bear regime.
+            spy_regime_cfg = self.params.get("market_regime", {})
+            if spy_regime_cfg.get("enabled", False) and spy_regime_lookup:
+                date_key = pd.Timestamp(ts).strftime("%Y-%m-%d")
+                mkt_regime = spy_regime_lookup.get(date_key, "neutral")
+                block_shorts = mkt_regime == "bull" and spy_regime_cfg.get("block_shorts_in_bull", True)
+                block_longs = mkt_regime == "bear" and spy_regime_cfg.get("block_longs_in_bear", False)
+                if block_shorts or block_longs:
+                    for setup in ranked:
+                        if block_shorts and setup["direction"] == "short":
+                            setup["_mkt_blocked"] = True
+                        if block_longs and setup["direction"] == "long":
+                            setup["_mkt_blocked"] = True
+                    ranked = [s for s in ranked if not s.get("_mkt_blocked", False)]
+
             for setup in ranked:
                 if available <= 0:
                     break
@@ -641,15 +848,19 @@ class ScalpScanBacktester:
                 qty = notional / entry
 
                 exit_cfg = self.params.get("exit_rules", {})
+                side = setup["direction"]
+                # Support side-specific trailing stops via long_trailing_sl_pct, etc.
+                trail_sl_key = f"{side}_trailing_sl_pct"
+                trail_act_key = f"{side}_trailing_activation_pct"
                 pending[sym] = {
                     "symbol": sym,
-                    "side": setup["direction"],
+                    "side": side,
                     "entry_level": entry,
                     "sl": sl,
                     "tp": setup["tp_level"],
                     "qty": qty,
-                    "trail_sl_pct": exit_cfg.get("trailing_sl_pct", 0.5),
-                    "trail_act_pct": exit_cfg.get("trailing_activation_pct", 0.8),
+                    "trail_sl_pct": exit_cfg.get(trail_sl_key, exit_cfg.get("trailing_sl_pct", 0.5)),
+                    "trail_act_pct": exit_cfg.get(trail_act_key, exit_cfg.get("trailing_activation_pct", 0.8)),
                     "placed_at": str(ts),
                 }
                 diagnostics["orders_placed"] += 1

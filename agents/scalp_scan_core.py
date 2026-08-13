@@ -539,6 +539,8 @@ def _trend_direction(pre: dict, bar_idx: int, params: dict) -> dict[str, Any]:
 
 def deep_scan_multi_tf(
     symbol: str, pre: dict, bar_idx_1m: int, params: dict,
+    bar_idx_5m: Optional[int] = None,
+    bar_idx_15m: Optional[int] = None,
 ) -> dict[str, Any]:
     """Multi-timeframe deep scan.
 
@@ -559,13 +561,15 @@ def deep_scan_multi_tf(
 
     # 5m trend
     pre_5m = pre.get("5m")
-    bar_5m = min(bar_idx_1m, pre_5m["n"] - 1) if pre_5m else -1
-    trend_5m = _trend_direction(pre_5m, bar_5m, params)
+    if bar_idx_5m is None:
+        bar_idx_5m = min(bar_idx_1m, pre_5m["n"] - 1) if pre_5m else -1
+    trend_5m = _trend_direction(pre_5m, bar_idx_5m, params)
 
     # 15m trend
     pre_15m = pre.get("15m")
-    bar_15m = min(bar_idx_1m, pre_15m["n"] - 1) if pre_15m else -1
-    trend_15m = _trend_direction(pre_15m, bar_15m, params)
+    if bar_idx_15m is None:
+        bar_idx_15m = min(bar_idx_1m, pre_15m["n"] - 1) if pre_15m else -1
+    trend_15m = _trend_direction(pre_15m, bar_idx_15m, params)
 
     # Cross-TF confluence
     entry_cfg = params.get("entry_criteria", {})
@@ -667,15 +671,26 @@ def score_scalp_setup(
     if direction == "neutral":
         direction = "long"
 
+    # Mean-reversion mode: invert the direction (fade the move instead of following it)
+    entry_cfg = params.get("entry_criteria", {})
+    if entry_cfg.get("entry_style", "breakout") == "mean_reversion":
+        direction = "short" if direction == "long" else "long"
+
     # Compute entry/SL/TP from levels + ATR
     price = mtf_result.get("price", 0)
     atr = mtf_result.get("atr", price * 0.002 if price > 0 else 0)
     order_cfg = params.get("order", {})
-    sl_mult = order_cfg.get("sl_atr_multiple", 1.0)
-    tp_mult = order_cfg.get("tp_atr_multiple", 1.5)
+    # Support side-specific ATR multiples: long_sl_atr_multiple, short_sl_atr_multiple, etc.
+    # Falls back to sl_atr_multiple / tp_atr_multiple for backward compatibility.
+    if direction == "long":
+        sl_mult = order_cfg.get("long_sl_atr_multiple", order_cfg.get("sl_atr_multiple", 1.0))
+        tp_mult = order_cfg.get("long_tp_atr_multiple", order_cfg.get("tp_atr_multiple", 1.5))
+    else:
+        sl_mult = order_cfg.get("short_sl_atr_multiple", order_cfg.get("sl_atr_multiple", 1.0))
+        tp_mult = order_cfg.get("short_tp_atr_multiple", order_cfg.get("tp_atr_multiple", 1.5))
 
     reference_level = breakout.get("level_price", price) if breakout.get("ready_to_break") else price
-    trigger_offset_pct = max(0.0, float(order_cfg.get("entry_trigger_offset_pct", 0.08)))
+    trigger_offset_pct = float(order_cfg.get("entry_trigger_offset_pct", 0.08))
     if direction == "long":
         entry_level = reference_level * (1 + trigger_offset_pct / 100.0)
         sl_level = entry_level - sl_mult * atr

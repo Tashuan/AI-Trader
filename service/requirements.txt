@@ -13,3 +13,4 @@ redis>=5.0.8
 pytest>=8.0.0
 yfinance>=0.2.55
 pandas-ta>=0.3.14b1
+pyarrow>=18.0.0

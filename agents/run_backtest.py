@@ -29,6 +29,11 @@ from backtester import Backtester
 from strategy_registry import effective_params
 from scan_backtester import ScanBacktester
 from crypto_scan_backtester import CryptoScanBacktester
+from scalp_scan_backtester import ScalpScanBacktester
+from equity_data_providers import AlpacaProvider
+from schwab_provider import get_schwab_provider
+from market_data import YFinanceProvider
+from data_cache import CacheOnlyProvider, CachedProvider
 
 AGENT_CLASSES = {
     "newshound": NewsHoundAgent,
@@ -79,6 +84,40 @@ def print_report(report_dict: dict) -> None:
     print(f"\n{'='*60}\n")
 
 
+def _build_scalp_provider(provider_name: str, cache_downloads: bool):
+    """Resolve ScalpRunner's historical data provider for a CLI run."""
+    if provider_name == "cache":
+        return CacheOnlyProvider(), "cache"
+
+    if provider_name == "alpaca":
+        provider = AlpacaProvider()
+        if not provider.available:
+            raise RuntimeError("Alpaca is not configured; set APCA_API_KEY_ID and APCA_API_SECRET_KEY")
+        selected = "alpaca"
+    elif provider_name == "schwab":
+        provider = get_schwab_provider()
+        if not provider.is_configured:
+            raise RuntimeError("Schwab is not configured; complete OAuth or set Schwab credentials")
+        selected = "schwab"
+    elif provider_name == "yfinance":
+        provider = YFinanceProvider()
+        selected = "yfinance"
+    else:
+        alpaca = AlpacaProvider()
+        schwab = get_schwab_provider()
+        if alpaca.available:
+            provider, selected = alpaca, "alpaca"
+        elif schwab.is_configured:
+            provider, selected = schwab, "schwab"
+        else:
+            provider, selected = YFinanceProvider(), "yfinance"
+
+    if cache_downloads:
+        provider = CachedProvider(provider)
+        selected = f"cached-{selected}"
+    return provider, selected
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run AI-Trader strategy backtests")
     parser.add_argument("agent", nargs="?", help="Agent key to backtest (e.g. blitztrader)")
@@ -89,6 +128,20 @@ def main():
     parser.add_argument("--capital", type=float, default=100000.0, help="Initial capital (default: $100,000)")
     parser.add_argument("--interval", type=str, default="", help="Candle interval override for runner backtests")
     parser.add_argument("--slippage", type=float, default=10.0, help="Base slippage in basis points")
+    parser.add_argument("--fee-rate", type=float, default=0.001, help="Trading fee rate for realistic fills")
+    parser.add_argument(
+        "--provider", choices=("auto", "alpaca", "schwab", "yfinance", "cache"),
+        default="auto",
+        help="Historical data provider for runner backtests (default: auto)",
+    )
+    parser.add_argument(
+        "--cache", action="store_true",
+        help="Cache downloaded runner data locally for faster repeat backtests",
+    )
+    parser.add_argument(
+        "--no-realistic-fills", action="store_true",
+        help="Disable fees, impact, volatility widening, partial fills, and tick rounding",
+    )
     parser.add_argument("--json", type=str, default="", help="Save full report as JSON to this path")
     parser.add_argument("--goal-target", type=float, default=None, help="Goal target profit in $ (e.g. 100 for $100 profit)")
     parser.add_argument("--goal-max-loss", type=float, default=None, help="Goal max loss in $ (e.g. 500 stops trading at -$500)")
@@ -99,6 +152,7 @@ def main():
         print("  blitztrader      — BlitzTrader: deterministic equity momentum")
         print("  blitzrunner      — BlitzRunner: deterministic equity momentum")
         print("  cryptorunner     — CryptoRunner: deterministic crypto swing")
+        print("  scalprunner      — ScalpRunner: deterministic 4-step equity scalp")
         for key, info in list_personalities().items():
             if key in AGENT_CLASSES:
                 print(f"  {key:15s} — {info['name']}: {info['tagline']} [{info['strategy']}]")
@@ -109,21 +163,50 @@ def main():
 
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
 
-    if args.agent in {"blitztrader", "blitzrunner", "cryptorunner"}:
+    if args.agent in {"blitztrader", "blitzrunner", "cryptorunner", "scalprunner"}:
         defaults = {
             "blitztrader": (["NVDA", "TSLA", "META", "AMZN"], "1h", "BlitzTrader", "momentum_scalp"),
             "blitzrunner": (["NVDA", "TSLA", "META", "AMZN"], "1h", "BlitzRunner", "momentum_scalp"),
             "cryptorunner": (["BTC", "ETH", "SOL", "DOGE", "AVAX", "XRP", "LINK"], "1d", "CryptoRunner", "crypto_swing"),
+            "scalprunner": (["NVDA", "TSLA", "AAPL", "AMD", "META"], "5m", "ScalpRunner", "scalp_4step"),
         }
         default_symbols, default_interval, display_name, strategy_type = defaults[args.agent]
         params = effective_params(display_name, strategy_type)
         selected_symbols = symbols or default_symbols
-        interval = args.interval if hasattr(args, "interval") and args.interval else default_interval
+        interval = args.interval or default_interval
         print(f"\nRunning backtest: {display_name} ({args.agent})")
         print(f"  Symbols: {', '.join(selected_symbols)}")
-        print(f"  Period:  {args.start or '2y'} → {args.end or 'now'}")
+        print(f"  Period:  {args.start or 'provider default'} → {args.end or 'now'}")
         print(f"  Capital: ${args.capital:,.2f}")
-        bt = CryptoScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage, goal_target=args.goal_target, goal_max_loss=args.goal_max_loss) if args.agent == "cryptorunner" else ScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage, goal_target=args.goal_target, goal_max_loss=args.goal_max_loss)
+
+        if args.agent == "scalprunner":
+            provider, provider_label = _build_scalp_provider(args.provider, args.cache)
+            print(f"  Interval: {interval}")
+            print(f"  Provider: {provider_label}")
+            print(f"  Realistic fills: {not args.no_realistic_fills}")
+            from execution_simulator import FillConfig
+            fill_config = FillConfig(
+                slippage_bps=args.slippage,
+                fee_rate=args.fee_rate if not args.no_realistic_fills else 0.0,
+                enable_size_impact=not args.no_realistic_fills,
+                enable_vol_widening=not args.no_realistic_fills,
+                enable_partial_fills=not args.no_realistic_fills,
+                enable_tick_rounding=not args.no_realistic_fills,
+                market="us-stock",
+                interval=interval,
+            )
+            bt = ScalpScanBacktester(
+                symbols=selected_symbols, params=params,
+                start_date=args.start, end_date=args.end,
+                initial_capital=args.capital, slippage_bps=args.slippage,
+                provider=provider, goal_target=args.goal_target,
+                goal_max_loss=args.goal_max_loss, base_interval=interval,
+                fill_config=fill_config,
+            )
+        elif args.agent == "cryptorunner":
+            bt = CryptoScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage, goal_target=args.goal_target, goal_max_loss=args.goal_max_loss)
+        else:
+            bt = ScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage, goal_target=args.goal_target, goal_max_loss=args.goal_max_loss)
         report_dict = bt.run().to_dict()
         print_report(report_dict)
         if args.json:
