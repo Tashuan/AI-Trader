@@ -446,6 +446,10 @@ def init_database():
     conn = get_db_connection()
     previous_autocommit = None
     if using_postgres():
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         previous_autocommit = conn.autocommit
         conn.autocommit = True
     cursor = conn.cursor()

@@ -162,6 +162,30 @@ class AlpacaBroker:
             )
         return result
 
+    def submit_oco_order(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        stop_loss_price: float,
+        take_profit_price: float,
+        client_order_id: str | None = None,
+    ) -> Optional[dict]:
+        """Submit linked stop-loss/take-profit exits for an existing position."""
+        body: dict[str, Any] = {
+            "symbol": symbol.upper().replace("-USD", "").replace("=F", "").replace("^", ""),
+            "qty": str(qty),
+            "side": side,
+            "type": "limit",
+            "time_in_force": "gtc",
+            "order_class": "oco",
+            "take_profit": {"limit_price": str(take_profit_price)},
+            "stop_loss": {"stop_price": str(stop_loss_price)},
+        }
+        if client_order_id:
+            body["client_order_id"] = client_order_id
+        return self._request("POST", "/orders", json_body=body)
+
     def submit_bracket_order(
         self,
         symbol: str,

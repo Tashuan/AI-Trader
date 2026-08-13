@@ -110,6 +110,24 @@ def register_pending_order_routes(app: FastAPI, ctx: RouteContext) -> None:
                  client_order_id if alpaca_managed else None),
             )
             order_id = cursor.lastrowid
+            if alpaca_managed:
+                order_status = str(alpaca_order.get('status', 'new')).lower()
+                status_map = {
+                    'filled': 'filled', 'partially_filled': 'partially_filled',
+                    'rejected': 'rejected', 'canceled': 'cancelled', 'expired': 'expired',
+                }
+                cursor.execute(
+                    """INSERT INTO alpaca_order_executions
+                        (agent_id, pending_order_id, alpaca_order_id, client_order_id,
+                         symbol, market, side, order_role, status, requested_qty,
+                         requested_price, stop_loss_price, take_profit_price,
+                         submitted_at, raw_order_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'entry', ?, ?, ?, ?, ?, ?, ?)""",
+                    (agent_id, order_id, alpaca_order.get('id'), client_order_id,
+                     data.symbol, data.market, data.side, status_map.get(order_status, 'pending'),
+                     data.quantity, data.stop_price, data.stop_loss_price,
+                     data.take_profit_price, utc_now_iso_z(), json.dumps(alpaca_order)),
+                )
             conn.commit()
         except Exception as e:
             conn.rollback()

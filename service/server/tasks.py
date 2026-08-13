@@ -1960,14 +1960,48 @@ async def pending_order_filler_loop():
                 finally:
                     conn.close()
 
-            # Mark expired orders
+            # Cancel expired Alpaca orders before expiring their internal records.
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """SELECT id, agent_id, alpaca_order_id
+                       FROM pending_orders
+                       WHERE status = 'PENDING' AND COALESCE(alpaca_managed, 0) = 1
+                         AND datetime(expires_at) <= datetime('now')
+                         AND alpaca_order_id IS NOT NULL"""
+                )
+                expired_managed = cursor.fetchall()
+            finally:
+                conn.close()
+
+            for expired_order in expired_managed:
+                try:
+                    from alpaca_broker import get_alpaca_broker_for_agent
+                    broker = get_alpaca_broker_for_agent(expired_order["agent_id"])
+                    if broker and await asyncio.to_thread(broker.cancel_order, expired_order["alpaca_order_id"]):
+                        conn = get_db_connection()
+                        try:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                "UPDATE pending_orders SET status = 'EXPIRED' WHERE id = ? AND status = 'PENDING'",
+                                (expired_order["id"],),
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+                except Exception as exc:
+                    print(f"[Alpaca] expiry cancellation failed for order {expired_order['id']}: {exc}")
+
+            # Internal orders can be expired directly; managed orders are only
+            # expired after Alpaca confirms cancellation above.
             conn = get_db_connection()
             try:
                 cursor = conn.cursor()
                 cursor.execute(
                     """UPDATE pending_orders
                        SET status = 'EXPIRED'
-                       WHERE status = 'PENDING'
+                       WHERE status = 'PENDING' AND COALESCE(alpaca_managed, 0) = 0
                          AND datetime(expires_at) <= datetime('now')"""
                 )
                 expired_count = cursor.rowcount if cursor.rowcount > 0 else 0
@@ -1988,6 +2022,56 @@ async def pending_order_filler_loop():
         await asyncio.sleep(_env_int("PENDING_ORDER_CHECK_INTERVAL", 5, minimum=3))
 
 
+def _submit_alpaca_pending_exits(agent_id: int, entry: dict) -> None:
+    """Install protective exits after an Alpaca stop-entry fills."""
+    try:
+        from alpaca_broker import get_alpaca_broker_for_agent
+        broker = get_alpaca_broker_for_agent(agent_id)
+        if not broker or not broker.enabled:
+            return
+        side = "sell" if entry["side"] == "long" else "buy"
+        client_order_id = f"ai-trader:pending-exit:{agent_id}:{entry['pending_order_id']}"
+        if entry["stop_loss_price"] and entry["take_profit_price"]:
+            order = broker.submit_oco_order(
+                entry["symbol"], entry["quantity"], side,
+                entry["stop_loss_price"], entry["take_profit_price"], client_order_id,
+            )
+        elif entry["stop_loss_price"]:
+            order = broker.submit_order(
+                entry["symbol"], entry["quantity"], side, order_type="stop",
+                time_in_force="gtc", stop_price=entry["stop_loss_price"],
+                client_order_id=client_order_id,
+            )
+        elif entry["take_profit_price"]:
+            order = broker.submit_order(
+                entry["symbol"], entry["quantity"], side, order_type="limit",
+                time_in_force="gtc", limit_price=entry["take_profit_price"],
+                client_order_id=client_order_id,
+            )
+        else:
+            return
+        if not order:
+            raise RuntimeError("Alpaca rejected protective exit order")
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO alpaca_order_executions
+                   (agent_id, alpaca_order_id, alpaca_parent_order_id, client_order_id,
+                    symbol, market, side, order_role, status, requested_qty,
+                    stop_loss_price, take_profit_price, submitted_at, raw_order_json)
+                   VALUES (?, ?, ?, ?, ?, 'us-stock', ?, 'exit', 'pending', ?, ?, ?, ?, ?)""",
+                (agent_id, order.get("id"), order.get("id"), client_order_id, entry["symbol"], side,
+                 entry["quantity"], entry["stop_loss_price"], entry["take_profit_price"],
+                 datetime.now(timezone.utc).isoformat(), json.dumps(order)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        print(f"[Alpaca] protective exits failed for {entry.get('symbol')}: {exc}")
+
+
 def _apply_alpaca_trade_update(agent_id: int, payload: dict) -> None:
     """Persist one Alpaca trade update and project terminal fills idempotently."""
     order = payload.get("order") or {}
@@ -1996,6 +2080,7 @@ def _apply_alpaca_trade_update(agent_id: int, payload: dict) -> None:
         return
     event_type = str(payload.get("event") or order.get("status") or "unknown")
     event_key = f"{order_id}:{event_type}:{order.get('filled_qty', 0)}:{order.get('filled_avg_price', '')}"
+    pending_entry: dict | None = None
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -2025,28 +2110,90 @@ def _apply_alpaca_trade_update(agent_id: int, payload: dict) -> None:
                 """UPDATE alpaca_order_executions
                    SET status = ?, order_role = ?, filled_qty = ?,
                        filled_avg_price = COALESCE(?, filled_avg_price),
+                       filled_at = CASE WHEN ? = 'filled' THEN COALESCE(filled_at, ?) ELSE filled_at END,
                        last_event_id = ?, updated_at = ?, raw_order_json = ?
                    WHERE id = ?""",
                 (execution_status, effective_role, filled_qty, filled_price,
-                 event_key, datetime.now(timezone.utc).isoformat(),
-                 json.dumps(order), execution["id"]),
+                 execution_status, datetime.now(timezone.utc).isoformat(), event_key,
+                 datetime.now(timezone.utc).isoformat(), json.dumps(order), execution["id"]),
             )
+            pending_order_id = execution["pending_order_id"]
+            if pending_order_id:
+                pending_status = {
+                    "filled": "FILLED", "rejected": "CANCELLED",
+                    "cancelled": "CANCELLED", "expired": "EXPIRED",
+                }.get(execution_status)
+                if pending_status:
+                    cursor.execute(
+                        """UPDATE pending_orders
+                           SET status = ?, filled_at = CASE WHEN ? = 'FILLED' THEN COALESCE(filled_at, ?) ELSE filled_at END,
+                               filled_price = CASE WHEN ? = 'FILLED' THEN COALESCE(?, filled_price) ELSE filled_price END
+                           WHERE id = ? AND agent_id = ?""",
+                        (pending_status, pending_status, datetime.now(timezone.utc).isoformat(),
+                         pending_status, filled_price, pending_order_id, agent_id),
+                    )
+                if execution_status == "filled" and effective_role == "entry":
+                    pending_entry = {
+                        "pending_order_id": pending_order_id,
+                        "symbol": execution["symbol"],
+                        "market": execution["market"],
+                        "side": execution["side"],
+                        "quantity": filled_qty or execution["requested_qty"],
+                        "price": filled_price or execution["requested_price"],
+                        "stop_loss_price": execution["stop_loss_price"],
+                        "take_profit_price": execution["take_profit_price"],
+                        "alpaca_order_id": str(order_id),
+                    }
             if execution_status == "filled" and effective_role in ("take_profit", "stop_loss", "exit"):
                 cursor.execute(
                     "DELETE FROM positions WHERE agent_id = ? AND market = 'us-stock' AND symbol = ? AND COALESCE(alpaca_managed, 0) = 1",
                     (agent_id, execution["symbol"]),
                 )
-            elif execution_status == "filled":
+            elif execution_status == "filled" and not pending_order_id:
                 cursor.execute(
                     "UPDATE positions SET alpaca_managed = 1, alpaca_order_id = ? WHERE agent_id = ? AND market = 'us-stock' AND symbol = ?",
                     (str(order_id), agent_id, execution["symbol"]),
                 )
+            if pending_entry:
+                from services import _reserve_signal_id, _update_position_from_signal
+                cursor.execute(
+                    "SELECT id FROM positions WHERE agent_id = ? AND market = 'us-stock' AND symbol = ? AND COALESCE(alpaca_managed, 0) = 1",
+                    (agent_id, pending_entry["symbol"]),
+                )
+                if not cursor.fetchone():
+                    _update_position_from_signal(
+                        agent_id=agent_id, symbol=pending_entry["symbol"], market=pending_entry["market"],
+                        action="buy" if pending_entry["side"] == "long" else "short",
+                        quantity=pending_entry["quantity"], price=pending_entry["price"],
+                        executed_at=datetime.now(timezone.utc).isoformat(), cursor=cursor,
+                        stop_loss_price=pending_entry["stop_loss_price"], take_profit_price=pending_entry["take_profit_price"],
+                    )
+                    cursor.execute(
+                        "UPDATE positions SET alpaca_managed = 1, alpaca_order_id = ? WHERE agent_id = ? AND market = 'us-stock' AND symbol = ?",
+                        (pending_entry["alpaca_order_id"], agent_id, pending_entry["symbol"]),
+                    )
+                    signal_id = _reserve_signal_id(cursor)
+                    cursor.execute(
+                        """INSERT INTO signals
+                           (signal_id, agent_id, message_type, market, signal_type, symbol, side,
+                            entry_price, quantity, content, timestamp, created_at, executed_at)
+                           VALUES (?, ?, 'operation', ?, 'pending_fill', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (signal_id, agent_id, pending_entry["market"], pending_entry["symbol"],
+                         pending_entry["side"], pending_entry["price"], pending_entry["quantity"],
+                         f"[ScalpRunner] Alpaca pending order filled: {pending_entry['symbol']} {pending_entry['side']} @ {pending_entry['price']}",
+                         int(datetime.now(timezone.utc).timestamp()), datetime.now(timezone.utc).isoformat(),
+                         datetime.now(timezone.utc).isoformat()),
+                    )
+                    cursor.execute("UPDATE pending_orders SET signal_id = ? WHERE id = ?", (signal_id, pending_order_id))
         conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+    if pending_entry and (pending_entry["stop_loss_price"] or pending_entry["take_profit_price"]):
+        _submit_alpaca_pending_exits(agent_id, pending_entry)
 
 
 async def alpaca_websocket_listener():

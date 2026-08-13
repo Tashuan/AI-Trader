@@ -45,6 +45,19 @@ class AlpacaExecutionTests(unittest.TestCase):
         self.assertEqual(result["alpaca_order_id"], "existing-order")
         submit_order.assert_not_called()
 
+    @patch.object(AlpacaBroker, "_request")
+    def test_submit_oco_order_builds_linked_protective_exits(self, request):
+        request.return_value = {"id": "oco-order", "status": "new"}
+        result = self.broker.submit_oco_order(
+            "NVDA", 3, "sell", 95.0, 110.0, "ai-trader:pending-exit:21:7",
+        )
+        self.assertEqual(result["id"], "oco-order")
+        body = request.call_args.kwargs["json_body"]
+        self.assertEqual(body["order_class"], "oco")
+        self.assertEqual(body["side"], "sell")
+        self.assertEqual(body["stop_loss"]["stop_price"], "95.0")
+        self.assertEqual(body["take_profit"]["limit_price"], "110.0")
+
     @patch.object(AlpacaBroker, "find_order_by_client_order_id")
     @patch.object(AlpacaBroker, "submit_order")
     def test_execute_close_reuses_existing_client_order(self, submit_order, find_order):
