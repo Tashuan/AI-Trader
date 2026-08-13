@@ -41,8 +41,8 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
     "exit_rules": {
         "stop_loss_pct": -1.0,
         "take_profit_pct": 1.5,
-        "trailing_sl_pct": 0.5,
-        "trailing_activation_pct": 0.8,
+        "trailing_sl_pct": 0.4,
+        "trailing_activation_pct": 0.5,
         "stagnation_minutes": 10,
         "stagnation_threshold_pct": 0.1,
         "momentum_death_vol_ratio": 0.5,
@@ -59,6 +59,7 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "min_depth_dollars": 50_000,
         "require_trend_agreement": True,
         "block_on_obv_divergence": True,
+        "direction_mode": "short",
     },
     "position_sizing": {
         "max_positions": 3,
@@ -97,9 +98,22 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
     "order": {
         "stop_limit_offset_pct": 0.02,
         "entry_trigger_offset_pct": 0.08,
-        "order_expiry_minutes": 30,
-        "sl_atr_multiple": 1.0,
-        "tp_atr_multiple": 1.5,
+        "order_expiry_minutes": 180,
+        "sl_atr_multiple": 1.5,
+        "tp_atr_multiple": 2.5,
+    },
+    "premove_filter": {
+        "enabled": True,
+        "max_move_pct": 2.0,
+        "lookback_bars": 8,
+    },
+    "market_regime": {
+        "enabled": True,
+        "symbol": "SPY",
+        "daily_ema_period": 10,
+        "block_shorts_in_bull": True,
+        "block_longs_in_bear": False,
+        "threshold_pct": 0.0,
     },
     "indicators": {
         "rsi_period": 14,

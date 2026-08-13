@@ -89,10 +89,15 @@ def _load_config(token: Optional[str], inline_config: Optional[str]) -> dict[str
 
 def _fetch_history(symbol: str, interval: str, lookback_bars: int = 200) -> Optional[pd.DataFrame]:
     """Fetch Arena history through the canonical provider router."""
-    period = "5d" if interval in ("1m", "5m", "15m") else "1mo"
+    if interval == "1d":
+        period = "3mo"
+        min_bars = 10
+    else:
+        period = "5d" if interval in ("1m", "5m", "15m") else "1mo"
+        min_bars = 30
     try:
         df = get_arena_market_data().history(symbol, period=period, interval=interval)
-        if df is not None and not df.empty and len(df) >= 30:
+        if df is not None and not df.empty and len(df) >= min_bars:
             return df.tail(lookback_bars)
     except Exception as e:
         print(f"[ScalpScan] history failed for {symbol} {interval}: {e}")
@@ -376,6 +381,92 @@ def _analyze_setup(symbol: str, quote: Optional[dict], level2: Optional[dict],
     }
 
 
+def _check_premove_filter(symbol: str, direction: str, df_5m: pd.DataFrame,
+                          params: dict) -> bool:
+    """Pre-move cap filter: reject setups where the stock already moved too far.
+
+    Returns True if the setup passes (should be kept), False if blocked.
+    """
+    premove_cfg = params.get("premove_filter", {})
+    if not premove_cfg.get("enabled", False):
+        return True
+
+    max_move = float(premove_cfg.get("max_move_pct", 3.0))
+    lookback = int(premove_cfg.get("lookback_bars", 8))
+
+    if df_5m is None or df_5m.empty or len(df_5m) < lookback + 1:
+        return True  # Can't compute, allow
+
+    recent = df_5m.tail(lookback + 1)
+    start_px = float(recent["Close"].iloc[0])
+    end_px = float(recent["Close"].iloc[-1])
+    if start_px <= 0:
+        return True
+
+    recent_ret = (end_px / start_px - 1) * 100.0
+
+    # For longs: reject if stock already rose > max_move
+    # For shorts: reject if stock already fell > max_move
+    if direction == "long" and recent_ret > max_move:
+        return False
+    if direction == "short" and recent_ret < -max_move:
+        return False
+
+    return True
+
+
+def _check_market_regime(direction: str, params: dict) -> tuple[bool, str]:
+    """SPY daily EMA regime filter.
+
+    Returns (passes, regime_label).
+    Blocks short trades when SPY > daily EMA (bull regime).
+    Blocks long trades when SPY < daily EMA (bear regime) if configured.
+    """
+    regime_cfg = params.get("market_regime", {})
+    if not regime_cfg.get("enabled", False):
+        return True, "disabled"
+
+    spy_symbol = regime_cfg.get("symbol", "SPY")
+    ema_period = int(regime_cfg.get("daily_ema_period", 20))
+    threshold_pct = float(regime_cfg.get("threshold_pct", 0.0))
+
+    try:
+        spy_df = _fetch_history(spy_symbol, "1d", ema_period + 10)
+    except Exception:
+        spy_df = None
+
+    if spy_df is None or spy_df.empty or len(spy_df) < ema_period + 1:
+        return True, "no_data"  # Can't determine regime, allow
+
+    closes = spy_df["Close"]
+    ema = closes.ewm(span=ema_period, adjust=False).mean()
+    spy_close = float(closes.iloc[-1])
+    spy_ema = float(ema.iloc[-1])
+
+    if pd.isna(spy_ema) or spy_ema <= 0:
+        return True, "no_ema"
+
+    bull_threshold = spy_ema * (1 + threshold_pct / 100.0)
+    bear_threshold = spy_ema * (1 - threshold_pct / 100.0)
+
+    if spy_close > bull_threshold:
+        regime = "bull"
+    elif spy_close < bear_threshold:
+        regime = "bear"
+    else:
+        regime = "neutral"
+
+    # Block shorts in bull regime
+    if regime == "bull" and direction == "short" and regime_cfg.get("block_shorts_in_bull", True):
+        return False, regime
+
+    # Block longs in bear regime (optional)
+    if regime == "bear" and direction == "long" and regime_cfg.get("block_longs_in_bear", False):
+        return False, regime
+
+    return True, regime
+
+
 # ============================================================
 # Main Scan Function
 # ============================================================
@@ -415,6 +506,14 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
     symbols_data = {}
     ranked_setups = []
 
+    # Pre-fetch SPY regime once for the entire scan
+    regime_cfg = params.get("market_regime", {})
+    spy_regime_label = "disabled"
+    if regime_cfg.get("enabled", False):
+        # Determine regime using the first direction we care about
+        _, spy_regime_label = _check_market_regime("short", params)
+    print(f"[ScalpScan] Market regime: {spy_regime_label}")
+
     for candidate in liquid:
         sym = candidate["symbol"]
         df_5m = candidate["df_5m"]
@@ -423,10 +522,23 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
 
         setup = analysis.get("setup", {})
         if setup.get("qualifies", False):
+            direction = setup.get("direction", "long")
+
+            # Pre-move cap filter
+            if not _check_premove_filter(sym, direction, df_5m, params):
+                print(f"[ScalpScan]   {sym} {direction}: blocked by pre-move cap")
+                continue
+
+            # SPY market regime filter
+            regime_pass, regime = _check_market_regime(direction, params)
+            if not regime_pass:
+                print(f"[ScalpScan]   {sym} {direction}: blocked by market regime ({regime})")
+                continue
+
             ranked_setups.append({
                 "symbol": sym,
                 "score": setup.get("score", 0),
-                "direction": setup.get("direction", "long"),
+                "direction": direction,
                 "entry_level": setup.get("entry_level", 0),
                 "sl_level": setup.get("sl_level", 0),
                 "tp_level": setup.get("tp_level", 0),
@@ -449,6 +561,7 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
         "symbols": symbols_data,
         "scan_time_seconds": round(scan_time, 2),
         "scan_timestamp": scan_start.isoformat(),
+        "market_regime": spy_regime_label,
         "params_used": {"timeframes": params.get("timeframes", {})},
     }
 

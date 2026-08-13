@@ -236,6 +236,7 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "min_depth_dollars": _field("Min Depth $", "number", minimum=0, maximum=1e7, default=50_000),
                 "require_trend_agreement": _field("Require Trend Agreement", "bool", default=True),
                 "block_on_obv_divergence": _field("Block Entry on OBV Divergence", "bool", default=True),
+                "direction_mode": _field("Direction Mode", "enum", choices=["both", "long", "short"], default="short"),
             },
             "position_sizing": {
                 "max_positions": _field("Max Positions", "number", minimum=1, maximum=20, default=3),
@@ -274,7 +275,7 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
             "order": {
                 "stop_limit_offset_pct": _field("Stop-Limit Offset %", "number", minimum=0, maximum=1, default=0.02),
                 "entry_trigger_offset_pct": _field("Entry Trigger Offset %", "number", minimum=0, maximum=2, default=0.08),
-                "order_expiry_minutes": _field("Order Expiry Minutes", "number", minimum=1, maximum=120, default=30),
+                "order_expiry_minutes": _field("Order Expiry Minutes", "number", minimum=1, maximum=360, default=180),
                 "sl_atr_multiple": _field("SL ATR Multiple", "number", minimum=0.1, maximum=5, default=1.0),
                 "tp_atr_multiple": _field("TP ATR Multiple", "number", minimum=0.1, maximum=10, default=1.5),
             },
@@ -298,6 +299,19 @@ STRATEGY_SCHEMAS: dict[str, dict[str, Any]] = {
                 "poll_interval_default": _field("Default Poll Interval", "number", minimum=5, maximum=300, default=15),
                 "poll_interval_min": _field("Min Poll Interval", "number", minimum=5, maximum=60, default=5),
                 "poll_interval_max": _field("Max Poll Interval", "number", minimum=15, maximum=600, default=60),
+            },
+            "premove_filter": {
+                "enabled": _field("Pre-Move Filter Enabled", "bool", default=True),
+                "max_move_pct": _field("Max Pre-Move %", "number", minimum=0, maximum=20, default=2.0),
+                "lookback_bars": _field("Pre-Move Lookback Bars", "number", minimum=1, maximum=50, default=8),
+            },
+            "market_regime": {
+                "enabled": _field("Market Regime Filter Enabled", "bool", default=True),
+                "symbol": _field("Regime Symbol", "text", default="SPY"),
+                "daily_ema_period": _field("Daily EMA Period", "number", minimum=2, maximum=200, default=10),
+                "block_shorts_in_bull": _field("Block Shorts in Bull", "bool", default=True),
+                "block_longs_in_bear": _field("Block Longs in Bear", "bool", default=False),
+                "threshold_pct": _field("Regime Threshold %", "number", minimum=0, maximum=10, default=0.0),
             },
         },
     },
