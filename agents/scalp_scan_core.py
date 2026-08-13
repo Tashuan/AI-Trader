@@ -38,18 +38,6 @@ from scan_core import (
 # ============================================================
 
 SCALP_DEFAULT_PARAMS: dict[str, Any] = {
-    "exit_rules": {
-        "stop_loss_pct": -1.0,
-        "take_profit_pct": 1.5,
-        "trailing_sl_pct": 0.4,
-        "trailing_activation_pct": 0.5,
-        "stagnation_minutes": 10,
-        "stagnation_threshold_pct": 0.1,
-        "momentum_death_vol_ratio": 0.5,
-        "momentum_death_grace_bars": 5,
-        "ob_exhaustion_rsi": 78,
-        "exit_mode": "set_and_forget",
-    },
     "entry_criteria": {
         "min_signals": 3,
         "min_signal_families": 2,
@@ -60,15 +48,6 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "require_trend_agreement": True,
         "block_on_obv_divergence": True,
         "direction_mode": "short",
-    },
-    "position_sizing": {
-        "max_positions": 3,
-        "max_pending_orders": 5,
-        "normal_sizing_min_pct": 5,
-        "normal_sizing_max_pct": 10,
-        "risk_per_trade_pct": 0.25,
-        "consecutive_loss_threshold": 3,
-        "consecutive_loss_size_cut_pct": 50,
     },
     "timeframes": {
         "entry_interval": "1m",
@@ -83,24 +62,6 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "sr_min_touches": 2,
         "sr_tolerance_pct": 0.15,
         "breakout_confirm_bars": 3,
-    },
-    "discovery": {
-        "movers_enabled": True,
-        "movers_indices": ["$COMPX", "$DJI", "$SPX"],
-        "news_enabled": True,
-        "news_lookback_hours": 4,
-        "scanner_enabled": True,
-        "scanner_min_vol_ratio": 2.0,
-        "scanner_min_price_change_pct": 0.5,
-        "scanner_universe_size": 100,
-        "max_shortlist": 15,
-    },
-    "order": {
-        "stop_limit_offset_pct": 0.02,
-        "entry_trigger_offset_pct": 0.08,
-        "order_expiry_minutes": 180,
-        "sl_atr_multiple": 1.5,
-        "tp_atr_multiple": 2.5,
     },
     "premove_filter": {
         "enabled": True,
@@ -136,6 +97,134 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "poll_interval_min": 5,
         "poll_interval_max": 60,
     },
+    "breakout_detection": {
+        "approaching_threshold_pct": 0.5,
+        "consolidation_threshold_pct": 1.0,
+    },
+    "pattern_detection": {
+        "min_bars": 20,
+        "consolidation_lookback": 3,
+        "range_breakout_confidence": 0.7,
+        "flag_min_bars": 15,
+        "flag_strong_move_bars": 5,
+        "flag_consolidation_bars": 10,
+        "flag_min_move_pct": 1.5,
+        "flag_max_consolidation_range_pct": 1.0,
+        "flag_confidence": 0.6,
+        "wedge_min_bars": 20,
+        "wedge_lookback": 20,
+        "wedge_confidence": 0.5,
+    },
+    "liquidity_scoring": {
+        "avg_bars": 20,
+        "spread_weight": 0.4,
+        "depth_weight": 0.3,
+        "volume_weight": 0.3,
+        "good_threshold": 0.6,
+        "marginal_threshold": 0.3,
+    },
+    "trend_detection": {
+        "rsi_bullish": 55,
+        "rsi_bearish": 45,
+        "max_signals": 4,
+    },
+    "scoring_weights": {
+        "confluence_weight": 0.30,
+        "level_alignment_weight": 0.25,
+        "pattern_weight": 0.20,
+        "liquidity_weight": 0.15,
+        "volume_momentum_weight": 0.10,
+    },
+    "scoring_thresholds": {
+        "min_qualification_score": 4.0,
+        "fib_near_threshold_pct": 0.5,
+        "fib_medium_threshold_pct": 1.0,
+        "fib_near_score": 0.7,
+        "fib_medium_score": 0.3,
+        "level_alignment_ready": 1.0,
+        "level_alignment_approaching": 0.5,
+        "confluence_max": 2.0,
+        "score_scale": 10.0,
+    },
+    "technical": {
+        "atr_fallback_pct": 0.2,
+        "min_confluence_for_agreement": 2,
+        "swing_window": 2,
+        "swing_min_bars": 5,
+        "min_bars_precompute": 30,
+        "sr_strength_normalization": 10.0,
+    },
+    "discovery": {
+        "movers_enabled": True,
+        "movers_indices": ["$COMPX", "$DJI", "$SPX"],
+        "news_enabled": True,
+        "news_lookback_hours": 4,
+        "scanner_enabled": True,
+        "scanner_min_vol_ratio": 2.0,
+        "scanner_min_price_change_pct": 0.5,
+        "scanner_universe_size": 100,
+        "max_shortlist": 15,
+        "scanner_universe": [
+            "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL",
+            "NFLX", "INTC", "MU", "QQQ", "SPY", "IWM", "BA", "DIS",
+            "BABA", "JD", "COIN", "MARA", "RIOT", "SOFI", "AAL", "UAL",
+            "F", "GM", "NIO", "XPEV", "PLUG", "FCEL", "DKNG", "PENN",
+        ],
+        "fallback_shortlist": [
+            "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL",
+        ],
+        "scanner_interval": "5m",
+        "scanner_lookback_bars": 50,
+        "scanner_min_bars": 20,
+        "scanner_vol_lookback_bars": 20,
+        "news_limit": 50,
+        "news_process_limit": 50,
+        "news_max_ticker_length": 5,
+        "news_max_symbols": 20,
+    },
+    "data_fetch": {
+        "intraday_period": "5d",
+        "daily_period": "3mo",
+        "default_period": "1mo",
+        "intraday_min_bars": 30,
+        "daily_min_bars": 10,
+        "entry_min_bars": 30,
+    },
+    "exit_rules": {
+        "stop_loss_pct": -1.0,
+        "take_profit_pct": 1.5,
+        "trailing_sl_pct": 0.4,
+        "trailing_activation_pct": 0.5,
+        "stagnation_minutes": 10,
+        "stagnation_threshold_pct": 0.1,
+        "momentum_death_vol_ratio": 0.5,
+        "momentum_death_grace_bars": 5,
+        "ob_exhaustion_rsi": 78,
+        "exit_mode": "set_and_forget",
+        "reentry_cooldown_cycles": 3,
+        "default_rsi": 50,
+    },
+    "position_sizing": {
+        "max_positions": 3,
+        "max_pending_orders": 5,
+        "normal_sizing_min_pct": 5,
+        "normal_sizing_max_pct": 10,
+        "risk_per_trade_pct": 0.25,
+        "consecutive_loss_threshold": 3,
+        "consecutive_loss_size_cut_pct": 50,
+        "final_stretch_threshold_pct": 80.0,
+    },
+    "order": {
+        "stop_limit_offset_pct": 0.02,
+        "entry_trigger_offset_pct": 0.08,
+        "order_expiry_minutes": 180,
+        "sl_atr_multiple": 1.5,
+        "tp_atr_multiple": 2.5,
+        "market_type": "us-stock",
+        "order_type": "stop_limit",
+        "price_decimals": 6,
+        "default_stop_distance_pct": 1.0,
+    },
     "watchlist": [],
 }
 
@@ -144,7 +233,8 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
 # Fibonacci Levels
 # ============================================================
 
-def detect_swing_highs_lows(df: pd.DataFrame, lookback: int = 50) -> dict[str, list]:
+def detect_swing_highs_lows(df: pd.DataFrame, lookback: int = 50,
+                            params: dict | None = None) -> dict[str, list]:
     """Find recent swing highs and lows using fractal detection.
 
     A swing high is a bar whose high is higher than the highs of the
@@ -152,10 +242,14 @@ def detect_swing_highs_lows(df: pd.DataFrame, lookback: int = 50) -> dict[str, l
 
     Returns {"swing_highs": [(bar_idx, price)], "swing_lows": [(bar_idx, price)]}
     """
-    if df is None or df.empty or len(df) < 5:
+    p = params or {}
+    tech_cfg = p.get("technical", {})
+    window = int(tech_cfg.get("swing_window", 2))
+    min_bars = int(tech_cfg.get("swing_min_bars", 5))
+
+    if df is None or df.empty or len(df) < min_bars:
         return {"swing_highs": [], "swing_lows": []}
 
-    window = 2  # bars on each side
     recent = df.iloc[-lookback:] if len(df) > lookback else df
     highs = recent["High"].values
     lows = recent["Low"].values
@@ -181,7 +275,8 @@ def detect_swing_highs_lows(df: pd.DataFrame, lookback: int = 50) -> dict[str, l
 
 
 def compute_fib_retracement(swing_high: float, swing_low: float,
-                            direction: str = "long") -> dict[str, float]:
+                            direction: str = "long",
+                            params: dict | None = None) -> dict[str, float]:
     """Compute Fibonacci retracement levels.
 
     For longs: levels are below the swing high (potential entry on pullback).
@@ -194,7 +289,7 @@ def compute_fib_retracement(swing_high: float, swing_low: float,
         return {}
 
     levels = {}
-    fib_ratios = [0.382, 0.5, 0.618, 0.786]
+    fib_ratios = (params or {}).get("levels", {}).get("fib_retracement", [0.382, 0.5, 0.618, 0.786])
     for ratio in fib_ratios:
         if direction == "long":
             levels[str(ratio)] = swing_high - diff * ratio
@@ -204,7 +299,8 @@ def compute_fib_retracement(swing_high: float, swing_low: float,
 
 
 def compute_fib_extension(swing_high: float, swing_low: float,
-                          direction: str = "long") -> dict[str, float]:
+                          direction: str = "long",
+                          params: dict | None = None) -> dict[str, float]:
     """Compute Fibonacci extension levels for TP targets.
 
     For longs: levels above the swing high (profit targets).
@@ -217,7 +313,7 @@ def compute_fib_extension(swing_high: float, swing_low: float,
         return {}
 
     levels = {}
-    fib_ratios = [1.272, 1.618]
+    fib_ratios = (params or {}).get("levels", {}).get("fib_extension", [1.272, 1.618])
     for ratio in fib_ratios:
         if direction == "long":
             levels[str(ratio)] = swing_low + diff * ratio
@@ -245,7 +341,8 @@ def nearest_fib_level(price: float, fib_levels: dict[str, float]) -> Optional[di
 
 def detect_support_resistance(df: pd.DataFrame, lookback: int = 50,
                               min_touches: int = 2,
-                              tolerance_pct: float = 0.15) -> dict[str, Any]:
+                              tolerance_pct: float = 0.15,
+                              params: dict | None = None) -> dict[str, Any]:
     """Detect support/resistance levels from clustered swing points.
 
     Groups swing highs and lows into clusters. A cluster with >= min_touches
@@ -287,7 +384,7 @@ def detect_support_resistance(df: pd.DataFrame, lookback: int = 50,
             "price": level_price,
             "type": level_type,
             "touches": len(cluster),
-            "strength": len(cluster) / 10.0,  # Normalized 0-1ish
+            "strength": len(cluster) / float((params or {}).get("technical", {}).get("sr_strength_normalization", 10.0)),
         })
 
     levels.sort(key=lambda l: abs(l["price"] - current_price))
@@ -332,6 +429,9 @@ def detect_breakout_level(df_5m: pd.DataFrame, sr_levels: dict[str, Any],
     """
     levels_cfg = params.get("levels", {})
     confirm_bars = levels_cfg.get("breakout_confirm_bars", 3)
+    bo_cfg = params.get("breakout_detection", {})
+    approaching_threshold = float(bo_cfg.get("approaching_threshold_pct", 0.5))
+    consolidation_threshold = float(bo_cfg.get("consolidation_threshold_pct", 1.0))
 
     if df_5m is None or df_5m.empty:
         return {"ready_to_break": False, "level_price": 0, "distance_pct": 999}
@@ -345,14 +445,14 @@ def detect_breakout_level(df_5m: pd.DataFrame, sr_levels: dict[str, Any],
     level_type = nearest["type"]
     distance_pct = nearest["distance_pct"]
 
-    # Check if price has been approaching (within 0.5% of the level)
-    approaching = distance_pct < 0.5
+    # Check if price has been approaching (within threshold of the level)
+    approaching = distance_pct < approaching_threshold
 
     # Check if price has been consolidating near the level
-    # (last `confirm_bars` bars all within 1% of the level)
+    # (last `confirm_bars` bars all within consolidation_threshold of the level)
     recent = df_5m.iloc[-confirm_bars:]
     near_level = all(
-        abs(float(bar["Close"]) - level_price) / level_price < 0.01
+        abs(float(bar["Close"]) - level_price) / level_price < consolidation_threshold / 100.0
         for _, bar in recent.iterrows()
     )
 
@@ -369,7 +469,7 @@ def detect_breakout_level(df_5m: pd.DataFrame, sr_levels: dict[str, Any],
     }
 
 
-def detect_pattern(df_5m: pd.DataFrame) -> dict[str, Any]:
+def detect_pattern(df_5m: pd.DataFrame, params: dict | None = None) -> dict[str, Any]:
     """Detect simple chart patterns on 5m chart.
 
     Detects:
@@ -379,32 +479,48 @@ def detect_pattern(df_5m: pd.DataFrame) -> dict[str, Any]:
 
     Returns {"pattern_type", "direction", "confidence"}
     """
-    if df_5m is None or df_5m.empty or len(df_5m) < 20:
+    p = params or {}
+    pd_cfg = p.get("pattern_detection", {})
+
+    min_bars = int(pd_cfg.get("min_bars", 20))
+    cons_lookback = int(pd_cfg.get("consolidation_lookback", 3))
+    bo_conf = float(pd_cfg.get("range_breakout_confidence", 0.7))
+    flag_min_bars = int(pd_cfg.get("flag_min_bars", 15))
+    flag_strong_bars = int(pd_cfg.get("flag_strong_move_bars", 5))
+    flag_cons_bars = int(pd_cfg.get("flag_consolidation_bars", 10))
+    flag_min_move = float(pd_cfg.get("flag_min_move_pct", 1.5))
+    flag_max_cons = float(pd_cfg.get("flag_max_consolidation_range_pct", 1.0))
+    flag_conf = float(pd_cfg.get("flag_confidence", 0.6))
+    wedge_min_bars = int(pd_cfg.get("wedge_min_bars", 20))
+    wedge_lookback = int(pd_cfg.get("wedge_lookback", 20))
+    wedge_conf = float(pd_cfg.get("wedge_confidence", 0.5))
+
+    if df_5m is None or df_5m.empty or len(df_5m) < min_bars:
         return {"pattern_type": "none", "direction": "neutral", "confidence": 0.0}
 
     # Range breakout: was consolidating, now breaking
-    cons_bo = detect_consolidation_breakout(df_5m, lookback=3)
+    cons_bo = detect_consolidation_breakout(df_5m, lookback=cons_lookback)
     if cons_bo:
         last = df_5m.iloc[-1]
         direction = "long" if last["Close"] > last["Open"] else "short"
-        return {"pattern_type": "range_breakout", "direction": direction, "confidence": 0.7}
+        return {"pattern_type": "range_breakout", "direction": direction, "confidence": bo_conf}
 
     # Flag/pennant: strong move followed by tight consolidation
-    if len(df_5m) >= 15:
-        # Strong move in first 5 bars
-        first_5 = df_5m.iloc[-15:-10]
-        last_10 = df_5m.iloc[-10:]
-        move_pct = (first_5["Close"].iloc[-1] / first_5["Close"].iloc[0] - 1) * 100
-        # Consolidation range in last 10 bars
-        cons_range = (last_10["High"].max() - last_10["Low"].min()) / last_10["Close"].mean() * 100
+    if len(df_5m) >= flag_min_bars:
+        # Strong move in first `flag_strong_bars` bars
+        first_bars = df_5m.iloc[-flag_min_bars:-flag_cons_bars]
+        last_bars = df_5m.iloc[-flag_cons_bars:]
+        move_pct = (first_bars["Close"].iloc[-1] / first_bars["Close"].iloc[0] - 1) * 100
+        # Consolidation range in last `flag_cons_bars` bars
+        cons_range = (last_bars["High"].max() - last_bars["Low"].min()) / last_bars["Close"].mean() * 100
 
-        if abs(move_pct) > 1.5 and cons_range < 1.0:
+        if abs(move_pct) > flag_min_move and cons_range < flag_max_cons:
             direction = "long" if move_pct > 0 else "short"
-            return {"pattern_type": "flag", "direction": direction, "confidence": 0.6}
+            return {"pattern_type": "flag", "direction": direction, "confidence": flag_conf}
 
     # Wedge: converging highs and lows
-    if len(df_5m) >= 20:
-        recent = df_5m.iloc[-20:]
+    if len(df_5m) >= wedge_min_bars:
+        recent = df_5m.iloc[-wedge_lookback:]
         highs = recent["High"].values
         lows = recent["Low"].values
 
@@ -415,9 +531,9 @@ def detect_pattern(df_5m: pd.DataFrame) -> dict[str, Any]:
 
         # Converging: highs descending, lows ascending (or vice versa)
         if high_slope < 0 and low_slope > 0:
-            return {"pattern_type": "wedge_bearish", "direction": "short", "confidence": 0.5}
+            return {"pattern_type": "wedge_bearish", "direction": "short", "confidence": wedge_conf}
         elif high_slope > 0 and low_slope > 0 and high_slope > low_slope:
-            return {"pattern_type": "wedge_bullish", "direction": "long", "confidence": 0.5}
+            return {"pattern_type": "wedge_bullish", "direction": "long", "confidence": wedge_conf}
 
     return {"pattern_type": "none", "direction": "neutral", "confidence": 0.0}
 
@@ -434,17 +550,24 @@ def liquidity_score(quote: dict, level2: Optional[dict],
              "dollar_volume", "verdict" ("good"/"marginal"/"poor")}
     """
     entry_cfg = params.get("entry_criteria", {})
+    liq_cfg = params.get("liquidity_scoring", {})
     max_spread = entry_cfg.get("max_spread_pct", 0.15)
     min_depth = entry_cfg.get("min_depth_dollars", 50_000)
     min_dollar_vol = entry_cfg.get("min_dollar_volume", 1_000_000)
+    avg_bars = int(liq_cfg.get("avg_bars", 20))
+    spread_weight = float(liq_cfg.get("spread_weight", 0.4))
+    depth_weight = float(liq_cfg.get("depth_weight", 0.3))
+    volume_weight = float(liq_cfg.get("volume_weight", 0.3))
+    good_threshold = float(liq_cfg.get("good_threshold", 0.6))
+    marginal_threshold = float(liq_cfg.get("marginal_threshold", 0.3))
 
     spread_pct = quote.get("spread_pct", 999) if quote else 999
     total_volume = quote.get("total_volume", 0) if quote else 0
 
     # Dollar volume: use recent bars if available
     if df is not None and not df.empty:
-        avg_price = float(df["Close"].tail(20).mean())
-        avg_vol = float(df["Volume"].tail(20).mean())
+        avg_price = float(df["Close"].tail(avg_bars).mean())
+        avg_vol = float(df["Volume"].tail(avg_bars).mean())
         dollar_volume = avg_price * avg_vol
     else:
         dollar_volume = 0
@@ -460,11 +583,11 @@ def liquidity_score(quote: dict, level2: Optional[dict],
     vol_score = min(1, dollar_volume / min_dollar_vol) if min_dollar_vol > 0 else 0
 
     # Composite (weighted)
-    score = (spread_score * 0.4 + depth_score * 0.3 + vol_score * 0.3)
+    score = (spread_score * spread_weight + depth_score * depth_weight + vol_score * volume_weight)
 
-    if score >= 0.6:
+    if score >= good_threshold:
         verdict = "good"
-    elif score >= 0.3:
+    elif score >= marginal_threshold:
         verdict = "marginal"
     else:
         verdict = "poor"
@@ -493,8 +616,9 @@ def precompute_indicators_multi_tf(
     where each pre_dict is the output of scan_core.precompute_indicators.
     """
     result = {}
+    min_bars = int(params.get("technical", {}).get("min_bars_precompute", 30))
     for label, df in [("1m", df_1m), ("5m", df_5m), ("15m", df_15m)]:
-        if df is None or df.empty or len(df) < 30:
+        if df is None or df.empty or len(df) < min_bars:
             result[label] = None
         else:
             result[label] = precompute_indicators(df, params)
@@ -508,6 +632,11 @@ def _trend_direction(pre: dict, bar_idx: int, params: dict) -> dict[str, Any]:
     """
     if pre is None or bar_idx < 0 or bar_idx >= pre["n"]:
         return {"direction": "neutral", "strength": 0}
+
+    td_cfg = params.get("trend_detection", {})
+    rsi_bull = float(td_cfg.get("rsi_bullish", 55))
+    rsi_bear = float(td_cfg.get("rsi_bearish", 45))
+    max_signals = float(td_cfg.get("max_signals", 4))
 
     sma20 = _safe_float(pre["sma20"][bar_idx])
     sma50 = _safe_float(pre["sma50"][bar_idx])
@@ -533,17 +662,17 @@ def _trend_direction(pre: dict, bar_idx: int, params: dict) -> dict[str, Any]:
     elif macd_hist < 0:
         bearish_signals += 1
 
-    if rsi > 55:
+    if rsi > rsi_bull:
         bullish_signals += 1
-    elif rsi < 45:
+    elif rsi < rsi_bear:
         bearish_signals += 1
 
     if bullish_signals > bearish_signals:
         direction = "bullish"
-        strength = bullish_signals / 4.0
+        strength = bullish_signals / max_signals
     elif bearish_signals > bullish_signals:
         direction = "bearish"
-        strength = bearish_signals / 4.0
+        strength = bearish_signals / max_signals
     else:
         direction = "neutral"
         strength = 0.0
@@ -598,12 +727,16 @@ def deep_scan_multi_tf(
     if trend_15m["direction"] == dir_trend:
         confluence += 1
 
-    trend_agrees = confluence >= 2 or not require_agreement
+    tech_cfg = params.get("technical", {})
+    min_confluence = int(tech_cfg.get("min_confluence_for_agreement", 2))
+    atr_fallback_pct = float(tech_cfg.get("atr_fallback_pct", 0.2))
+
+    trend_agrees = confluence >= min_confluence or not require_agreement
 
     # ATR from 1m for SL/TP computation
     atr = _safe_float(pre_1m["atr"][bar_idx_1m])
     if atr <= 0:
-        atr = _safe_float(pre_1m["close"][bar_idx_1m]) * 0.002  # 0.2% fallback
+        atr = _safe_float(pre_1m["close"][bar_idx_1m]) * atr_fallback_pct / 100.0
 
     # Override qualification with trend agreement
     base_qualifies = scan_1m.get("qualifies_for_entry", False)
@@ -640,22 +773,34 @@ def score_scalp_setup(
     Returns {"score" (0-10), "qualifies", "entry_level", "sl_level",
              "tp_level", "direction", "reason"}
     """
+    sw = params.get("scoring_weights", {})
+    st = params.get("scoring_thresholds", {})
+    tech_cfg = params.get("technical", {})
+
     # Multi-TF confluence (0-1)
-    confluence = mtf_result.get("confluence_score", 0) / 2.0
+    confluence_max = float(st.get("confluence_max", 2.0))
+    confluence = mtf_result.get("confluence_score", 0) / confluence_max
 
     # Level alignment (0-1): is price near a Fib or S/R breakout level?
     level_alignment = 0.0
+    la_ready = float(st.get("level_alignment_ready", 1.0))
+    la_approaching = float(st.get("level_alignment_approaching", 0.5))
+    fib_near_thresh = float(st.get("fib_near_threshold_pct", 0.5))
+    fib_medium_thresh = float(st.get("fib_medium_threshold_pct", 1.0))
+    fib_near_score = float(st.get("fib_near_score", 0.7))
+    fib_medium_score = float(st.get("fib_medium_score", 0.3))
+
     if breakout.get("ready_to_break"):
-        level_alignment = 1.0
+        level_alignment = la_ready
     elif breakout.get("approaching"):
-        level_alignment = 0.5
+        level_alignment = la_approaching
     elif fib_levels:
         price = mtf_result.get("price", 0)
         nearest = nearest_fib_level(price, fib_levels)
-        if nearest and nearest["distance_pct"] < 0.5:
-            level_alignment = 0.7
-        elif nearest and nearest["distance_pct"] < 1.0:
-            level_alignment = 0.3
+        if nearest and nearest["distance_pct"] < fib_near_thresh:
+            level_alignment = fib_near_score
+        elif nearest and nearest["distance_pct"] < fib_medium_thresh:
+            level_alignment = fib_medium_score
 
     # Pattern quality (0-1)
     pattern_conf = pattern.get("confidence", 0)
@@ -672,13 +817,14 @@ def score_scalp_setup(
     vol_momentum = min(1.0, vol_ratio_val / vol_bull) if vol_bull > 0 else 0
 
     # Composite
+    score_scale = float(st.get("score_scale", 10.0))
     score = (
-        confluence * 0.30
-        + level_alignment * 0.25
-        + pattern_conf * 0.20
-        + liq_score * 0.15
-        + vol_momentum * 0.10
-    ) * 10.0
+        confluence * float(sw.get("confluence_weight", 0.30))
+        + level_alignment * float(sw.get("level_alignment_weight", 0.25))
+        + pattern_conf * float(sw.get("pattern_weight", 0.20))
+        + liq_score * float(sw.get("liquidity_weight", 0.15))
+        + vol_momentum * float(sw.get("volume_momentum_weight", 0.10))
+    ) * score_scale
 
     # Determine direction
     direction = mtf_result.get("entry_direction", pattern.get("direction", "long"))
@@ -692,7 +838,8 @@ def score_scalp_setup(
 
     # Compute entry/SL/TP from levels + ATR
     price = mtf_result.get("price", 0)
-    atr = mtf_result.get("atr", price * 0.002 if price > 0 else 0)
+    atr_fallback_pct = float(tech_cfg.get("atr_fallback_pct", 0.2))
+    atr = mtf_result.get("atr", price * atr_fallback_pct / 100.0 if price > 0 else 0)
     order_cfg = params.get("order", {})
     # Support side-specific ATR multiples: long_sl_atr_multiple, short_sl_atr_multiple, etc.
     # Falls back to sl_atr_multiple / tp_atr_multiple for backward compatibility.
@@ -716,7 +863,7 @@ def score_scalp_setup(
 
     # Qualification
     entry_cfg = params.get("entry_criteria", {})
-    min_score = 4.0  # Out of 10
+    min_score = float(st.get("min_qualification_score", 4.0))
     qualifies = (
         score >= min_score
         and mtf_result.get("qualifies_for_entry", False)

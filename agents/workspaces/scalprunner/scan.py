@@ -41,6 +41,7 @@ from schwab_provider import get_schwab_provider
 from alpaca_realtime_provider import get_alpaca_provider
 
 # Default equity universe for the scanner (broad sweep)
+# Overridable via params.discovery.scanner_universe
 _SCANNER_UNIVERSE = [
     "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL",
     "NFLX", "INTC", "MU", "QQQ", "SPY", "IWM", "BA", "DIS",
@@ -49,6 +50,7 @@ _SCANNER_UNIVERSE = [
 ]
 
 # Fallback universe if Schwab movers unavailable
+# Overridable via params.discovery.fallback_shortlist
 _FALLBACK_SHORTLIST = ["NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL"]
 
 
@@ -87,14 +89,20 @@ def _load_config(token: Optional[str], inline_config: Optional[str]) -> dict[str
 # Data Fetching
 # ============================================================
 
-def _fetch_history(symbol: str, interval: str, lookback_bars: int = 200) -> Optional[pd.DataFrame]:
+def _fetch_history(symbol: str, interval: str, lookback_bars: int = 200,
+                   params: dict | None = None) -> Optional[pd.DataFrame]:
     """Fetch Arena history through the canonical provider router."""
+    p = params or {}
+    df_cfg = p.get("data_fetch", {})
     if interval == "1d":
-        period = "3mo"
-        min_bars = 10
+        period = df_cfg.get("daily_period", "3mo")
+        min_bars = int(df_cfg.get("daily_min_bars", 10))
+    elif interval in ("1m", "5m", "15m"):
+        period = df_cfg.get("intraday_period", "5d")
+        min_bars = int(df_cfg.get("intraday_min_bars", 30))
     else:
-        period = "5d" if interval in ("1m", "5m", "15m") else "1mo"
-        min_bars = 30
+        period = df_cfg.get("default_period", "1mo")
+        min_bars = int(df_cfg.get("intraday_min_bars", 30))
     try:
         df = get_arena_market_data().history(symbol, period=period, interval=interval)
         if df is not None and not df.empty and len(df) >= min_bars:
@@ -171,11 +179,12 @@ def _discover_shortlist(params: dict, token: Optional[str] = None) -> list[str]:
                 print(f"[ScalpScan] Schwab movers failed: {e}")
 
     # Alpaca snapshots remain the discovery fallback.
+    scanner_universe = discovery_cfg.get("scanner_universe", _SCANNER_UNIVERSE)
     if discovery_cfg.get("movers_enabled", True) and not candidates:
         alpaca = get_alpaca_provider()
         if alpaca.is_configured:
             try:
-                movers = alpaca.screen_movers(_SCANNER_UNIVERSE, top_n=max_shortlist)
+                movers = alpaca.screen_movers(scanner_universe, top_n=max_shortlist)
                 for m in movers:
                     sym = m.get("symbol", "")
                     if sym and sym not in candidates:
@@ -190,7 +199,7 @@ def _discover_shortlist(params: dict, token: Optional[str] = None) -> list[str]:
     # 1b. Platform News (extract tickers from recent news)
     if discovery_cfg.get("news_enabled", True) and token:
         try:
-            news_symbols = _fetch_news_tickers(token, discovery_cfg.get("news_lookback_hours", 4))
+            news_symbols = _fetch_news_tickers(token, discovery_cfg.get("news_lookback_hours", 4), discovery_cfg)
             for sym in news_symbols:
                 if sym not in candidates:
                     candidates[sym] = {"symbol": sym, "change_pct": 0, "source": "news"}
@@ -199,16 +208,20 @@ def _discover_shortlist(params: dict, token: Optional[str] = None) -> list[str]:
 
     # 1c. Volume/Price Scanner on broad universe
     if discovery_cfg.get("scanner_enabled", True):
-        scanner_symbols = _SCANNER_UNIVERSE[:discovery_cfg.get("scanner_universe_size", 100)]
+        scanner_symbols = scanner_universe[:discovery_cfg.get("scanner_universe_size", 100)]
         min_vol_ratio = discovery_cfg.get("scanner_min_vol_ratio", 2.0)
         min_change = discovery_cfg.get("scanner_min_price_change_pct", 0.5)
+        scanner_interval = discovery_cfg.get("scanner_interval", "5m")
+        scanner_lookback = int(discovery_cfg.get("scanner_lookback_bars", 50))
+        scanner_min_bars = int(discovery_cfg.get("scanner_min_bars", 20))
+        scanner_vol_lookback = int(discovery_cfg.get("scanner_vol_lookback_bars", 20))
 
         for sym in scanner_symbols:
             try:
-                df = _fetch_history(sym, "5m", lookback_bars=50)
-                if df is None or df.empty or len(df) < 20:
+                df = _fetch_history(sym, scanner_interval, lookback_bars=scanner_lookback, params=params)
+                if df is None or df.empty or len(df) < scanner_min_bars:
                     continue
-                vol_ratio = float(df["Volume"].iloc[-1]) / max(float(df["Volume"].tail(20).mean()), 1)
+                vol_ratio = float(df["Volume"].iloc[-1]) / max(float(df["Volume"].tail(scanner_vol_lookback).mean()), 1)
                 price_change = abs((float(df["Close"].iloc[-1]) / float(df["Close"].iloc[0]) - 1) * 100)
 
                 if vol_ratio >= min_vol_ratio and price_change >= min_change:
@@ -225,17 +238,24 @@ def _discover_shortlist(params: dict, token: Optional[str] = None) -> list[str]:
     # If no candidates found, use fallback
     if not candidates:
         print("[ScalpScan] No candidates from movers/news/scanner — using fallback shortlist")
-        return _FALLBACK_SHORTLIST[:max_shortlist]
+        fallback = discovery_cfg.get("fallback_shortlist", _FALLBACK_SHORTLIST)
+        return fallback[:max_shortlist]
 
     # Rank by change_pct (momentum) and return top N
     ranked = sorted(candidates.values(), key=lambda c: c.get("change_pct", 0), reverse=True)
     return [c["symbol"] for c in ranked[:max_shortlist]]
 
 
-def _fetch_news_tickers(token: str, lookback_hours: int) -> list[str]:
+def _fetch_news_tickers(token: str, lookback_hours: int,
+                        discovery_cfg: dict | None = None) -> list[str]:
     """Fetch recent news from the platform and extract ticker symbols."""
+    dc = discovery_cfg or {}
+    news_limit = int(dc.get("news_limit", 50))
+    news_process_limit = int(dc.get("news_process_limit", 50))
+    max_ticker_len = int(dc.get("news_max_ticker_length", 5))
+    max_symbols = int(dc.get("news_max_symbols", 20))
     try:
-        url = f"http://localhost:8000/api/market/news?limit=50"
+        url = f"http://localhost:8000/api/market/news?limit={news_limit}"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
@@ -243,9 +263,9 @@ def _fetch_news_tickers(token: str, lookback_hours: int) -> list[str]:
 
         # Extract symbols from news items
         symbols = set()
-        for item in news_items[:50]:
+        for item in news_items[:news_process_limit]:
             sym = item.get("symbol") or item.get("ticker")
-            if sym and len(sym) <= 5 and sym.isalpha():
+            if sym and len(sym) <= max_ticker_len and sym.isalpha():
                 symbols.add(sym.upper())
             # Also check content for $TICKER mentions
             content = item.get("content", "") or item.get("title", "")
@@ -253,7 +273,7 @@ def _fetch_news_tickers(token: str, lookback_hours: int) -> list[str]:
             tickers = re.findall(r'\$([A-Z]{1,5})\b', content)
             symbols.update(tickers)
 
-        return list(symbols)[:20]
+        return list(symbols)[:max_symbols]
     except Exception:
         return []
 
@@ -268,10 +288,13 @@ def _filter_liquidity(shortlist: list[str], params: dict) -> list[dict]:
     Returns list of {"symbol", "quote", "level2", "liquidity"} for passing symbols.
     """
     results = []
+    tf_cfg = params.get("timeframes", {})
+    pattern_interval = tf_cfg.get("pattern_interval", "5m")
+    lookback = tf_cfg.get("lookback_bars", 200)
     for sym in shortlist:
         quote = _fetch_quote(sym)
         level2 = _fetch_level2(sym)
-        df = _fetch_history(sym, "5m", lookback_bars=50)
+        df = _fetch_history(sym, pattern_interval, lookback_bars=lookback, params=params)
 
         if df is None or df.empty:
             continue
@@ -306,10 +329,11 @@ def _analyze_setup(symbol: str, quote: Optional[dict], level2: Optional[dict],
     lookback = tf_cfg.get("lookback_bars", 200)
 
     # Fetch 1m and 15m data
-    df_1m = _fetch_history(symbol, entry_interval, lookback)
-    df_15m = _fetch_history(symbol, trend_interval, lookback)
+    df_1m = _fetch_history(symbol, entry_interval, lookback, params=params)
+    df_15m = _fetch_history(symbol, trend_interval, lookback, params=params)
 
-    if df_1m is None or df_1m.empty or len(df_1m) < 30:
+    entry_min_bars = int(params.get("data_fetch", {}).get("entry_min_bars", 30))
+    if df_1m is None or df_1m.empty or len(df_1m) < entry_min_bars:
         return {"symbol": symbol, "error": "no_1m_data", "qualifies": False}
 
     # Precompute indicators on all 3 timeframes
@@ -320,7 +344,9 @@ def _analyze_setup(symbol: str, quote: Optional[dict], level2: Optional[dict],
     mtf_result = scalp_scan_core.deep_scan_multi_tf(symbol, pre, bar_idx, params)
 
     # Fibonacci levels
-    swings = scalp_scan_core.detect_swing_highs_lows(df_5m, params.get("levels", {}).get("sr_lookback_bars", 50))
+    swings = scalp_scan_core.detect_swing_highs_lows(
+        df_5m, params.get("levels", {}).get("sr_lookback_bars", 50), params,
+    )
     swing_highs = swings.get("swing_highs", [])
     swing_lows = swings.get("swing_lows", [])
 
@@ -331,8 +357,8 @@ def _analyze_setup(symbol: str, quote: Optional[dict], level2: Optional[dict],
         # Use most recent swing high and low
         recent_high = max(p for _, p in swing_highs[-3:])
         recent_low = min(p for _, p in swing_lows[-3:])
-        fib_levels = scalp_scan_core.compute_fib_retracement(recent_high, recent_low, direction)
-        fib_extensions = scalp_scan_core.compute_fib_extension(recent_high, recent_low, direction)
+        fib_levels = scalp_scan_core.compute_fib_retracement(recent_high, recent_low, direction, params)
+        fib_extensions = scalp_scan_core.compute_fib_extension(recent_high, recent_low, direction, params)
 
     # Support/Resistance
     sr_levels = scalp_scan_core.detect_support_resistance(
@@ -340,13 +366,14 @@ def _analyze_setup(symbol: str, quote: Optional[dict], level2: Optional[dict],
         lookback=params.get("levels", {}).get("sr_lookback_bars", 50),
         min_touches=params.get("levels", {}).get("sr_min_touches", 2),
         tolerance_pct=params.get("levels", {}).get("sr_tolerance_pct", 0.15),
+        params=params,
     )
 
     # Breakout detection
     breakout = scalp_scan_core.detect_breakout_level(df_5m, sr_levels, params)
 
     # Pattern detection
-    pattern = scalp_scan_core.detect_pattern(df_5m)
+    pattern = scalp_scan_core.detect_pattern(df_5m, params)
 
     # Liquidity score
     liq = scalp_scan_core.liquidity_score(quote or {}, level2, df_5m, params)
@@ -388,10 +415,10 @@ def _check_premove_filter(symbol: str, direction: str, df_5m: pd.DataFrame,
     Returns True if the setup passes (should be kept), False if blocked.
     """
     premove_cfg = params.get("premove_filter", {})
-    if not premove_cfg.get("enabled", False):
+    if not premove_cfg.get("enabled", True):
         return True
 
-    max_move = float(premove_cfg.get("max_move_pct", 3.0))
+    max_move = float(premove_cfg.get("max_move_pct", 2.0))
     lookback = int(premove_cfg.get("lookback_bars", 8))
 
     if df_5m is None or df_5m.empty or len(df_5m) < lookback + 1:
@@ -423,11 +450,11 @@ def _check_market_regime(direction: str, params: dict) -> tuple[bool, str]:
     Blocks long trades when SPY < daily EMA (bear regime) if configured.
     """
     regime_cfg = params.get("market_regime", {})
-    if not regime_cfg.get("enabled", False):
+    if not regime_cfg.get("enabled", True):
         return True, "disabled"
 
     spy_symbol = regime_cfg.get("symbol", "SPY")
-    ema_period = int(regime_cfg.get("daily_ema_period", 20))
+    ema_period = int(regime_cfg.get("daily_ema_period", 10))
     threshold_pct = float(regime_cfg.get("threshold_pct", 0.0))
 
     try:
@@ -508,10 +535,11 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
 
     # Pre-fetch SPY regime once for the entire scan
     regime_cfg = params.get("market_regime", {})
+    direction_mode = params.get("entry_criteria", {}).get("direction_mode", "short")
     spy_regime_label = "disabled"
-    if regime_cfg.get("enabled", False):
-        # Determine regime using the first direction we care about
-        _, spy_regime_label = _check_market_regime("short", params)
+    if regime_cfg.get("enabled", True):
+        # Determine regime using the configured direction mode
+        _, spy_regime_label = _check_market_regime(direction_mode, params)
     print(f"[ScalpScan] Market regime: {spy_regime_label}")
 
     for candidate in liquid:

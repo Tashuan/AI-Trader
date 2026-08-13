@@ -309,7 +309,10 @@ def create_pending_order(token: str, setup: dict, scan_data: dict,
 
     order_cfg = params.get("order", {})
     offset_pct = order_cfg.get("stop_limit_offset_pct", 0.02)
-    expiry_min = order_cfg.get("order_expiry_minutes", 30)
+    expiry_min = order_cfg.get("order_expiry_minutes", 180)
+    market_type = order_cfg.get("market_type", "us-stock")
+    order_type = order_cfg.get("order_type", "stop_limit")
+    price_decimals = int(order_cfg.get("price_decimals", 6))
 
     # Stop price = entry level; limit price = entry + small offset for slippage
     if side == "long":
@@ -318,19 +321,19 @@ def create_pending_order(token: str, setup: dict, scan_data: dict,
         limit_price = entry_level * (1 - offset_pct / 100.0)
 
     exit_cfg = params.get("exit_rules", {})
-    trail_sl = exit_cfg.get("trailing_sl_pct", 0.5)
-    trail_act = exit_cfg.get("trailing_activation_pct", 0.8)
+    trail_sl = exit_cfg.get("trailing_sl_pct", 0.4)
+    trail_act = exit_cfg.get("trailing_activation_pct", 0.5)
 
     body = {
         "symbol": symbol,
-        "market": "us-stock",
+        "market": market_type,
         "side": side,
-        "order_type": "stop_limit",
-        "stop_price": round(entry_level, 6),
-        "limit_price": round(limit_price, 6),
+        "order_type": order_type,
+        "stop_price": round(entry_level, price_decimals),
+        "limit_price": round(limit_price, price_decimals),
         "quantity": quantity,
-        "stop_loss_price": round(sl_level, 6) if sl_level > 0 else None,
-        "take_profit_price": round(tp_level, 6) if tp_level > 0 else None,
+        "stop_loss_price": round(sl_level, price_decimals) if sl_level > 0 else None,
+        "take_profit_price": round(tp_level, price_decimals) if tp_level > 0 else None,
         "trailing_sl_pct": trail_sl,
         "trailing_activation_pct": trail_act,
         "expires_at_minutes": expiry_min,
@@ -373,7 +376,8 @@ def sizing_pct(equity: float, initial_capital: float, goal_target: float,
     """Return (position_size_pct, is_final_stretch) based on goal phase."""
     ps = params.get("position_sizing", {})
     progress = goal_progress(equity, initial_capital, goal_target)
-    is_final_stretch = progress > 80.0
+    final_stretch_threshold = float(ps.get("final_stretch_threshold_pct", 80.0))
+    is_final_stretch = progress > final_stretch_threshold
 
     if is_final_stretch:
         lo = ps.get("approaching_sizing_min_pct", 5)
@@ -397,12 +401,13 @@ def sizing_pct(equity: float, initial_capital: float, goal_target: float,
 # ============================================================
 
 def execute_close(token: str, symbol: str, side: str, quantity: float,
-                  reason: str) -> bool:
+                  reason: str, params: dict | None = None) -> bool:
     """Close a position via POST /signals/realtime."""
     action = "sell" if side == "long" else "cover"
+    market_type = (params or {}).get("order", {}).get("market_type", "us-stock")
     try:
         body = {
-            "market": "us-stock",
+            "market": market_type,
             "action": action,
             "symbol": symbol,
             "price": 0,
@@ -446,9 +451,11 @@ def review_active_exits(token: str, positions: list[dict], params: dict,
         minutes_held = int(pos.get("minutes_held", 0))
 
         # Build indicator data for review
+        exit_cfg = params.get("exit_rules", {})
+        default_rsi = float(exit_cfg.get("default_rsi", 50))
         ind_data = {
             "vol_ratio": float(pos.get("vol_ratio", 1.0)),
-            "rsi": float(pos.get("rsi", 50)),
+            "rsi": float(pos.get("rsi", default_rsi)),
         }
 
         review = scalp_scan_core.review_scalp_position(
@@ -457,13 +464,14 @@ def review_active_exits(token: str, positions: list[dict], params: dict,
 
         if review.get("verdict") == "EXIT":
             exit_reason = review.get("exit_reason", "active_exit")
-            success = execute_close(token, symbol, side, qty, exit_reason)
+            success = execute_close(token, symbol, side, qty, exit_reason, params)
             if success:
                 if pnl_pct > 0:
                     state["consecutive_losses"] = 0
                 else:
                     state["consecutive_losses"] = state.get("consecutive_losses", 0) + 1
-                state["reentry_cooldown"][symbol] = 3
+                cooldown_cycles = int(exit_cfg.get("reentry_cooldown_cycles", 3))
+                state["reentry_cooldown"][symbol] = cooldown_cycles
                 post_activity(token, f"EXIT {symbol} ({side}) — {exit_reason} — pnl={pnl_pct:.1f}%",
                               symbol=symbol)
 
@@ -608,7 +616,8 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
         if entry_price <= 0:
             continue
 
-        stop_distance_pct = abs((sl_level - entry_price) / entry_price) * 100 if sl_level > 0 else 1.0
+        default_stop_dist = float(params.get("order", {}).get("default_stop_distance_pct", 1.0))
+        stop_distance_pct = abs((sl_level - entry_price) / entry_price) * 100 if sl_level > 0 else default_stop_dist
         notional = position_notional(
             equity, stop_distance_pct, gross_exposure + pending_gross_exposure, params,
         )
