@@ -30,6 +30,9 @@ from strategy_registry import effective_params
 from scan_backtester import ScanBacktester
 from crypto_scan_backtester import CryptoScanBacktester
 from scalp_scan_backtester import ScalpScanBacktester
+from fence_bar_backtester import FenceBarBacktester
+from fence_bar_strategy import FENCE_BAR_DEFAULTS
+from strategy_lab import load_json_config
 from equity_data_providers import AlpacaProvider
 from schwab_provider import get_schwab_provider
 from market_data import YFinanceProvider
@@ -143,8 +146,21 @@ def main():
         help="Disable fees, impact, volatility widening, partial fills, and tick rounding",
     )
     parser.add_argument("--json", type=str, default="", help="Save full report as JSON to this path")
+    parser.add_argument("--config", type=str, default="", help="JSON strategy config for standalone lab strategies")
     parser.add_argument("--goal-target", type=float, default=None, help="Goal target profit in $ (e.g. 100 for $100 profit)")
     parser.add_argument("--goal-max-loss", type=float, default=None, help="Goal max loss in $ (e.g. 500 stops trading at -$500)")
+    parser.add_argument(
+        "--sensitivity", action="store_true",
+        help="Run ScalpRunner backtest under multiple spread/slippage assumptions and print a comparison table",
+    )
+    parser.add_argument(
+        "--liquidity-mode", choices=("estimated", "synthetic"), default="estimated",
+        help="Liquidity model for ScalpRunner: 'estimated' (conservative spread) or 'synthetic' (legacy zero-spread)",
+    )
+    parser.add_argument(
+        "--spread-multiplier", type=float, default=1.0,
+        help="Multiplier on estimated spread for ScalpRunner sensitivity analysis (default: 1.0)",
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -153,6 +169,7 @@ def main():
         print("  blitzrunner      — BlitzRunner: deterministic equity momentum")
         print("  cryptorunner     — CryptoRunner: deterministic crypto swing")
         print("  scalprunner      — ScalpRunner: deterministic 4-step equity scalp")
+        print("  fencebar         — Fence Bar: opening-range breakout and retest")
         for key, info in list_personalities().items():
             if key in AGENT_CLASSES:
                 print(f"  {key:15s} — {info['name']}: {info['tagline']} [{info['strategy']}]")
@@ -162,6 +179,34 @@ def main():
         parser.error("agent key is required (or use --list)")
 
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
+
+    if args.agent == "fencebar":
+        default_config = Path(__file__).resolve().parent / "config" / "fence_bar.json"
+        config_path = args.config or str(default_config)
+        params = load_json_config(config_path, FENCE_BAR_DEFAULTS)
+        selected_symbols = symbols or ["QQQ"]
+        provider, provider_label = _build_scalp_provider(args.provider, args.cache)
+        execution = params.get("execution", {})
+        slippage_bps = args.slippage if args.slippage != 10.0 else float(execution.get("slippage_bps", 5.0))
+        fee_rate = args.fee_rate
+        print(f"\\nRunning backtest: Fence Bar ({args.agent})")
+        print(f"  Symbols: {', '.join(selected_symbols)}")
+        print(f"  Period:  {args.start or 'provider default'} → {args.end or 'now'}")
+        print(f"  Capital: ${args.capital:,.2f}")
+        print(f"  Provider: {provider_label}")
+        print(f"  Config:   {config_path}")
+        bt = FenceBarBacktester(
+            symbols=selected_symbols, params=params, start_date=args.start, end_date=args.end,
+            initial_capital=args.capital, slippage_bps=slippage_bps,
+            fee_rate=fee_rate if not args.no_realistic_fills else 0.0, provider=provider,
+        )
+        report_dict = bt.run().to_dict()
+        print_report(report_dict)
+        if args.json:
+            with open(args.json, "w") as f:
+                json.dump(report_dict, f, indent=2)
+            print(f"Full report saved to: {args.json}")
+        return
 
     if args.agent in {"blitztrader", "blitzrunner", "cryptorunner", "scalprunner"}:
         defaults = {
@@ -184,17 +229,64 @@ def main():
             print(f"  Interval: {interval}")
             print(f"  Provider: {provider_label}")
             print(f"  Realistic fills: {not args.no_realistic_fills}")
+            print(f"  Liquidity mode: {args.liquidity_mode}")
             from execution_simulator import FillConfig
-            fill_config = FillConfig(
-                slippage_bps=args.slippage,
-                fee_rate=args.fee_rate if not args.no_realistic_fills else 0.0,
-                enable_size_impact=not args.no_realistic_fills,
-                enable_vol_widening=not args.no_realistic_fills,
-                enable_partial_fills=not args.no_realistic_fills,
-                enable_tick_rounding=not args.no_realistic_fills,
-                market="us-stock",
-                interval=interval,
-            )
+
+            def _make_fill_config(slippage_bps):
+                return FillConfig(
+                    slippage_bps=slippage_bps,
+                    fee_rate=args.fee_rate if not args.no_realistic_fills else 0.0,
+                    enable_size_impact=not args.no_realistic_fills,
+                    enable_vol_widening=not args.no_realistic_fills,
+                    enable_partial_fills=not args.no_realistic_fills,
+                    enable_tick_rounding=not args.no_realistic_fills,
+                    enable_quote_side_pricing=not args.no_realistic_fills,
+                    market="us-stock",
+                    interval=interval,
+                )
+
+            if args.sensitivity:
+                # Run multiple scenarios with varying spread/slippage assumptions.
+                scenarios = [
+                    ("Optistic",   0.5, 0.5),
+                    ("Baseline",   1.0, 1.0),
+                    ("Conservativ",2.0, 1.5),
+                    ("Pessimistic",3.0, 2.0),
+                ]
+                results = []
+                for label, slip_mult, spread_mult in scenarios:
+                    slip_bps = args.slippage * slip_mult
+                    fc = _make_fill_config(slip_bps)
+                    bt = ScalpScanBacktester(
+                        symbols=selected_symbols, params=params,
+                        start_date=args.start, end_date=args.end,
+                        initial_capital=args.capital, slippage_bps=slip_bps,
+                        provider=provider, goal_target=args.goal_target,
+                        goal_max_loss=args.goal_max_loss, base_interval=interval,
+                        fill_config=fc, spread_multiplier=spread_mult,
+                        liquidity_mode=args.liquidity_mode,
+                    )
+                    r = bt.run()
+                    results.append((label, slip_bps, spread_mult, r))
+                    print(f"\n  [{label}] slip={slip_bps:.1f}bps  spread_x={spread_mult:.1f}  "
+                          f"return={r.total_return_pct:+.2f}%  win={r.win_rate:.1%}  "
+                          f"trades={r.total_trades}  pf={r.profit_factor:.2f}  "
+                          f"dd={r.max_drawdown_pct:.2f}%")
+
+                print(f"\n{'='*60}")
+                print(f"  Sensitivity Analysis Summary")
+                print(f"{'='*60}")
+                print(f"  {'Scenario':<14} {'Slip bps':>8} {'Spread x':>8} {'Return':>8} {'Win Rate':>9} {'Trades':>7} {'PF':>6} {'MaxDD':>7}")
+                print(f"  {'-'*14} {'-'*8} {'-'*8} {'-'*8} {'-'*9} {'-'*7} {'-'*6} {'-'*7}")
+                for label, slip, spread, r in results:
+                    print(f"  {label:<14} {slip:>8.1f} {spread:>8.1f} {r.total_return_pct:>+8.2f}% {r.win_rate:>9.1%} {r.total_trades:>7} {r.profit_factor:>6.2f} {r.max_drawdown_pct:>7.2f}%")
+
+                robust = all(r.profit_factor > 1.0 for _, _, _, r in results)
+                print(f"\n  Robust across all scenarios: {'YES' if robust else 'NO — strategy degrades under conservative assumptions'}")
+                print(f"{'='*60}\n")
+                return
+
+            fill_config = _make_fill_config(args.slippage)
             bt = ScalpScanBacktester(
                 symbols=selected_symbols, params=params,
                 start_date=args.start, end_date=args.end,
@@ -202,6 +294,8 @@ def main():
                 provider=provider, goal_target=args.goal_target,
                 goal_max_loss=args.goal_max_loss, base_interval=interval,
                 fill_config=fill_config,
+                spread_multiplier=args.spread_multiplier,
+                liquidity_mode=args.liquidity_mode,
             )
         elif args.agent == "cryptorunner":
             bt = CryptoScanBacktester(selected_symbols, params, args.start, args.end, args.capital, interval, args.slippage, goal_target=args.goal_target, goal_max_loss=args.goal_max_loss)

@@ -1,0 +1,49 @@
+{
+  "strategy": {
+    "id": "fence_bar",
+    "display_name": "Fence Bar",
+    "version": 1,
+    "asset_class": "us-equities",
+    "bar_interval": "5m"
+  },
+  "session": {
+    "timezone": "America/New_York",
+    "market_open": "09:30",
+    "fence_end": "09:35",
+    "latest_breakout": "10:30",
+    "force_exit": "15:55"
+  },
+  "fence": {
+    "min_range_pct": 0.10,
+    "max_range_pct": 1.50
+  },
+  "breakout": {
+    "require_body_outside": true,
+    "min_close_distance_pct": 0.0,
+    "max_bars_after_fence": 12
+  },
+  "retest": {
+    "max_bars_after_breakout": 3,
+    "require_wick_into_fence": true,
+    "require_close_back_outside": true,
+    "allow_breakout_bar_retest": false,
+    "max_retest_depth_pct": 100.0
+  },
+  "anchor": {
+    "enabled": true,
+    "period": 20,
+    "require_trend_alignment": false,
+    "max_distance_pct": 2.0,
+    "extended_action": "reject"
+  },
+  "risk": {
+    "stop_mode": "fence_midpoint",
+    "target_multiple_r": 2.0,
+    "risk_per_trade_pct": 0.50,
+    "max_trades_per_day": 1
+  },
+  "execution": {
+    "slippage_bps": 5.0,
+    "fee_rate": 0.001
+  }
+}
