@@ -23,6 +23,7 @@
     "max_bars_after_fence": 12
   },
   "retest": {
+    "enabled": true,
     "max_bars_after_breakout": 3,
     "require_wick_into_fence": true,
     "require_close_back_outside": true,
@@ -42,8 +43,22 @@
     "risk_per_trade_pct": 0.50,
     "max_trades_per_day": 1
   },
+  "exit": {
+    "mode": "fixed_sl_tp",
+    "trailing_pct": 0.3,
+    "trailing_activation_pct": 0.3,
+    "max_bars": 0
+  },
   "execution": {
     "slippage_bps": 5.0,
     "fee_rate": 0.001
+  },
+  "premarket": {
+    "enabled": true,
+    "interval": "5m",
+    "require_monitor": true,
+    "min_score": 35.0,
+    "use_news": false,
+    "history_period": "3mo"
   }
 }

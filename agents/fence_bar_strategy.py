@@ -34,6 +34,7 @@ FENCE_BAR_DEFAULTS: dict[str, Any] = {
         "max_bars_after_fence": 12,
     },
     "retest": {
+        "enabled": True,
         "max_bars_after_breakout": 3,
         "require_wick_into_fence": True,
         "require_close_back_outside": True,
@@ -52,6 +53,20 @@ FENCE_BAR_DEFAULTS: dict[str, Any] = {
         "target_multiple_r": 2.0,
         "risk_per_trade_pct": 0.50,
         "max_trades_per_day": 1,
+    },
+    "exit": {
+        "mode": "fixed_sl_tp",
+        "trailing_pct": 0.3,
+        "trailing_activation_pct": 0.3,
+        "max_bars": 0,
+    },
+    "premarket": {
+        "enabled": False,
+        "interval": "5m",
+        "require_monitor": True,
+        "min_score": 35.0,
+        "use_news": False,
+        "history_period": "3mo",
     },
 }
 
@@ -113,7 +128,7 @@ def validate_config(params: dict[str, Any]) -> None:
     risk = params.get("risk", {})
     min_range = require_range(fence.get("min_range_pct", 0.1), "min_range_pct", 0)
     max_range = require_range(fence.get("max_range_pct", 1.5), "max_range_pct", min_range)
-    require_range(retest.get("max_bars_after_breakout", 3), "max_bars_after_breakout", 1)
+    require_range(retest.get("max_bars_after_breakout", 3), "max_bars_after_breakout", 0)
     require_range(risk.get("target_multiple_r", 2), "target_multiple_r", 0.1)
     require_range(risk.get("risk_per_trade_pct", 0.5), "risk_per_trade_pct", 0, 100)
     if _parse_time(session.get("market_open", "09:30")) >= _parse_time(session.get("fence_end", "09:35")):
@@ -263,6 +278,15 @@ class FenceBarStrategy:
                     self.breakout_side = side
                     self.breakout_timestamp = str(_ts_value(timestamp))
                     self.breakout_index = bar_index
+                    retest_cfg = self.params.get("retest", {})
+                    if not retest_cfg.get("enabled", True):
+                        signal = self._signal(bar, timestamp, side)
+                        if signal:
+                            self.entry_emitted = True
+                            self.state = "POSITION_OPEN"
+                            return signal
+                        self.state = "DONE_FOR_DAY"
+                        return None
                     self.state = "WAIT_FOR_RETEST"
                     return None
         elif self.state == "WAIT_FOR_RETEST":

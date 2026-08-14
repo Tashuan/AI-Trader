@@ -112,6 +112,11 @@ class FillConfig:
     impact_factor: float = 0.5
     market: str = "us-stock"
     interval: str = "1d"
+    # When True, simulate_entry/simulate_exit use the quote's bid/ask as the
+    # starting price (long entries at ask, long exits at bid, etc.) before
+    # applying slippage, impact, and tick rounding. When False or no quote is
+    # supplied, the reference price is used directly (legacy behavior).
+    enable_quote_side_pricing: bool = True
 
     @classmethod
     def from_legacy(cls, slippage_bps: float, fee_rate: float = 0.0,
@@ -174,14 +179,41 @@ def _compute_fill_qty(requested_qty: float, order_value: float,
     return max_fill_qty, True
 
 
+# ── Quote-side pricing ───────────────────────────────────────────────
+def _quote_reference_price(price: float, is_buyer: bool,
+                           quote: Optional[dict]) -> float:
+    """Return the quote-side reference price for an order.
+
+    Buyers (long entries, short exits) cross the spread and pay the ask.
+    Sellers (short entries, long exits) receive the bid.
+
+    Falls back to the supplied price when no quote is available.
+    """
+    if quote is None:
+        return price
+    if is_buyer:
+        ask = float(quote.get("ask", 0))
+        return ask if ask > 0 else price
+    bid = float(quote.get("bid", 0))
+    return bid if bid > 0 else price
+
+
 # ── Public API ────────────────────────────────────────────────────────
 def simulate_entry(price: float, side: str, qty: float, symbol: str,
-                   config: FillConfig, bar: Optional[dict] = None) -> FillResult:
-    """Simulate an entry fill (opening a long or short position)."""
+                   config: FillConfig, bar: Optional[dict] = None,
+                   quote: Optional[dict] = None) -> FillResult:
+    """Simulate an entry fill (opening a long or short position).
+
+    When ``quote`` is supplied and ``config.enable_quote_side_pricing`` is
+    True, the fill starts from the quote-side price (ask for longs, bid for
+    shorts) before slippage, impact, and tick rounding are applied. This
+    models the cost of crossing the spread in realistic execution.
+    """
     if price <= 0 or qty <= 0:
         return FillResult(0.0, 0.0, 0.0, 0.0, False)
     is_buyer = side.lower() == "long"
-    slipped = _apply_slippage(price, is_buyer, config, bar)
+    ref = _quote_reference_price(price, is_buyer, quote) if config.enable_quote_side_pricing else price
+    slipped = _apply_slippage(ref, is_buyer, config, bar)
     order_value = slipped * qty
     adv = _estimate_adv(bar, config.interval) if bar is not None else 0.0
     impacted = _apply_size_impact(slipped, is_buyer, order_value, adv, config)
@@ -194,12 +226,19 @@ def simulate_entry(price: float, side: str, qty: float, symbol: str,
 
 
 def simulate_exit(price: float, side: str, qty: float, symbol: str,
-                  config: FillConfig, bar: Optional[dict] = None) -> FillResult:
-    """Simulate an exit fill (closing a long or short position)."""
+                  config: FillConfig, bar: Optional[dict] = None,
+                  quote: Optional[dict] = None) -> FillResult:
+    """Simulate an exit fill (closing a long or short position).
+
+    When ``quote`` is supplied and ``config.enable_quote_side_pricing`` is
+    True, the fill starts from the quote-side price (bid for long exits,
+    ask for short exits) before slippage, impact, and tick rounding.
+    """
     if price <= 0 or qty <= 0:
         return FillResult(0.0, 0.0, 0.0, 0.0, False)
     is_buyer = side.lower() == "short"  # covering a short = buying back
-    slipped = _apply_slippage(price, is_buyer, config, bar)
+    ref = _quote_reference_price(price, is_buyer, quote) if config.enable_quote_side_pricing else price
+    slipped = _apply_slippage(ref, is_buyer, config, bar)
     order_value = slipped * qty
     adv = _estimate_adv(bar, config.interval) if bar is not None else 0.0
     impacted = _apply_size_impact(slipped, is_buyer, order_value, adv, config)

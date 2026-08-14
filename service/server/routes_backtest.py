@@ -39,6 +39,8 @@ class BacktestRequest(BaseModel):
     goal_target: Optional[float] = None  # Dollar profit target for goal-aware sizing
     params_override: Optional[dict] = None  # Temporary strategy test override
     use_massive_fills: bool = False  # Use Massive tick data for realistic fill simulation
+    spread_multiplier: float = 1.0  # Multiplier on estimated spread (sensitivity analysis)
+    liquidity_mode: str = "estimated"  # "estimated" (conservative) or "synthetic" (legacy)
 
 
 class ScalpAnalysisRequest(BaseModel):
@@ -207,6 +209,7 @@ def _build_fill_config(req: BacktestRequest, market: str, interval: str):
         enable_vol_widening=realistic,
         enable_partial_fills=realistic,
         enable_tick_rounding=realistic,
+        enable_quote_side_pricing=realistic,
         market=market,
         interval=interval,
     )
@@ -221,6 +224,9 @@ def _annotate_fill_model(report, req: BacktestRequest):
         "volatility_widening_enabled": req.realistic_fills,
         "partial_fills_enabled": req.realistic_fills,
         "tick_rounding_enabled": req.realistic_fills,
+        "quote_side_pricing_enabled": req.realistic_fills,
+        "spread_multiplier": req.spread_multiplier,
+        "liquidity_mode": req.liquidity_mode,
     })
     return report
 
@@ -306,6 +312,8 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                     provider=cache_provider, base_interval="5m",
                     fill_simulator=fill_sim,
                     fill_config=_build_fill_config(req, "us-stock", "5m"),
+                    spread_multiplier=req.spread_multiplier,
+                    liquidity_mode=req.liquidity_mode,
                 )
             else:
                 from scan_backtester import ScanBacktester

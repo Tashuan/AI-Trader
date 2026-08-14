@@ -1,0 +1,616 @@
+{
+  "scan_timestamp": "2026-08-13T23:56:03.453088+00:00",
+  "scanner": "premarket_breakout_candidate_scanner",
+  "config": {
+    "universe": [
+      "NVDA",
+      "TSLA",
+      "AAPL",
+      "AMD",
+      "META",
+      "AMZN",
+      "MSFT",
+      "GOOGL",
+      "NFLX",
+      "INTC",
+      "MU",
+      "QQQ",
+      "SPY",
+      "IWM",
+      "BA",
+      "DIS",
+      "BABA",
+      "COIN",
+      "MARA",
+      "RIOT",
+      "SOFI",
+      "AAL",
+      "UAL",
+      "F",
+      "GM",
+      "NIO",
+      "XPEV",
+      "PLUG",
+      "DKNG"
+    ],
+    "max_candidates": 15,
+    "min_price": 5.0,
+    "max_price": 1000.0,
+    "min_avg_dollar_volume": 25000000,
+    "max_spread_pct": 0.25,
+    "min_gap_pct": 1.0,
+    "min_relative_volume": 1.25,
+    "history_period": "3mo",
+    "history_interval": "1d",
+    "min_history_bars": 30,
+    "proximity_pct": 1.0,
+    "min_score": 35.0
+  },
+  "watchlist": [
+    {
+      "symbol": "RIOT",
+      "score": 65.0,
+      "status": "monitor",
+      "direction": "short",
+      "sources": [
+        "movers"
+      ],
+      "price": 19.21,
+      "change_pct": -5.4626,
+      "relative_volume": 0.943,
+      "avg_dollar_volume": 27765412.66,
+      "spread_pct": 0.0,
+      "prior_high": 22.2,
+      "prior_low": 20.195,
+      "distance_to_prior_high_pct": 13.4685,
+      "distance_to_prior_low_pct": 4.8774,
+      "trend": "bearish",
+      "evidence": [
+        "momentum change -5.46%",
+        "average dollar volume $27,765,413",
+        "spread 0.000%",
+        "bearish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "not near prior-day breakout level",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "MU",
+      "score": 61.17,
+      "status": "monitor",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 962.4,
+      "change_pct": 4.2346,
+      "relative_volume": 0.592,
+      "avg_dollar_volume": 1078226170.8,
+      "spread_pct": 0.0,
+      "prior_high": 935.73,
+      "prior_low": 900.09,
+      "distance_to_prior_high_pct": 2.8502,
+      "distance_to_prior_low_pct": 6.9226,
+      "trend": "bullish",
+      "evidence": [
+        "momentum change +4.23%",
+        "average dollar volume $1,078,226,171",
+        "spread 0.000%",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "not near prior-day breakout level",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "QQQ",
+      "score": 60.87,
+      "status": "monitor",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 732.46,
+      "change_pct": 1.1747,
+      "relative_volume": 1.029,
+      "avg_dollar_volume": 430272321.49,
+      "spread_pct": 0.0123,
+      "prior_high": 727.165,
+      "prior_low": 722.95,
+      "distance_to_prior_high_pct": 0.7282,
+      "distance_to_prior_low_pct": 1.3154,
+      "trend": "bullish",
+      "evidence": [
+        "momentum change +1.17%",
+        "average dollar volume $430,272,321",
+        "spread 0.012%",
+        "within 0.73% of prior-day level",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "TSLA",
+      "score": 59.2,
+      "status": "monitor",
+      "direction": "long",
+      "sources": [
+        "configured_universe",
+        "movers"
+      ],
+      "price": 340.77,
+      "change_pct": 3.8402,
+      "relative_volume": 0.849,
+      "avg_dollar_volume": 338065398.27,
+      "spread_pct": 0.0,
+      "prior_high": 335.26,
+      "prior_low": 323.73,
+      "distance_to_prior_high_pct": 1.6435,
+      "distance_to_prior_low_pct": 5.2636,
+      "trend": "bullish",
+      "evidence": [
+        "momentum change +3.84%",
+        "average dollar volume $338,065,398",
+        "spread 0.000%",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "not near prior-day breakout level",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "INTC",
+      "score": 57.92,
+      "status": "monitor",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 104.63,
+      "change_pct": 3.5838,
+      "relative_volume": 0.918,
+      "avg_dollar_volume": 398177003.59,
+      "spread_pct": 0.0,
+      "prior_high": 103.16,
+      "prior_low": 100.14,
+      "distance_to_prior_high_pct": 1.425,
+      "distance_to_prior_low_pct": 4.4837,
+      "trend": "bullish",
+      "evidence": [
+        "momentum change +3.58%",
+        "average dollar volume $398,177,004",
+        "spread 0.000%",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "not near prior-day breakout level",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "MSFT",
+      "score": 55.0,
+      "status": "monitor",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 496.81,
+      "change_pct": 0.8854,
+      "relative_volume": 0.526,
+      "avg_dollar_volume": 691466691.05,
+      "spread_pct": 0.0,
+      "prior_high": 501.34,
+      "prior_low": 491.55,
+      "distance_to_prior_high_pct": 0.9036,
+      "distance_to_prior_low_pct": 1.0701,
+      "trend": "bullish",
+      "evidence": [
+        "average dollar volume $691,466,691",
+        "spread 0.000%",
+        "within 0.90% of prior-day level",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "weak directional move",
+        "volume not elevated",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "SPY",
+      "score": 55.0,
+      "status": "monitor",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 777.86,
+      "change_pct": 0.686,
+      "relative_volume": 0.798,
+      "avg_dollar_volume": 1179560368.39,
+      "spread_pct": 0.018,
+      "prior_high": 774.74,
+      "prior_low": 771.3,
+      "distance_to_prior_high_pct": 0.4027,
+      "distance_to_prior_low_pct": 0.8505,
+      "trend": "bullish",
+      "evidence": [
+        "average dollar volume $1,179,560,368",
+        "spread 0.018%",
+        "within 0.40% of prior-day level",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "weak directional move",
+        "volume not elevated",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "NVDA",
+      "score": 55.0,
+      "status": "monitor",
+      "direction": "long",
+      "sources": [
+        "configured_universe",
+        "movers"
+      ],
+      "price": 225.36,
+      "change_pct": 0.5578,
+      "relative_volume": 0.859,
+      "avg_dollar_volume": 1033949606.69,
+      "spread_pct": 0.0,
+      "prior_high": 225.1,
+      "prior_low": 220.295,
+      "distance_to_prior_high_pct": 0.1155,
+      "distance_to_prior_low_pct": 2.2992,
+      "trend": "bullish",
+      "evidence": [
+        "average dollar volume $1,033,949,607",
+        "spread 0.000%",
+        "within 0.12% of prior-day level",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "weak directional move",
+        "volume not elevated",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "IWM",
+      "score": 55.0,
+      "status": "monitor",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 303.5,
+      "change_pct": 0.2477,
+      "relative_volume": 0.553,
+      "avg_dollar_volume": 323352234.58,
+      "spread_pct": 0.0198,
+      "prior_high": 303.405,
+      "prior_low": 301.0,
+      "distance_to_prior_high_pct": 0.0313,
+      "distance_to_prior_low_pct": 0.8306,
+      "trend": "bullish",
+      "evidence": [
+        "average dollar volume $323,352,235",
+        "spread 0.020%",
+        "within 0.03% of prior-day level",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "weak directional move",
+        "volume not elevated",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "SOFI",
+      "score": 53.52,
+      "status": "watch",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 18.415,
+      "change_pct": 2.705,
+      "relative_volume": 0.496,
+      "avg_dollar_volume": 44131605.51,
+      "spread_pct": 10.2091,
+      "prior_high": 18.39,
+      "prior_low": 17.655,
+      "distance_to_prior_high_pct": 0.1359,
+      "distance_to_prior_low_pct": 4.3047,
+      "trend": "bullish",
+      "evidence": [
+        "momentum change +2.70%",
+        "average dollar volume $44,131,606",
+        "within 0.14% of prior-day level",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "wide spread 10.209%",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "NFLX",
+      "score": 50.0,
+      "status": "watch",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 78.24,
+      "change_pct": 5.4376,
+      "relative_volume": 0.859,
+      "avg_dollar_volume": 232464278.21,
+      "spread_pct": 9.8287,
+      "prior_high": 74.63,
+      "prior_low": 73.58,
+      "distance_to_prior_high_pct": 4.8372,
+      "distance_to_prior_low_pct": 6.3332,
+      "trend": "bullish",
+      "evidence": [
+        "momentum change +5.44%",
+        "average dollar volume $232,464,278",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "wide spread 9.829%",
+        "not near prior-day breakout level",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "BABA",
+      "score": 47.3,
+      "status": "monitor",
+      "direction": "short",
+      "sources": [
+        "movers"
+      ],
+      "price": 122.15,
+      "change_pct": -2.4595,
+      "relative_volume": 0.992,
+      "avg_dollar_volume": 41094674.09,
+      "spread_pct": 0.0,
+      "prior_high": 125.56,
+      "prior_low": 123.79,
+      "distance_to_prior_high_pct": 2.7158,
+      "distance_to_prior_low_pct": 1.3248,
+      "trend": "bullish",
+      "evidence": [
+        "momentum change -2.46%",
+        "average dollar volume $41,094,674",
+        "spread 0.000%"
+      ],
+      "risks": [
+        "volume not elevated",
+        "not near prior-day breakout level",
+        "SMA20 context disagrees with move",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "MARA",
+      "score": 42.55,
+      "status": "watch",
+      "direction": "short",
+      "sources": [
+        "movers"
+      ],
+      "price": 9.21,
+      "change_pct": -4.5101,
+      "relative_volume": 0.893,
+      "avg_dollar_volume": 14215380.34,
+      "spread_pct": 0.0,
+      "prior_high": 10.28,
+      "prior_low": 9.555,
+      "distance_to_prior_high_pct": 10.4086,
+      "distance_to_prior_low_pct": 3.6107,
+      "trend": "bearish",
+      "evidence": [
+        "momentum change -4.51%",
+        "spread 0.000%",
+        "bearish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "insufficient average dollar volume",
+        "not near prior-day breakout level",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "AAPL",
+      "score": 40.14,
+      "status": "watch",
+      "direction": "long",
+      "sources": [
+        "configured_universe",
+        "movers"
+      ],
+      "price": 304.95,
+      "change_pct": 1.0275,
+      "relative_volume": 0.677,
+      "avg_dollar_volume": 607618835.32,
+      "spread_pct": 10.0312,
+      "prior_high": 305.61,
+      "prior_low": 300.585,
+      "distance_to_prior_high_pct": 0.216,
+      "distance_to_prior_low_pct": 1.4522,
+      "trend": "bearish",
+      "evidence": [
+        "momentum change +1.03%",
+        "average dollar volume $607,618,835",
+        "within 0.22% of prior-day level"
+      ],
+      "risks": [
+        "volume not elevated",
+        "wide spread 10.031%",
+        "SMA20 context disagrees with move",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    },
+    {
+      "symbol": "UAL",
+      "score": 40.1,
+      "status": "watch",
+      "direction": "long",
+      "sources": [
+        "movers"
+      ],
+      "price": 126.37,
+      "change_pct": 1.0192,
+      "relative_volume": 0.54,
+      "avg_dollar_volume": 23505710.91,
+      "spread_pct": 0.0,
+      "prior_high": 127.37,
+      "prior_low": 124.24,
+      "distance_to_prior_high_pct": 0.7851,
+      "distance_to_prior_low_pct": 1.7144,
+      "trend": "bullish",
+      "evidence": [
+        "momentum change +1.02%",
+        "spread 0.000%",
+        "within 0.79% of prior-day level",
+        "bullish SMA20 context agrees"
+      ],
+      "risks": [
+        "volume not elevated",
+        "insufficient average dollar volume",
+        "no indexed news catalyst"
+      ],
+      "news": [],
+      "ai_context": {
+        "needs_catalyst_review": true,
+        "thesis": "",
+        "failure_case": "",
+        "confidence": null
+      }
+    }
+  ],
+  "candidate_count": 27,
+  "monitor_count": 10,
+  "limitations": [
+    "Premarket volume and quotes depend on provider entitlements.",
+    "This ranks candidates; it does not confirm a Fence Bar breakout or place orders.",
+    "AI context is intentionally empty until a separate analyst is added."
+  ]
+}

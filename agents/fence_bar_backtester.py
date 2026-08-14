@@ -11,6 +11,7 @@ import pandas as pd
 from arena_market_data import ArenaMarketDataProvider, get_arena_market_data
 from backtest_report import BacktestReport, TradeRecord
 from fence_bar_strategy import FENCE_BAR_DEFAULTS, FenceBarStrategy
+from premarket_scanner import DEFAULT_CONFIG as PREMARKET_DEFAULT_CONFIG, scan as scan_premarket
 from strategy_lab import deep_merge
 
 logger = logging.getLogger(__name__)
@@ -91,11 +92,109 @@ class FenceBarBacktester:
             candidates.append((float(first["Close"]) * float(first.get("Volume", 0)), symbol))
         return max(candidates)[1] if candidates else None
 
+    def _choose_premarket_symbol(self, date) -> tuple[str | None, dict]:
+        """Select the top premarket-ranked symbol before the regular open."""
+        cfg = self.params.get("premarket", {})
+        from premarket_replay import PremarketReplayProvider
+
+        provider = PremarketReplayProvider(str(date), interval=str(cfg.get("interval", "5m")))
+        provider.prepare(self.symbols, period=str(cfg.get("history_period", "3mo")))
+        scanner_config = deep_merge(PREMARKET_DEFAULT_CONFIG, cfg.get("scanner", {}))
+        scanner_config["min_score"] = float(cfg.get("min_score", scanner_config["min_score"]))
+        result = scan_premarket(
+            scanner_config,
+            provider=provider,
+            symbols=self.symbols,
+            mover_fetcher=provider.mover_fetcher,
+            news_fetcher=provider.news_fetcher if cfg.get("use_news", False) else None,
+        )
+        watchlist = result.get("watchlist", [])
+        if cfg.get("require_monitor", True):
+            watchlist = [candidate for candidate in watchlist if candidate["status"] == "monitor"]
+        watchlist = [candidate for candidate in watchlist if candidate["score"] >= scanner_config["min_score"]]
+        if not watchlist:
+            return None, {
+                "date": str(date),
+                "candidate_count": result.get("candidate_count", 0),
+                "monitor_count": result.get("monitor_count", 0),
+            }
+        selected = watchlist[0]
+        return selected["symbol"], {
+            "date": str(date),
+            "symbol": selected["symbol"],
+            "score": selected["score"],
+            "status": selected["status"],
+            "change_pct": selected["change_pct"],
+            "relative_volume": selected["relative_volume"],
+            "spread_pct": selected["spread_pct"],
+            "candidate_count": result.get("candidate_count", 0),
+            "monitor_count": result.get("monitor_count", 0),
+        }
+
     def _fill(self, price: float, side: str, entry: bool) -> float:
         impact = self.slippage_bps / 10_000
         if side == "long":
             return price * (1 + impact if entry else 1 - impact)
         return price * (1 - impact if entry else 1 + impact)
+
+    def _check_exit(self, position: dict, bar: pd.Series, timestamp, params: dict) -> tuple[float | None, str]:
+        """Check all exit conditions for a position on one bar.
+
+        Returns (exit_price, reason) or (None, "").
+        Supports: fixed stop, fixed target, trailing stop, time-based exit,
+        force exit at session end.
+        """
+        side = position["side"]
+        exit_cfg = params.get("exit", {})
+        exit_mode = exit_cfg.get("mode", "fixed_sl_tp")
+        high = float(bar["High"])
+        low = float(bar["Low"])
+        close = float(bar["Close"])
+
+        # ── Fixed stop/target (always active as a hard stop) ──
+        if side == "long":
+            if low <= position["stop"]:
+                return position["stop"], "stop_loss"
+            if exit_mode == "fixed_sl_tp" and high >= position["target"]:
+                return position["target"], "take_profit"
+        else:
+            if high >= position["stop"]:
+                return position["stop"], "stop_loss"
+            if exit_mode == "fixed_sl_tp" and low <= position["target"]:
+                return position["target"], "take_profit"
+
+        # ── Trailing stop ──
+        if exit_mode == "trailing":
+            trail_pct = float(exit_cfg.get("trailing_pct", 0.3))
+            trail_act_pct = float(exit_cfg.get("trailing_activation_pct", 0.3))
+            entry = position["entry_price"]
+            if side == "long":
+                position["peak"] = max(position.get("peak", entry), high)
+                gain_pct = (position["peak"] - entry) / entry * 100
+                if gain_pct >= trail_act_pct:
+                    trail_level = position["peak"] * (1 - trail_pct / 100)
+                    if low <= trail_level:
+                        return trail_level, "trailing_stop"
+            else:
+                position["trough"] = min(position.get("trough", entry), low)
+                gain_pct = (entry - position["trough"]) / entry * 100
+                if gain_pct >= trail_act_pct:
+                    trail_level = position["trough"] * (1 + trail_pct / 100)
+                    if high >= trail_level:
+                        return trail_level, "trailing_stop"
+
+        # ── Time-based exit ──
+        if exit_mode in ("time_based", "trailing"):
+            max_bars = int(exit_cfg.get("max_bars", 0))
+            if max_bars > 0 and position.get("bars_held", 0) >= max_bars:
+                return close, "time_exit"
+
+        # ── Force exit at session end ──
+        force_time = datetime.strptime(params["session"]["force_exit"], "%H:%M").time()
+        if timestamp.time() >= force_time:
+            return close, "force_exit"
+
+        return None, ""
 
     def run(self) -> BacktestReport:
         frames = {symbol: self._fetch(symbol) for symbol in self.symbols}
@@ -113,14 +212,29 @@ class FenceBarBacktester:
         cash = self.initial_capital
         equity_curve: list[dict] = []
         trades: list[TradeRecord] = []
+        premarket_enabled = bool(self.params.get("premarket", {}).get("enabled", False))
         diagnostics = {"sessions": 0, "selected_sessions": 0, "fence_rejected": 0,
-                       "breakouts": 0, "retests": 0, "entries": 0, "selection": "first-bar-dollar-volume"}
+                       "breakouts": 0, "retests": 0, "entries": 0,
+                       "selection": "premarket-scanner" if premarket_enabled else "first-bar-dollar-volume",
+                       "premarket_enabled": premarket_enabled, "premarket_skipped": 0,
+                       "premarket_selections": []}
         actual_start = all_dates[0].isoformat()
         actual_end = all_dates[-1].isoformat()
 
         for date in all_dates:
             diagnostics["sessions"] += 1
-            symbol = self._choose_symbol(frames, date)
+            if premarket_enabled:
+                try:
+                    symbol, selection = self._choose_premarket_symbol(date)
+                except Exception as exc:
+                    logger.warning("Premarket selection failed for %s: %s", date, exc)
+                    symbol, selection = None, {"date": str(date), "error": str(exc)}
+                diagnostics["premarket_selections"].append(selection)
+                if not symbol:
+                    diagnostics["premarket_skipped"] += 1
+                    continue
+            else:
+                symbol = self._choose_symbol(frames, date)
             if not symbol:
                 continue
             diagnostics["selected_sessions"] += 1
@@ -130,23 +244,10 @@ class FenceBarBacktester:
             for index, bar in day.iterrows():
                 timestamp = bar["Timestamp"]
                 if position is not None and index > position["entry_index"]:
-                    exit_price = None
-                    reason = ""
-                    side = position["side"]
-                    if side == "long":
-                        # Conservative ordering when both levels occur in one bar.
-                        if float(bar["Low"]) <= position["stop"]:
-                            exit_price, reason = position["stop"], "stop_loss"
-                        elif float(bar["High"]) >= position["target"]:
-                            exit_price, reason = position["target"], "take_profit"
-                    else:
-                        if float(bar["High"]) >= position["stop"]:
-                            exit_price, reason = position["stop"], "stop_loss"
-                        elif float(bar["Low"]) <= position["target"]:
-                            exit_price, reason = position["target"], "take_profit"
-                    if timestamp.time() >= datetime.strptime(self.params["session"]["force_exit"], "%H:%M").time() and exit_price is None:
-                        exit_price, reason = float(bar["Close"]), "force_exit"
+                    position["bars_held"] = position.get("bars_held", 0) + 1
+                    exit_price, reason = self._check_exit(position, bar, timestamp, self.params)
                     if exit_price is not None:
+                        side = position["side"]
                         fill = self._fill(exit_price, side, False)
                         gross = ((fill - position["entry_price"]) if side == "long" else (position["entry_price"] - fill)) * position["quantity"]
                         exit_fee = abs(fill * position["quantity"]) * self.fee_rate

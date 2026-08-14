@@ -1,0 +1,21 @@
+{
+  "project": "ai-trader",
+  "research_target": "ScalpRunner",
+  "strategy_lab": "agents/scalp_experiments.py",
+  "status": "not_started",
+  "phase": "baseline",
+  "experiment_count": 0,
+  "active_question": "What ScalpRunner Strategy Lab configuration has positive expectancy after realistic execution costs and survives chronological out-of-sample validation?",
+  "baseline": null,
+  "best_candidates": [],
+  "completed_experiments": [],
+  "failed_experiments": [],
+  "eliminated_hypotheses": [],
+  "next_queue": [
+    "Run and record a realistic ScalpRunner baseline across representative symbols and available intervals",
+    "Compare existing Strategy Lab scenario profiles without touching the final holdout",
+    "Validate only the strongest candidates with rolling walk-forward windows",
+    "Run one untouched holdout and sensitivity analysis before making any recommendation"
+  ],
+  "last_updated": null
+}

@@ -20,12 +20,14 @@ Prerequisites:
     self-signed certificate at runtime for the local listener.
 """
 
+import base64
 import json
 import os
 import ssl
 import sys
 import tempfile
 import subprocess
+import time
 import urllib.request
 import urllib.parse
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -80,16 +82,15 @@ def build_auth_url(client_id: str) -> str:
 
 def exchange_code(code: str, client_id: str, client_secret: str) -> dict:
     """Exchange authorization code for refresh + access tokens."""
-    body = json.dumps({
+    body = urllib.parse.urlencode({
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": REDIRECT_URI,
-        "client_id": client_id,
-        "client_secret": client_secret,
     }).encode()
-
+    basic_auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
     req = urllib.request.Request(_TOKEN_URL, data=body, method="POST", headers={
-        "Content-Type": "application/json",
+        "Authorization": f"Basic {basic_auth}",
+        "Content-Type": "application/x-www-form-urlencoded",
     })
 
     with urllib.request.urlopen(req, timeout=15) as resp:
@@ -153,7 +154,10 @@ def main():
         server = HTTPServer((LOCAL_HOST, LOCAL_PORT), CallbackHandler)
         server.socket = ssl_ctx.wrap_socket(server.socket, server_side=True)
         print(f"   Waiting for callback on {REDIRECT_URI}...")
-        server.handle_request()  # Handle one request (the callback)
+        server.timeout = 5
+        deadline = time.time() + 1800
+        while CallbackHandler.captured_code is None and time.time() < deadline:
+            server.handle_request()
 
     code = CallbackHandler.captured_code
     if not code:
@@ -180,7 +184,6 @@ def main():
 
     # Save tokens
     _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    import time
     payload = {
         "access_token": access_token,
         "access_expiry": time.time() + expires_in,

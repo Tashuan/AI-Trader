@@ -21,6 +21,7 @@ from backtest_report import BacktestReport, TradeRecord
 from execution_simulator import FillConfig, FillResult, simulate_entry, simulate_exit
 from arena_market_data import ArenaMarketDataProvider, get_arena_market_data
 from strategy_registry import position_notional
+from backtest_liquidity import estimate_quote, estimate_level2
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,8 @@ class ScalpScanBacktester:
         base_interval: str = "1m",
         fill_simulator=None,
         fill_config: FillConfig | None = None,
+        spread_multiplier: float = 1.0,
+        liquidity_mode: str = "estimated",
     ):
         self.symbols = symbols
         self.params = params
@@ -118,6 +121,11 @@ class ScalpScanBacktester:
         self.base_interval = base_interval
         self.bar_minutes = _BAR_MINUTES.get(base_interval, 5)
         self.fill_simulator = fill_simulator
+        self.spread_multiplier = spread_multiplier
+        # "estimated" = use conservative spread/depth model (default).
+        # "synthetic"  = legacy zero-spread behavior (for backward comparison).
+        # "observed"   = use real quote data when available (future).
+        self.liquidity_mode = liquidity_mode
         self.fill_config = fill_config or FillConfig.from_legacy(
             slippage_bps=slippage_bps, fee_rate=0.001,
             market="us-stock", interval=base_interval,
@@ -139,16 +147,24 @@ class ScalpScanBacktester:
             "orders_expired": 0,
             "pending_at_end": 0,
             "same_bar_exit_skipped": 0,
+            "ambiguous_bars": 0,
             "exit_counts": Counter(),
             "fills_with_tick_data": 0,
             "fills_fallback_bar_close": 0,
             "avg_fill_slippage_bps": 0.0,
             "avg_spread_bps": 0.0,
+            "liquidity_mode": "estimated",
+            "spread_multiplier": 1.0,
+            "liquidity_observed_count": 0,
+            "liquidity_estimated_count": 0,
+            "liquidity_synthetic_count": 0,
         }
 
     def _finalize_diagnostics(self, diagnostics: dict) -> dict:
         result = dict(diagnostics)
         result["exit_counts"] = dict(result.get("exit_counts", {}))
+        result["liquidity_mode"] = self.liquidity_mode
+        result["spread_multiplier"] = self.spread_multiplier
         if self.fill_simulator is not None:
             fs = self.fill_simulator.stats
             result["fills_with_tick_data"] = fs.get("fills_with_tick_data", 0)
@@ -207,6 +223,37 @@ class ScalpScanBacktester:
     @staticmethod
     def _time_col(df: pd.DataFrame) -> str:
         return "Datetime" if "Datetime" in df.columns else "Date"
+
+    # ─── Liquidity / quote estimation ──────────────────────────────
+
+    def _build_quote(self, bar: object, diagnostics: dict) -> dict:
+        """Build a quote for liquidity scoring and fill simulation.
+
+        Uses the configured liquidity_mode:
+          - "estimated": conservative spread/depth from bar data (default).
+          - "synthetic": legacy zero-spread (bid == ask == close).
+          - "observed":  real quote data when available (future).
+        """
+        if self.liquidity_mode == "synthetic":
+            diagnostics["liquidity_synthetic_count"] += 1
+            close = float(bar["Close"]) if hasattr(bar, "__getitem__") else float(bar.Close)
+            return {"bid": close, "ask": close, "last": close, "spread": 0.0,
+                    "spread_pct": 0.0, "total_volume": 0.0,
+                    "spread_source": "synthetic", "is_estimated": True}
+
+        quote = estimate_quote(bar, market="us-stock",
+                               spread_multiplier=self.spread_multiplier)
+        if quote.get("spread_source") == "observed":
+            diagnostics["liquidity_observed_count"] += 1
+        else:
+            diagnostics["liquidity_estimated_count"] += 1
+        return quote
+
+    def _build_level2(self, bar: object) -> Optional[dict]:
+        """Build Level 2 depth for liquidity scoring."""
+        if self.liquidity_mode == "synthetic":
+            return None
+        return estimate_level2(bar, market="us-stock")
 
     # ─── Multi-timeframe window builder ────────────────────────────
 
@@ -302,9 +349,10 @@ class ScalpScanBacktester:
             breakout = core.detect_breakout_level(w_mid, sr, self.params)
             pattern = core.detect_pattern(w_mid)
             last_price = float(w_base["Close"].iloc[-1])
-            liq = core.liquidity_score(
-                {"bid": last_price, "ask": last_price}, None, w_mid, self.params,
-            )
+            last_bar = w_base.iloc[-1]
+            quote = self._build_quote(last_bar, self._diag_ref)
+            level2 = self._build_level2(last_bar)
+            liq = core.liquidity_score(quote, level2, w_mid, self.params)
             setup = core.score_scalp_setup(
                 mtf, fib_levels, sr, breakout, pattern, liq, self.params,
             )
@@ -312,7 +360,7 @@ class ScalpScanBacktester:
                 "mtf": mtf, "setup": setup, "fib_levels": fib_levels,
                 "fib_extensions": fib_extensions, "sr_levels": sr,
                 "breakout": breakout, "pattern": pattern, "liquidity": liq,
-                "price": last_price,
+                "price": last_price, "quote": quote,
             }
         except Exception as exc:
             logger.debug("Precomputed scan failed for %s: %s", symbol, exc)
@@ -354,12 +402,11 @@ class ScalpScanBacktester:
             breakout = core.detect_breakout_level(df_5m, sr, self.params)
             pattern = core.detect_pattern(df_5m)
 
-            # Liquidity — compute from 5m frame only (no quote/level2 in backtest)
-            quote = {
-                "bid": float(df_1m["Close"].iloc[-1]),
-                "ask": float(df_1m["Close"].iloc[-1]),
-            }
-            liq = core.liquidity_score(quote, None, df_5m, self.params)
+            # Liquidity — estimate quote/depth from the latest base-TF bar.
+            last_bar = df_1m.iloc[-1]
+            quote = self._build_quote(last_bar, self._diag_ref if hasattr(self, "_diag_ref") else {})
+            level2 = self._build_level2(last_bar)
+            liq = core.liquidity_score(quote, level2, df_5m, self.params)
 
             setup = core.score_scalp_setup(mtf, fib_levels, sr, breakout, pattern, liq, self.params)
             return {
@@ -372,6 +419,7 @@ class ScalpScanBacktester:
                 "pattern": pattern,
                 "liquidity": liq,
                 "price": float(df_1m["Close"].iloc[-1]),
+                "quote": quote,
             }
         except Exception as exc:
             logger.debug("Scan failed for %s: %s", symbol, exc)
@@ -530,6 +578,7 @@ class ScalpScanBacktester:
             "session_bars_per_day": _SESSION_BARS_PER_DAY.get(self.base_interval, 78),
             "sharpe_periods_per_year": _SESSION_BARS_PER_DAY.get(self.base_interval, 78) * 252,
         })
+        self._diag_ref = diagnostics  # referenced by _build_quote during scans
 
         cash = self.initial_capital
         positions: dict[str, dict] = {}
@@ -618,9 +667,12 @@ class ScalpScanBacktester:
                             continue
                         fee = fill_price * fill_qty * self.fill_config.fee_rate
                     else:
+                        # Build a quote for the current bar to model spread crossing.
+                        cur_bar = current_bars.get(sym)
+                        entry_quote = self._build_quote(cur_bar, diagnostics) if cur_bar is not None else None
                         result = simulate_entry(
                             entry, side, fill_qty, sym, self.fill_config,
-                            current_bars.get(sym),
+                            cur_bar, quote=entry_quote,
                         )
                         fill_price, fill_qty, fee = result.fill_price, result.fill_qty, result.fee
                         if fill_qty <= 0:
@@ -642,6 +694,9 @@ class ScalpScanBacktester:
                     diagnostics["orders_filled"] += 1
 
             # ── Position exit management ─────────────────────────────
+            # Conservative same-bar rule: when both stop and target are touched
+            # in the same bar, we assume the ADVERSE outcome (stop hit first).
+            # This avoids crediting a favorable exit that may not have happened.
             for sym, pos in list(positions.items()):
                 if sym in filled_this_bar:
                     diagnostics["same_bar_exit_skipped"] += 1
@@ -656,9 +711,13 @@ class ScalpScanBacktester:
                 exit_reason = None
 
                 if side == "long":
-                    if lo <= pos["sl"]:
+                    stop_touched = lo <= pos["sl"]
+                    target_touched = hi >= pos["tp"]
+                    if stop_touched and target_touched:
+                        diagnostics["ambiguous_bars"] += 1
+                    if stop_touched:
                         exit_px, exit_reason = pos["sl"], "stop_loss"
-                    elif hi >= pos["tp"]:
+                    elif target_touched:
                         exit_px, exit_reason = pos["tp"], "take_profit"
                     else:
                         pos["peak"] = max(pos["peak"], hi)
@@ -670,9 +729,13 @@ class ScalpScanBacktester:
                             if lo <= trail:
                                 exit_px, exit_reason = trail, "trailing_stop"
                 else:
-                    if hi >= pos["sl"]:
+                    stop_touched = hi >= pos["sl"]
+                    target_touched = lo <= pos["tp"]
+                    if stop_touched and target_touched:
+                        diagnostics["ambiguous_bars"] += 1
+                    if stop_touched:
                         exit_px, exit_reason = pos["sl"], "stop_loss"
-                    elif lo <= pos["tp"]:
+                    elif target_touched:
                         exit_px, exit_reason = pos["tp"], "take_profit"
                     else:
                         pos["trough"] = min(pos["trough"], lo)
@@ -708,9 +771,12 @@ class ScalpScanBacktester:
                             exit_px = exit_result["exit_price"]
                             tick_fill_price = exit_px
                             exit_reason = exit_result["exit_reason"]
+                    # Build a quote for the current bar to model spread crossing on exits.
+                    cur_bar = current_bars.get(sym)
+                    exit_quote = self._build_quote(cur_bar, diagnostics) if cur_bar is not None else None
                     cash, pnl, _ = self._close_position(
                         pos, exit_px, ts, cash, trades, exit_reason,
-                        current_bars.get(sym), tick_fill_price,
+                        cur_bar, tick_fill_price, quote=exit_quote,
                     )
                     diagnostics["exit_counts"][exit_reason or "unknown"] += 1
                     losses = 0 if pnl > 0 else losses + 1
@@ -879,8 +945,10 @@ class ScalpScanBacktester:
             final_idx = df.index[df[col] == final_ts].tolist()
             final_bar = df.iloc[final_idx[-1]] if final_idx else None
             px = float(final_bar["Close"]) if final_bar is not None else pos["entry_price"]
+            final_quote = self._build_quote(final_bar, diagnostics) if final_bar is not None else None
             cash, _, _ = self._close_position(
                 pos, px, final_ts, cash, trades, "Backtest end", final_bar, None, True,
+                quote=final_quote,
             )
             diagnostics["exit_counts"]["Backtest end"] += 1
             if pos["qty"] <= 1e-12:
@@ -934,7 +1002,8 @@ class ScalpScanBacktester:
     def _close_position(self, pos: dict, price: float, ts, cash: float,
                         trades: list[TradeRecord], reason: str, bar=None,
                         precomputed_price: float | None = None,
-                        force_full: bool = False) -> tuple[float, float, float]:
+                        force_full: bool = False,
+                        quote: dict | None = None) -> tuple[float, float, float]:
         config = replace(self.fill_config, enable_partial_fills=False) if force_full else self.fill_config
         result = (
             FillResult(
@@ -944,6 +1013,7 @@ class ScalpScanBacktester:
             )
             if precomputed_price is not None else simulate_exit(
                 price, pos["side"], pos["qty"], pos["symbol"], config, bar,
+                quote=quote,
             )
         )
         qty = min(result.fill_qty, pos["qty"])

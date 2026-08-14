@@ -71,6 +71,70 @@ class ExecutionSimulatorTests(unittest.TestCase):
         self.assertEqual(simulate_entry(0, "long", 1, "AAPL", config).fill_qty, 0)
         self.assertEqual(simulate_exit(100, "long", 0, "AAPL", config).fill_qty, 0)
 
+    # ── Quote-side pricing tests ────────────────────────────────────
+
+    def _quote_config(self):
+        return FillConfig(
+            slippage_bps=0,
+            fee_rate=0.0,
+            enable_size_impact=False,
+            enable_vol_widening=False,
+            enable_partial_fills=False,
+            enable_tick_rounding=False,
+            enable_quote_side_pricing=True,
+        )
+
+    def test_long_entry_uses_ask_price(self):
+        config = self._quote_config()
+        quote = {"bid": 99.0, "ask": 101.0, "last": 100.0}
+        result = simulate_entry(100.0, "long", 10.0, "AAPL", config, quote=quote)
+        self.assertAlmostEqual(result.fill_price, 101.0)
+
+    def test_long_exit_uses_bid_price(self):
+        config = self._quote_config()
+        quote = {"bid": 99.0, "ask": 101.0, "last": 100.0}
+        result = simulate_exit(100.0, "long", 10.0, "AAPL", config, quote=quote)
+        self.assertAlmostEqual(result.fill_price, 99.0)
+
+    def test_short_entry_uses_bid_price(self):
+        config = self._quote_config()
+        quote = {"bid": 99.0, "ask": 101.0, "last": 100.0}
+        result = simulate_entry(100.0, "short", 10.0, "AAPL", config, quote=quote)
+        self.assertAlmostEqual(result.fill_price, 99.0)
+
+    def test_short_exit_uses_ask_price(self):
+        config = self._quote_config()
+        quote = {"bid": 99.0, "ask": 101.0, "last": 100.0}
+        result = simulate_exit(100.0, "short", 10.0, "AAPL", config, quote=quote)
+        self.assertAlmostEqual(result.fill_price, 101.0)
+
+    def test_quote_side_pricing_can_be_disabled(self):
+        config = self._quote_config()
+        config.enable_quote_side_pricing = False
+        quote = {"bid": 99.0, "ask": 101.0, "last": 100.0}
+        result = simulate_entry(100.0, "long", 10.0, "AAPL", config, quote=quote)
+        self.assertAlmostEqual(result.fill_price, 100.0)
+
+    def test_no_quote_falls_back_to_reference_price(self):
+        config = self._quote_config()
+        result = simulate_entry(100.0, "long", 10.0, "AAPL", config, quote=None)
+        self.assertAlmostEqual(result.fill_price, 100.0)
+
+    def test_quote_side_pricing_applies_slippage_on_top(self):
+        config = FillConfig(
+            slippage_bps=10,
+            fee_rate=0.0,
+            enable_size_impact=False,
+            enable_vol_widening=False,
+            enable_partial_fills=False,
+            enable_tick_rounding=False,
+            enable_quote_side_pricing=True,
+        )
+        quote = {"bid": 99.0, "ask": 101.0, "last": 100.0}
+        result = simulate_entry(100.0, "long", 10.0, "AAPL", config, quote=quote)
+        # Ask=101, slippage=10bps → 101 * (1 + 0.001) = 101.101
+        self.assertAlmostEqual(result.fill_price, 101.101, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()
