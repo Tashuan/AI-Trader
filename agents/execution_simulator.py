@@ -182,20 +182,25 @@ def _compute_fill_qty(requested_qty: float, order_value: float,
 # ── Quote-side pricing ───────────────────────────────────────────────
 def _quote_reference_price(price: float, is_buyer: bool,
                            quote: Optional[dict]) -> float:
-    """Return the quote-side reference price for an order.
+    """Apply the half-spread cost on top of the supplied reference price.
 
-    Buyers (long entries, short exits) cross the spread and pay the ask.
-    Sellers (short entries, long exits) receive the bid.
+    For stop-limit orders the fill reference is the trigger/limit price, not
+    the bar's close.  Crossing the spread is modelled as an *additional*
+    cost on top of that price:
 
-    Falls back to the supplied price when no quote is available.
+      - Buyers  (long entries, short exits)   pay  price + half_spread
+      - Sellers (short entries, long exits)   get  price - half_spread
+
+    Falls back to the supplied price when no quote or zero spread is
+    available.
     """
     if quote is None:
         return price
-    if is_buyer:
-        ask = float(quote.get("ask", 0))
-        return ask if ask > 0 else price
-    bid = float(quote.get("bid", 0))
-    return bid if bid > 0 else price
+    spread = float(quote.get("spread", 0))
+    if spread <= 0:
+        return price
+    half_spread = spread / 2.0
+    return price + half_spread if is_buyer else price - half_spread
 
 
 # ── Public API ────────────────────────────────────────────────────────
@@ -205,9 +210,10 @@ def simulate_entry(price: float, side: str, qty: float, symbol: str,
     """Simulate an entry fill (opening a long or short position).
 
     When ``quote`` is supplied and ``config.enable_quote_side_pricing`` is
-    True, the fill starts from the quote-side price (ask for longs, bid for
-    shorts) before slippage, impact, and tick rounding are applied. This
-    models the cost of crossing the spread in realistic execution.
+    True, half the estimated spread is added to (buyers) or subtracted from
+    (sellers) the supplied price before slippage, impact, and tick rounding.
+    This models the cost of crossing the spread without replacing the
+    stop-limit trigger price.
     """
     if price <= 0 or qty <= 0:
         return FillResult(0.0, 0.0, 0.0, 0.0, False)
@@ -231,8 +237,10 @@ def simulate_exit(price: float, side: str, qty: float, symbol: str,
     """Simulate an exit fill (closing a long or short position).
 
     When ``quote`` is supplied and ``config.enable_quote_side_pricing`` is
-    True, the fill starts from the quote-side price (bid for long exits,
-    ask for short exits) before slippage, impact, and tick rounding.
+    True, half the estimated spread is added to (short covers) or subtracted
+    from (long exits) the supplied price before slippage, impact, and tick
+    rounding.  This models the cost of crossing the spread without replacing
+    the stop/target price.
     """
     if price <= 0 or qty <= 0:
         return FillResult(0.0, 0.0, 0.0, 0.0, False)

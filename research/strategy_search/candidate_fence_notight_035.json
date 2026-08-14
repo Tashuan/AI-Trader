@@ -1,0 +1,14 @@
+{
+  "config_id": "fence_notight_035",
+  "strategy": "fence_bar",
+  "override": {
+    "retest": {
+      "enabled": false
+    },
+    "fence": {
+      "min_range_pct": 0.35,
+      "max_range_pct": 0.8
+    }
+  },
+  "description": "Fence Bar with no retest, tight fence range (0.35-0.80%), 2R target, fixed SL/TP"
+}

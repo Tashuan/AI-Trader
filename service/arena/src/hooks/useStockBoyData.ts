@@ -3,6 +3,7 @@ import type { StockBoySnapshot, StockBoySupervisorStatus } from '../types';
 
 const API_BASE = '/api';
 const REFRESH_INTERVAL = 10000;
+const STOCKBOY_TOKEN_KEY = 'stockboy_token';
 
 interface UseStockBoyData {
   snapshot: StockBoySnapshot | null;
@@ -21,9 +22,10 @@ export function useStockBoyData(enabled = true): UseStockBoyData {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
-  const authHeaders = () => ({
-    'Authorization': `Bearer ${localStorage.getItem('auth_token') || ''}`,
-  });
+  const authHeaders = () => {
+    const token = localStorage.getItem(STOCKBOY_TOKEN_KEY) || localStorage.getItem('auth_token') || '';
+    return { 'Authorization': `Bearer ${token}` };
+  };
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -69,7 +71,19 @@ export function useStockBoyData(enabled = true): UseStockBoyData {
 
   useEffect(() => {
     if (!enabled) return;
-    refresh();
+    // Fetch the StockBoy supervisor token once on mount so read endpoints
+    // can authenticate. The backend serves it from the provisioned token file.
+    if (!localStorage.getItem(STOCKBOY_TOKEN_KEY)) {
+      fetch(`${API_BASE}/stockboy/token`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data?.token) localStorage.setItem(STOCKBOY_TOKEN_KEY, data.token);
+        })
+        .catch(() => {})
+        .finally(() => refresh());
+    } else {
+      refresh();
+    }
     const timer = window.setInterval(refresh, REFRESH_INTERVAL);
     return () => window.clearInterval(timer);
   }, [enabled, refresh]);

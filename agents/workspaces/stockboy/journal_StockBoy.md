@@ -989,6 +989,286 @@ Decision: no action across all 4 cycles
 Result: verified
 Lesson: 516 AI cycles — 516 AI supervisor cycle milestone reached. ETH at 1.55%, LTC at 1.62%, BTC at 2.21%. uPnL at -$61.39. All 3 runners active since cycle 194. Backend at 713 cycles. Zero anomalies, zero actions across all 516 cycles.
 
+### [2026-08-11 13:12 UTC] [cycles 517-520 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 5 pending orders (ScalpRunner), portfolio
+Facts: ETH $1887.20→$1889.50 (1.55→1.67% from stop — recovering), LTC $45.31→$45.42 (1.62→1.86% from stop — recovering), BTC $64296→$64300 (2.21→2.22% from stop — minor recovery). Portfolio equity $34,945.61→$34,951.60, uPnL -$61.39→-$55.40. 5 pending orders stable. All positions protected. All 3 runners active. Backend at 718 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 520 AI cycles — 520 AI supervisor cycle milestone reached. All positions recovering. ETH at 1.67%, LTC at 1.86%, BTC at 2.22%. uPnL at -$55.40. All 3 runners active since cycle 194. Backend at 718 cycles. Zero anomalies, zero actions across all 520 cycles.
+
+### [2026-08-11 13:18 UTC] [cycles 521-524 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 5 pending orders (ScalpRunner), portfolio
+Facts: ETH $1889.50→$1887.50 (1.67→1.57% from stop — pullback), LTC $45.42→$45.43 (1.86→1.88% from stop — minor recovery), BTC $64300→$64276 (2.22→2.18% from stop — minor dip). Portfolio equity $34,951.60→$34,949.60, uPnL -$55.40→-$57.40. 5 pending orders stable. All positions protected. All 3 runners active. Backend hit 720 cycle milestone, at 724 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 524 AI cycles — 524 AI supervisor cycle milestone reached. Backend hit 720 cycle milestone. ETH at 1.57%, LTC at 1.88%, BTC at 2.18%. uPnL at -$57.40. All 3 runners active since cycle 194. Backend at 724 cycles. Zero anomalies, zero actions across all 524 cycles.
+
+### [2026-08-11 13:25 UTC] [cycles 525-528 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1887.50→$1886.90 (1.57→1.53% from stop — pullback), LTC $45.43→$45.41 (1.88→1.84% from stop — minor dip), BTC $64276→$64225 (2.18→2.10% from stop — pullback). Portfolio equity $34,949.60→$34,947.08, uPnL -$57.40→-$59.92. Pending orders 5→3→1 (ScalpRunner churn). All positions protected. All 3 runners active. Backend at 729 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 528 AI cycles — 528 AI supervisor cycle milestone reached. ETH at 1.53%, LTC at 1.84%, BTC at 2.10%. uPnL at -$59.92. All 3 runners active since cycle 194. Backend at 729 cycles. Zero anomalies, zero actions across all 528 cycles.
+
+### [2026-08-11 13:31 UTC] [cycles 529-532 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1886.90→$1885.50 (1.53→1.46% from stop — pullback, new session low), LTC $45.41→$45.37 (1.84→1.75% from stop — pullback), BTC $64225→$64148 (2.10→1.99% from stop — pullback, below 2%). Portfolio equity $34,947.08→$34,942.39, uPnL -$59.92→-$64.61. Pending orders 1→3 (ScalpRunner churn). All positions protected. All 3 runners active. Backend at 735 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 532 AI cycles — 532 AI supervisor cycle milestone reached. ETH at session low 1.46% from stop, LTC at 1.75%, BTC below 2% at 1.99%. uPnL at -$64.61. All 3 runners active since cycle 194. Backend at 735 cycles. Zero anomalies, zero actions across all 532 cycles.
+
+### [2026-08-11 13:37 UTC] [cycles 533-536 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 3 pending orders (ScalpRunner), portfolio
+Facts: ETH $1885.50→$1885.90 (1.46→1.48% from stop — minor recovery), LTC $45.37 (1.75% from stop — flat), BTC $64148→$64172 (1.99→2.02% from stop — recovering above 2%). Portfolio equity $34,942.39→$34,943.35, uPnL -$64.61→-$63.65. 3 pending orders stable. All positions protected. All 3 runners active. Backend hit 740 cycle milestone. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 536 AI cycles — 536 AI supervisor cycle milestone reached. Backend hit 740 cycle milestone. ETH at 1.48%, LTC at 1.75%, BTC at 2.02%. uPnL at -$63.65. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 536 cycles.
+
+### [2026-08-11 13:43 UTC] [cycles 537-540 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 3 pending orders (ScalpRunner), portfolio
+Facts: ETH $1885.90→$1890.50 (1.48→1.72% from stop — recovering), LTC $45.37→$45.33 (1.75→1.67% from stop — minor dip), BTC $64172→$64177 (2.02→1.94→2.03% from stop — dipped below 2% then recovered). Portfolio equity $34,943.35→$34,946.11, uPnL -$63.65→-$60.89. 3 pending orders stable. All positions protected. All 3 runners active. Backend at 746 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 540 AI cycles — 540 AI supervisor cycle milestone reached. ETH recovering to 1.72%, LTC at 1.67%, BTC at 2.03%. uPnL at -$60.89. All 3 runners active since cycle 194. Backend at 746 cycles. Zero anomalies, zero actions across all 540 cycles.
+
+### [2026-08-11 13:49 UTC] [cycles 541-544 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 3 pending orders (ScalpRunner), portfolio
+Facts: ETH $1890.50→$1889.00 (1.72→1.64% from stop — pullback), LTC $45.33→$45.34 (1.67→1.68% from stop — minor recovery), BTC $64177→$64129 (2.03→1.96% from stop — pullback, below 2%). Portfolio equity $34,946.11→$34,943.78, uPnL -$60.89→-$63.22. 3 pending orders stable. All positions protected. All 3 runners active. Backend hit 750 cycle milestone. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 544 AI cycles — 544 AI supervisor cycle milestone reached. Backend hit 750 cycle milestone. ETH at 1.64%, LTC at 1.68%, BTC at 1.96%. uPnL at -$63.22. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 544 cycles.
+
+### [2026-08-11 13:56 UTC] [cycles 545-548 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1889.00→$1888.10 (1.64→1.60% from stop — pullback), LTC $45.34→$45.22 (1.68→1.41% from stop — pullback, session low closest to stop), BTC $64129→$64078 (1.96→1.88% from stop — pullback). Portfolio equity $34,943.78→$34,937.25, uPnL -$63.22→-$69.75. Pending orders 3→2→1 (ScalpRunner churn). All positions protected. All 3 runners active. Backend at 757 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 548 AI cycles — 548 AI supervisor cycle milestone reached. LTC at session low 1.41% from stop, ETH at 1.60%, BTC at 1.88%. uPnL at -$69.75. All 3 runners active since cycle 194. Backend at 757 cycles. Zero anomalies, zero actions across all 548 cycles.
+
+### [2026-08-11 14:03 UTC] [cycles 549-552 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 1 pending order (ScalpRunner), portfolio
+Facts: ETH $1888.10→$1888.90 (1.60→1.64% from stop — minor recovery), LTC $45.22→$45.12 (1.41→1.19% from stop — pullback, new session low closest to stop), BTC $64078→$64155 (1.88→2.00% from stop — recovering to 2%). Portfolio equity $34,937.25→$34,936.23, uPnL -$69.75→-$70.77. 1 pending order stable. All positions protected. All 3 runners active. Backend hit 760 cycle milestone, at 763 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 552 AI cycles — 552 AI supervisor cycle milestone reached. Backend hit 760 cycle milestone. LTC at session low 1.19% from stop, ETH at 1.64%, BTC at 2.00%. uPnL at -$70.77. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 552 cycles.
+
+### [2026-08-11 14:09 UTC] [cycles 553-556 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1888.90→$1888.30 (1.64→1.61% from stop — pullback then minor recovery), LTC $45.12→$45.07 (1.19→1.08→1.10% from stop — new session low 1.08% then minor recovery), BTC $64155→$64187 (2.00→2.05% from stop — minor recovery). Portfolio equity $34,936.23→$34,934.97, uPnL -$70.77→-$72.03. Pending orders 1→5→6 (ScalpRunner churn). All positions protected. All 3 runners active. Backend at 769 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 556 AI cycles — 556 AI supervisor cycle milestone reached. LTC hit new session low 1.08% from stop, ETH at 1.61%, BTC at 2.05%. uPnL at -$72.03. All 3 runners active since cycle 194. Backend at 769 cycles. Zero anomalies, zero actions across all 556 cycles.
+
+### [2026-08-11 14:16 UTC] [cycles 557-560 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 6 pending orders (ScalpRunner), portfolio
+Facts: ETH $1888.30→$1888.80 (1.61→1.63% from stop — minor recovery), LTC $45.07→$45.05 (1.10→1.05% from stop — new session low closest to stop), BTC $64187→$64213 (2.05→2.08% from stop — minor recovery). Portfolio equity $34,934.97→$34,935.38, uPnL -$72.03→-$71.62. 6 pending orders stable. All positions protected. All 3 runners active. Backend hit 770 cycle milestone, at 774 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 560 AI cycles — 560 AI supervisor cycle milestone reached. Backend hit 770 cycle milestone. LTC at session low 1.05% from stop, ETH at 1.63%, BTC at 2.08%. uPnL at -$71.62. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 560 cycles.
+
+### [2026-08-11 14:22 UTC] [cycles 561-564 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 6 pending orders (ScalpRunner), portfolio
+Facts: ETH $1888.80→$1887.40 (1.63→1.56% from stop — pullback), LTC $45.05 (1.05→1.04% from stop — flat at session low), BTC $64213→$64152 (2.08→1.99% from stop — pullback below 2%). Portfolio equity $34,935.38→$34,932.41, uPnL -$71.62→-$74.59. 6 pending orders stable. All positions protected. All 3 runners active. Backend hit 780 cycle milestone. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 564 AI cycles — 564 AI supervisor cycle milestone reached. Backend hit 780 cycle milestone. LTC at session low 1.04% from stop, ETH at 1.56%, BTC at 1.99%. uPnL at -$74.59. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 564 cycles.
+
+### [2026-08-11 14:28 UTC] [cycles 565-568 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1887.40→$1880.80 (1.56→1.21% from stop — significant pullback), LTC $45.05→$45.03 (1.04→1.00% from stop — at 1% from stop), BTC $64152→$63981 (1.99→1.73% from stop — significant pullback). Portfolio equity $34,932.41→$34,921.50, uPnL -$74.59→-$85.50. Pending orders 6→5 (ScalpRunner churn). All positions protected. All 3 runners active. Backend at 785 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 568 AI cycles — 568 AI supervisor cycle milestone reached. All positions pulling back significantly. LTC at 1.00% from stop, ETH at 1.21%, BTC at 1.73%. uPnL at -$85.50. All 3 runners active since cycle 194. Backend at 785 cycles. Zero anomalies, zero actions across all 568 cycles.
+
+### [2026-08-11 14:35 UTC] [cycles 569-572 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1880.80→$1878.50 (1.21→1.09% from stop — pullback, under 1.1%), LTC $45.03→$45.02 (1.00→0.98% from stop — pullback, under 1% from stop!), BTC $63981→$63988 (1.73→1.74% from stop — minor recovery). Portfolio equity $34,921.50→$34,919.45, uPnL -$85.50→-$87.55. Pending orders 5→1 (ScalpRunner churn). All positions protected. All 3 runners active. Backend hit 790 cycle milestone, at 791 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 572 AI cycles — 572 AI supervisor cycle milestone reached. Backend hit 790 cycle milestone. LTC under 1% from stop at 0.98%, ETH at 1.09%, BTC at 1.74%. uPnL at -$87.55. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 572 cycles.
+
+### [2026-08-11 14:41 UTC] [cycles 573-576 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 1 pending order (ScalpRunner), portfolio
+Facts: ETH $1878.50→$1874.90 (1.09→0.90% from stop — significant pullback, under 1%!), LTC $45.02→$45.04 (0.98→1.03% from stop — minor recovery from under 1%), BTC $63988→$63921 (1.74→1.64% from stop — pullback). Portfolio equity $34,919.45→$34,915.43, uPnL -$87.55→-$91.57. 1 pending order stable. All positions protected. All 3 runners active. Backend at 797 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 576 AI cycles — 576 AI supervisor cycle milestone reached. ETH under 1% from stop at 0.90%, LTC at 1.03%, BTC at 1.64%. uPnL at -$91.57. All 3 runners active since cycle 194. Backend at 797 cycles. Zero anomalies, zero actions across all 576 cycles.
+
+### [2026-08-11 14:48 UTC] [cycles 577-580 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1874.90→$1876.10 (0.90→0.97% from stop — minor recovery), LTC $45.04→$45.08 (1.03→1.12% from stop — minor recovery), BTC $63921→$63922 (1.64→1.64% from stop — flat). Portfolio equity $34,915.43→$34,917.84, uPnL -$91.57→-$89.16. Pending orders 1→2 (ScalpRunner churn). All positions protected. All 3 runners active. Backend hit 800 cycle milestone, at 803 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 580 AI cycles — 580 AI supervisor cycle milestone reached. Backend hit 800 cycle milestone. ETH at 0.97% from stop, LTC at 1.12%, BTC at 1.64%. uPnL at -$89.16. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 580 cycles.
+
+### [2026-08-11 14:54 UTC] [cycles 581-584 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 2 pending orders (ScalpRunner), portfolio
+Facts: ETH $1876.10→$1875.60 (0.97→0.94% from stop — pullback, under 1%), LTC $45.08→$45.04 (1.12→1.03% from stop — pullback), BTC $63922→$63917 (1.64→1.63% from stop — minor dip). Portfolio equity $34,917.84→$34,915.79, uPnL -$89.16→-$91.21. 2 pending orders stable. All positions protected. All 3 runners active. Backend at 808 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 584 AI cycles — 584 AI supervisor cycle milestone reached. ETH under 1% from stop at 0.94%, LTC at 1.03%, BTC at 1.63%. uPnL at -$91.21. All 3 runners active since cycle 194. Backend at 808 cycles. Zero anomalies, zero actions across all 584 cycles.
+
+### [2026-08-11 15:01 UTC] [cycles 585-588 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1875.60→$1873.70 (0.94→0.77→0.84% from stop — significant pullback then minor recovery), LTC $45.04→$45.04 (1.03→0.94→1.03% from stop — under 1% then recovered), BTC $63917→$63743 (1.63→1.35→1.36% from stop — significant pullback then minor recovery). Portfolio equity $34,915.79→$34,909.66, uPnL -$91.21→-$97.35. uPnL crossed -$100 at cycle 585. Pending orders 2→3 (ScalpRunner churn). All positions protected. All 3 runners active. Backend hit 810 cycle milestone, at 814 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 588 AI cycles — 588 AI supervisor cycle milestone reached. Backend hit 810 cycle milestone. uPnL crossed -$100 briefly. ETH at 0.84% from stop, LTC at 1.03%, BTC at 1.36%. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 588 cycles.
+
+### [2026-08-11 15:07 UTC] [cycles 589-592 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 3 pending orders (ScalpRunner), portfolio
+Facts: ETH $1873.70→$1874.30 (0.84→0.87% from stop — minor recovery), LTC $45.04→$45.00 (1.03→0.94% from stop — pullback, back under 1%), BTC $63743→$63820 (1.36→1.48% from stop — minor recovery). Portfolio equity $34,909.66→$34,910.71, uPnL -$97.35→-$96.29. 3 pending orders stable. All positions protected. All 3 runners active. Backend hit 820 cycle milestone. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 592 AI cycles — 592 AI supervisor cycle milestone reached. Backend hit 820 cycle milestone. ETH at 0.87% from stop, LTC at 0.94%, BTC at 1.48%. uPnL at -$96.29. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 592 cycles.
+
+### [2026-08-11 15:14 UTC] [cycles 593-596 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1874.30→$1875.90 (0.87→0.96% from stop — minor recovery), LTC $45.00→$45.12 (0.94→1.21% from stop — recovery back above 1%), BTC $63790→$63790 (1.44→1.44% from stop — flat). Portfolio equity $34,910.71→$34,915.87, uPnL -$96.29→-$91.13. Pending orders 3→2 (ScalpRunner churn). All positions protected. All 3 runners active. Backend at 826 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 596 AI cycles — 596 AI supervisor cycle milestone reached. ETH at 0.96% from stop, LTC at 1.21%, BTC at 1.44%. uPnL at -$91.13. All 3 runners active since cycle 194. Backend at 826 cycles. Zero anomalies, zero actions across all 596 cycles.
+
+### [2026-08-11 15:20 UTC] [cycles 597-600 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1875.90→$1871.70 (0.96→0.73% from stop — significant pullback, new session low closest to stop), LTC $45.12→$45.12 (1.21→1.13→1.21% from stop — pullback then recovery), BTC $63790→$63732 (1.44→1.35% from stop — pullback). Portfolio equity $34,915.87→$34,910.72, uPnL -$91.13→-$96.28. Pending orders 2→1→2 (ScalpRunner churn). All positions protected. All 3 runners active. Backend hit 830 cycle milestone, at 831 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 600 AI cycles — 600 AI supervisor cycle milestone reached! Backend hit 830 cycle milestone. ETH at session low 0.73% from stop, LTC at 1.21%, BTC at 1.35%. uPnL at -$96.28. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 600 cycles.
+
+### [2026-08-11 15:27 UTC] [cycles 601-604 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), pending orders (ScalpRunner), portfolio
+Facts: ETH $1871.70→$1874.80 (0.73→0.90% from stop — recovery from session low), LTC $45.12→$45.13 (1.21→1.23% from stop — minor recovery), BTC $63732→$63785 (1.35→1.43% from stop — recovery). Portfolio equity $34,910.72→$34,915.07, uPnL -$96.28→-$91.93. Pending orders 2→1 (ScalpRunner churn). All positions protected. All 3 runners active. Backend at 837 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 604 AI cycles — 604 AI supervisor cycle milestone reached. ETH recovered from session low 0.73% to 0.90% from stop, LTC at 1.23%, BTC at 1.43%. uPnL at -$91.93. All 3 runners active since cycle 194. Backend at 837 cycles. Zero anomalies, zero actions across all 604 cycles.
+
+### [2026-08-11 15:33 UTC] [cycles 605-608 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 1 pending order (ScalpRunner), portfolio
+Facts: ETH $1874.80→$1875.20 (0.90→0.92% from stop — minor recovery), LTC $45.13→$45.11 (1.23→1.18% from stop — minor dip), BTC $63785→$63811 (1.43→1.47% from stop — minor recovery). Portfolio equity $34,915.07→$34,915.29, uPnL -$91.93→-$91.71. 1 pending order stable. All positions protected. All 3 runners active. Backend hit 840 cycle milestone, at 842 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 608 AI cycles — 608 AI supervisor cycle milestone reached. Backend hit 840 cycle milestone. ETH at 0.92% from stop, LTC at 1.18%, BTC at 1.47%. uPnL at -$91.71. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 608 cycles.
+
+### [2026-08-11 15:39 UTC] [cycles 609-612 — AI supervisor]
+Scope: 3 runners, 3→2 positions (CryptoRunner), 1 pending order (ScalpRunner), portfolio
+Facts: ETH $1875.20→$1870.10 (0.92→0.65% from stop — new session low closest to stop) then STOPPED OUT at cycle 612 — stop loss $1857.95 triggered, position ID=115 closed. LTC $45.11→$45.06 (1.18→1.06% from stop — pullback), BTC $63811→$63670 (1.47→1.25% from stop — significant pullback). Portfolio equity $34,915.29→$34,894.32, uPnL -$91.71→-$62.23 (improved — ETH loss realized). Cash $30,000→$31,618 (CryptoRunner cash $10,000→$11,618 — ETH collateral returned). Positions 3→2. All positions protected. All 3 runners active. Backend at 848 cycles. 0 anomalies, 0 actions.
+Condition: healthy (ETH stop loss triggered as designed — system working correctly)
+Decision: no action across all 4 cycles (ETH stop was automatic, no supervisor action needed)
+Result: verified
+Lesson: 612 AI cycles — 612 AI supervisor cycle milestone reached. ETH stopped out at $1857.95 after hitting 0.65% from stop. Stop loss worked as designed. 2 positions remaining: LTC at 1.06% from stop, BTC at 1.25% from stop. uPnL at -$62.23. All 3 runners active since cycle 194. Backend at 848 cycles. Zero anomalies, zero actions across all 612 cycles.
+
+### [2026-08-11 15:46 UTC] [cycles 613-616 — AI supervisor]
+Scope: 3 runners, 2→3 positions (CryptoRunner), 1 pending order (ScalpRunner), portfolio
+Facts: LTC $45.06→$45.05 (1.06→0.97→1.04% from stop — under 1% then recovered), BTC $63670→$63536 (1.25→0.96→1.04% from stop — under 1% then recovered). NEW POSITION: TIA short opened by CryptoRunner at cycle 616 — ID=116, qty=-7966.98, entry=$0.31, stop=$0.32, TP=$0.29, PnL=-0.01%. Portfolio equity $34,894.32→$34,887.77, uPnL -$62.23→-$65.97. CryptoRunner cash $11,618→$9,175 (deployed ~$2,443 for TIA short). Positions 2→3. All positions protected. All 3 runners active. Backend at 854 cycles. 0 anomalies, 0 actions.
+Condition: healthy (CryptoRunner opened new TIA short — runner operating normally)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 616 AI cycles — 616 AI supervisor cycle milestone reached. CryptoRunner opened new TIA short position. 3 positions: LTC at 1.04% from stop, BTC at 1.04%, TIA short at -3.06% from stop. uPnL at -$65.97. All 3 runners active since cycle 194. Backend at 854 cycles. Zero anomalies, zero actions across all 616 cycles.
+
+### [2026-08-11 15:52 UTC] [cycles 617-620 — AI supervisor]
+Scope: 3 runners, 3 positions (CryptoRunner), 1 pending order (ScalpRunner), portfolio
+Facts: TIA short PnL improved -0.01%→+0.34% (from_stop -3.06→-2.71% — short position improving), LTC $45.05→$45.02 (1.04→0.99% from stop — under 1%), BTC $63536→$63505 (1.04→0.99% from stop — under 1%). Portfolio equity $34,887.77→$34,894.62, uPnL -$65.97→-$76.01. 1 pending order stable. All positions protected. All 3 runners active. Backend at 859 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 620 AI cycles — 620 AI supervisor cycle milestone reached. LTC and BTC both under 1% from stop at 0.99%. TIA short slightly profitable at +0.34%. uPnL at -$76.01. All 3 runners active since cycle 194. Backend at 859 cycles. Zero anomalies, zero actions across all 620 cycles.
+
+### [2026-08-11 15:58 UTC] [cycles 621-624 — AI supervisor]
+Scope: 3 runners, 3→4 positions (CryptoRunner + BlitzTrader), 1 pending order (ScalpRunner), portfolio
+Facts: TIA short PnL +0.34→+0.07% (slight deterioration), LTC $45.02→$45.01 (0.99→0.95% from stop — pullback), BTC $63505→$63514 (0.99→1.01% from stop — minor recovery). NEW POSITION: ETH short opened by BlitzTrader at cycle 623 — ID=117, qty=-1.75, entry=$1856.34, stop=$1912.87, TP=$1745.73, PnL=+0.09%. Portfolio equity $34,894.62→$34,887.45, uPnL -$76.01→-$72.86. BlitzTrader cash $10,000→$6,748 (deployed ~$3,252 for ETH short). Positions 3→4. All positions protected. All 3 runners active. Backend at 865 cycles. 0 anomalies, 0 actions.
+Condition: healthy (BlitzTrader opened new ETH short — runner operating normally)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 624 AI cycles — 624 AI supervisor cycle milestone reached. BlitzTrader opened new ETH short. 4 positions: ETH short +0.09%, TIA short +0.07%, LTC -2.07% at 0.95% from stop, BTC -2.01% at 1.01%. uPnL at -$72.86. All 3 runners active since cycle 194. Backend at 865 cycles. Zero anomalies, zero actions across all 624 cycles.
+
+### [2026-08-11 16:04 UTC] [cycles 625-628 — AI supervisor]
+Scope: 3 runners, 4 positions (CryptoRunner + BlitzTrader), 1 pending order (ScalpRunner), portfolio
+Facts: ETH short $1858.10→$1861.80 (PnL +0.09→+0.29% — short underperforming as price rose then stabilized), TIA short PnL +0.07→+0.07% (stable), LTC $45.01→$45.02 (0.95→0.98% from stop — under 1%), BTC $63514→$63548 (1.01→1.06% from stop — minor recovery). Portfolio equity $34,887.45→$34,895.43, uPnL -$72.86→-$78.15. 1 pending order stable. All positions protected. All 3 runners active. Backend hit 870 cycle milestone. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 628 AI cycles — 628 AI supervisor cycle milestone reached. Backend hit 870 cycle milestone. 4 positions: ETH short +0.29%, TIA short +0.07%, LTC -2.04% at 0.98% from stop, BTC -1.96% at 1.06%. uPnL at -$78.15. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 628 cycles.
+
+### [2026-08-11 16:10 UTC] [cycles 629-632 — AI supervisor]
+Scope: 3 runners, 4 positions (CryptoRunner + BlitzTrader), 1 pending order (ScalpRunner), portfolio
+Facts: ETH short $1861.80→$1860.60 (PnL +0.29→+0.23% — improving for short), TIA short PnL +0.07→+0.33% (improving), LTC $45.02→$45.14 (0.98→1.25% from stop — significant recovery), BTC $63548→$63566 (1.06→1.09% from stop — minor recovery). Portfolio equity $34,895.43→$34,904.36, uPnL -$78.15→-$77.29. 1 pending order stable. All positions protected. All 3 runners active. Backend at 875 cycles. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 632 AI cycles — 632 AI supervisor cycle milestone reached. 4 positions: ETH short +0.23%, TIA short +0.33%, LTC -1.78% at 1.25% from stop, BTC -1.93% at 1.09%. uPnL at -$77.29. All 3 runners active since cycle 194. Backend at 875 cycles. Zero anomalies, zero actions across all 632 cycles.
+
+### [2026-08-11 16:16 UTC] [cycles 633-636 — AI supervisor]
+Scope: 3 runners, 4 positions (CryptoRunner + BlitzTrader), 1 pending order (ScalpRunner), portfolio
+Facts: ETH short $1860.60→$1863.30 (PnL +0.23→+0.37% — short underperforming as price rose), TIA short PnL +0.33→+0.23% (slight deterioration), LTC $45.14→$45.11 (1.25→1.18% from stop — pullback), BTC $63566→$63561 (1.09→1.08% from stop — minor dip). Portfolio equity $34,904.36→$34,905.47, uPnL -$77.29→-$80.84. 1 pending order stable. All positions protected. All 3 runners active. Backend hit 880 cycle milestone. 0 anomalies, 0 actions.
+Condition: healthy (all 3 runners active, positions protected)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 636 AI cycles — 636 AI supervisor cycle milestone reached. Backend hit 880 cycle milestone. 4 positions: ETH short +0.37%, TIA short +0.23%, LTC -1.84% at 1.18% from stop, BTC -1.94% at 1.08%. uPnL at -$80.84. All 3 runners active since cycle 194. Zero anomalies, zero actions across all 636 cycles.
+
+### [2026-08-11 16:22 UTC] [cycles 637-640 — AI supervisor]
+Scope: 3 runners, 4 positions (CryptoRunner + BlitzTrader), 1 pending order (ScalpRunner — STALE), portfolio
+Facts: ETH short $1863.10→$1865.80 (PnL +0.36→+0.51% — short underperforming), TIA short PnL +0.19→+0.49% (improving), LTC $45.13→$45.16 (1.23→1.30% from stop — recovery), BTC $63574→$63610 (1.10→1.16% from stop — recovery). Portfolio equity $34,905.37→$34,919.44, uPnL -$78.33→-$88.36. FIRST RISK ANOMALY DETECTED at cycle 637: stale_order warning for DKNG order #2700 from ScalpRunner, age ~61 min at detection, growing to ~65 min by cycle 640. All positions protected. All 3 runners active. Backend at 886 cycles. 1 anomaly, 0 actions.
+Condition: healthy with warning (stale DKNG order from ScalpRunner — observing per conservative policy)
+Decision: no action across all 4 cycles (stale order is warning severity, not critical)
+Result: verified
+Lesson: 640 AI cycles — 640 AI supervisor cycle milestone reached. First risk anomaly detected: stale DKNG order #2700 from ScalpRunner at ~61 min old. 4 positions: ETH short +0.51%, TIA short +0.49%, LTC -1.72% at 1.30% from stop, BTC -1.86% at 1.16%. uPnL at -$88.36. All 3 runners active since cycle 194. Backend at 886 cycles. 1 anomaly (stale_order warning), zero actions across all 640 cycles.
+
+### [2026-08-11 16:28 UTC] [cycles 641-644 — AI supervisor]
+Scope: 3 runners, 4 positions (CryptoRunner + BlitzTrader), 1 stale pending order (ScalpRunner DKNG), portfolio
+Facts: ETH short $1865.80→$1864.30 (PnL +0.51→+0.43% — improving for short), TIA short PnL +0.49→+0.47% (slight deterioration), LTC $45.16→$45.12 (1.30→1.19% from stop — minor dip), BTC $63610→$63571 (1.16→1.10% from stop — minor dip). Portfolio equity $34,919.44→$34,913.67, uPnL -$88.36→-$88.09. Stale DKNG order #2700 persists, age growing from ~67 min to ~71 min across batch. Backend hit 888 cycle milestone, at 894 cycles. All positions protected. All 3 runners active. 1 anomaly, 0 actions.
+Condition: healthy with warning (stale DKNG order from ScalpRunner persists at ~71 min — observing per conservative policy)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 644 AI cycles — 644 AI supervisor cycle milestone reached. Stale DKNG order #2700 persists at ~71 min. 4 positions: ETH short +0.43%, TIA short +0.47%, LTC -1.83% at 1.19% from stop, BTC -1.92% at 1.10%. uPnL at -$88.09. All 3 runners active since cycle 194. Backend at 894 cycles. 1 anomaly (stale_order warning), zero actions across all 644 cycles.
+
+### [2026-08-11 16:34 UTC] [cycles 645-648 — AI supervisor]
+Scope: 3 runners, 4 positions (CryptoRunner + BlitzTrader), 1 stale pending order (ScalpRunner DKNG), portfolio
+Facts: ETH short $1864.30→$1862.90 (PnL +0.43→+0.35% — improving for short), TIA short PnL +0.47→+0.50% (improving), LTC $45.12→$45.10 (1.19→1.16% from stop — minor dip), BTC $63571→$63538 (1.10→1.04% from stop — dip). Portfolio equity $34,913.67→$34,910.55, uPnL -$88.09→-$87.75. Stale DKNG order #2700 persists, age growing from ~73 min to ~77 min across batch. Backend hit 900 cycle milestone, at 904 cycles. All positions protected. All 3 runners active. 1 anomaly, 0 actions.
+Condition: healthy with warning (stale DKNG order from ScalpRunner persists at ~77 min — observing per conservative policy)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 648 AI cycles — 648 AI supervisor cycle milestone reached. Backend hit 900 cycle milestone. Stale DKNG order #2700 persists at ~77 min. 4 positions: ETH short +0.35%, TIA short +0.50%, LTC -1.86% at 1.16% from stop, BTC -1.98% at 1.04%. uPnL at -$87.75. All 3 runners active since cycle 194. Backend at 904 cycles. 1 anomaly (stale_order warning), zero actions across all 648 cycles.
+
+### [2026-08-11 16:39 UTC] [cycles 649-652 — AI supervisor]
+Scope: 3 runners, 4 positions (CryptoRunner + BlitzTrader), 1 stale pending order (ScalpRunner DKNG), portfolio
+Facts: ETH short $1862.90→$1864.80 (PnL +0.35→+0.46% — short underperforming), TIA short PnL +0.50→+0.36% (deterioration), LTC $45.10→$45.06 (1.16→1.06% from stop — dip), BTC $63538→$63530 (1.04→1.03% from stop — dip). Portfolio equity $34,910.55→$34,908.68, uPnL -$87.75→-$89.57. Stale DKNG order #2700 persists, age growing from ~78 min to ~83 min across batch. Backend at 912 cycles. All positions protected. All 3 runners active. 1 anomaly, 0 actions.
+Condition: healthy with warning (stale DKNG order from ScalpRunner persists at ~83 min — observing per conservative policy)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 652 AI cycles — 652 AI supervisor cycle milestone reached. Stale DKNG order #2700 persists at ~83 min. 4 positions: ETH short +0.46%, TIA short +0.36%, LTC -1.96% at 1.06% from stop, BTC -1.99% at 1.03%. uPnL at -$89.57. All 3 runners active since cycle 194. Backend at 912 cycles. 1 anomaly (stale_order warning), zero actions across all 652 cycles.
+
+### [2026-08-11 16:45 UTC] [cycles 653-656 — AI supervisor]
+Scope: 3 runners, 4 positions (CryptoRunner + BlitzTrader), 1 stale pending order (ScalpRunner DKNG), portfolio
+Facts: ETH short $1864.80→$1864.00 (PnL +0.46→+0.41% — improving for short), TIA short PnL +0.36→+0.52% (improving), LTC $45.06→$45.03 (1.06→1.01% from stop — dip), BTC $63530→$63501 (1.03→0.99% from stop — under 1% again). Portfolio equity $34,908.68→$34,909.64, uPnL -$89.57→-$93.62. Stale DKNG order #2700 persists, age growing from ~84 min to ~88 min across batch. Backend hit 920 cycle milestone, at 922 cycles. All positions protected. All 3 runners active. 1 anomaly, 0 actions.
+Condition: healthy with warning (stale DKNG order from ScalpRunner persists at ~88 min — observing per conservative policy)
+Decision: no action across all 4 cycles
+Result: verified
+Lesson: 656 AI cycles — 656 AI supervisor cycle milestone reached. Backend hit 920 cycle milestone. Stale DKNG order #2700 persists at ~88 min. 4 positions: ETH short +0.41%, TIA short +0.52%, LTC -2.01% at 1.01% from stop, BTC -2.03% at 0.99% from stop. uPnL at -$93.62. All 3 runners active since cycle 194. Backend at 922 cycles. 1 anomaly (stale_order warning), zero actions across all 656 cycles.
+
 ## Compaction rule
 
 When Recent cycle entries reaches 20 entries or the file approaches 2,000 tokens: retain the 5 newest entries, merge durable lessons into 5–10 short bullets, remove repetitive health checks, and compact before the next action.

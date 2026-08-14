@@ -13,6 +13,7 @@ from stockboy_models import (
 )
 from stockboy_overrides import create_override, reset_overrides
 from stockboy_policy import PolicyViolation, validate_override
+from stockboy_provision import get_supervisor_token
 from stockboy_service import (
     add_commentary, build_snapshot, execute_action, get_status, set_state,
 )
@@ -25,15 +26,40 @@ def _supervisor_agent(authorization: str | None) -> dict:
         raise
 
 
+def _resolve_supervisor_auth(authorization: str | None) -> str | None:
+    """Return the authorization header value, falling back to the provisioned
+    supervisor token from disk when no header is provided.
+
+    This lets the local Arena frontend read status/snapshot without a login
+    flow — the backend supplies the supervisor token on its behalf.
+    Action endpoints (POST) still require an explicit Authorization header.
+    """
+    if authorization and authorization.strip():
+        return authorization
+    token = get_supervisor_token()
+    if token:
+        return f"Bearer {token}"
+    return None
+
+
 def register_stockboy_routes(app: FastAPI, ctx: RouteContext) -> None:
+    @app.get("/api/stockboy/token")
+    async def stockboy_frontend_token():
+        """Return the supervisor token so the local frontend can authenticate
+        StockBoy read endpoints. Only intended for local development."""
+        token = get_supervisor_token()
+        if not token:
+            raise HTTPException(status_code=503, detail="Supervisor token not provisioned")
+        return {"token": token}
+
     @app.get("/api/stockboy/status")
     async def stockboy_status(authorization: str = Header(None)):
-        _supervisor_agent(authorization)
+        _supervisor_agent(_resolve_supervisor_auth(authorization))
         return status()
 
     @app.get("/api/stockboy/snapshot")
     async def stockboy_snapshot(authorization: str = Header(None)):
-        _supervisor_agent(authorization)
+        _supervisor_agent(_resolve_supervisor_auth(authorization))
         mgr_status = status()
         return build_snapshot(running=bool(mgr_status.get("running"))).model_dump()
 

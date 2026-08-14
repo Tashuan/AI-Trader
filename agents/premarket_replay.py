@@ -239,7 +239,13 @@ class PremarketReplayProvider:
 
     def _fetch_daily_history(self, symbol: str, period: str) -> Optional[pd.DataFrame]:
         """Fetch daily bars ending the trading day BEFORE target_date."""
-        frame = self._alpaca.history(symbol, period=period, interval="1d")
+        # Convert period to explicit start/end relative to target date so
+        # Alpaca doesn't interpret "3mo" as "3 months from today".
+        period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}.get(period, 90)
+        end_date = self._target.isoformat()
+        start_date = (self._target - timedelta(days=period_days)).isoformat()
+        frame = self._alpaca.history(symbol, interval="1d",
+                                     start=start_date, end=end_date)
         if frame is None or frame.empty:
             # Fallback to yfinance daily
             try:
