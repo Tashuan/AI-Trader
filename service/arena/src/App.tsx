@@ -18,7 +18,7 @@ import { BacktestPage } from './pages/BacktestPage';
 import type { Agent } from './types';
 
 export default function App() {
-  const { data, loading, error } = useArenaData();
+  const { data, loading, error, wsEvents } = useArenaData();
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
   const [currentPage, setCurrentPage] = useState<PageId>('arena');
 
@@ -107,7 +107,7 @@ export default function App() {
         )}
 
         {currentPage === 'timeline' && (
-          <TimelinePage timeline={timeline} />
+          <TimelinePage timeline={timeline} wsEvents={wsEvents} />
         )}
 
         {currentPage === 'backtest' && (

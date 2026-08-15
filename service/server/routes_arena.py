@@ -12,6 +12,9 @@ Provides:
   GET  /api/arena/agent/{id}/detail  — Full agent drawer data
   GET  /api/arena/breaking-events    — Market events
   GET  /api/arena/personalities      — Personality profiles
+  POST /api/arena/personality-log     — Runner submits a personality-log event
+  POST /api/arena/personality-log/batch — Runner submits a batch of events
+  GET  /api/arena/personality-log     — Frontend reads personality-log feed
 """
 
 import json
@@ -21,8 +24,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel
+from fastapi import FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from database import get_db_connection
 from permissions import agent_role, require_admin, require_agent
@@ -1682,4 +1685,84 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
             "agents_reset": agents_reset,
             "deleted": deleted_counts,
             "message": "Portfolio reset complete. All agents reset to $100,000 cash.",
+        }
+
+    # ─── Personality Log: in-memory ring buffer ────────────────────
+
+    _PERSONALITY_LOG: list[dict[str, Any]] = []
+    _PERSONALITY_LOG_MAX = 500
+
+    class PersonalityLogEntry(BaseModel):
+        event_id: str = Field(..., description="Stable unique id from runner")
+        timestamp: str = Field(..., description="ISO-8601 UTC timestamp")
+        runner: str = Field(..., description="Runner key: scalprunner, blitzrunner, cryptorunner, …")
+        cycle_id: str = Field("", description="Runner cycle identifier")
+        phase: str = Field("", description="Phase within cycle")
+        kind: str = Field("", description="Event kind: phase, scan, decision, order, error, …")
+        priority: str = Field("info", description="info | action | trade | critical | error")
+        outcome: str = Field("", description="observed | complete | failed | skipped | …")
+        symbol: str = Field("", description="Trading symbol if applicable")
+        message: str = Field("", description="Human-readable narrative")
+        facts: dict[str, Any] = Field(default_factory=dict, description="Structured metadata")
+        agent_name: str = Field("", description="Agent display name if known")
+        agent_id: int | None = Field(None, description="Agent DB id if known")
+
+    @app.post("/api/arena/personality-log")
+    async def post_personality_log(entry: PersonalityLogEntry):
+        """Accept a single personality-log event from a runner."""
+        record = entry.model_dump()
+        record["_received_at"] = datetime.now(timezone.utc).isoformat()
+        _PERSONALITY_LOG.append(record)
+        if len(_PERSONALITY_LOG) > _PERSONALITY_LOG_MAX:
+            del _PERSONALITY_LOG[: len(_PERSONALITY_LOG) - _PERSONALITY_LOG_MAX]
+        return {"status": "ok", "event_id": entry.event_id}
+
+    @app.post("/api/arena/personality-log/batch")
+    async def post_personality_log_batch(request: Request):
+        """Accept a batch of personality-log events from a runner."""
+        body = await request.json()
+        entries = body.get("events", [])
+        if not isinstance(entries, list):
+            raise HTTPException(status_code=422, detail="Expected {\"events\": [...]}")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        accepted = 0
+        for raw in entries:
+            if not isinstance(raw, dict) or not raw.get("event_id"):
+                continue
+            raw["_received_at"] = now_iso
+            _PERSONALITY_LOG.append(raw)
+            accepted += 1
+        if len(_PERSONALITY_LOG) > _PERSONALITY_LOG_MAX:
+            del _PERSONALITY_LOG[: len(_PERSONALITY_LOG) - _PERSONALITY_LOG_MAX]
+        return {"status": "ok", "accepted": accepted}
+
+    @app.get("/api/arena/personality-log")
+    async def get_personality_log(
+        limit: int = 100,
+        runner: str | None = None,
+        kind: str | None = None,
+        priority: str | None = None,
+        since: str | None = None,
+    ):
+        """Return personality-log events, newest first, with optional filters."""
+        events = list(reversed(_PERSONALITY_LOG))
+        if runner:
+            events = [e for e in events if e.get("runner", "").lower() == runner.lower()]
+        if kind:
+            events = [e for e in events if e.get("kind", "").lower() == kind.lower()]
+        if priority:
+            events = [e for e in events if e.get("priority", "").lower() == priority.lower()]
+        if since:
+            try:
+                since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+                events = [
+                    e for e in events
+                    if datetime.fromisoformat(e.get("timestamp", "").replace("Z", "+00:00")) >= since_dt
+                ]
+            except (ValueError, TypeError):
+                pass
+        return {
+            "events": events[:limit],
+            "total": len(events),
+            "buffer_size": len(_PERSONALITY_LOG),
         }

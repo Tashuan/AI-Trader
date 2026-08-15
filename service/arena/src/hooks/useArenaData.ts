@@ -9,6 +9,7 @@ const PORTFOLIO_RISK_INTERVAL = 30000;
 const FAST_RETRY_INTERVAL = 5000;
 const WS_RECONNECT_BASE = 1000;
 const WS_RECONNECT_MAX = 30000;
+const WS_EVENT_BUFFER_MAX = 50;
 
 export function useArenaData() {
   const [data, setData] = useState<ArenaFullResponse | null>(null);
@@ -18,6 +19,7 @@ export function useArenaData() {
   const [portfolioRisk, setPortfolioRisk] = useState<PortfolioRiskData | null>(null);
   const [portfolioRiskLastUpdated, setPortfolioRiskLastUpdated] = useState<number | null>(null);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [wsEvents, setWsEvents] = useState<WsActivityEvent[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const mentionedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -140,6 +142,9 @@ export function useArenaData() {
     // Play sound for major events
     playSoundForEvent(msg);
 
+    // Buffer raw ws events for the timeline page
+    setWsEvents(prev => [msg, ...prev].slice(0, WS_EVENT_BUFFER_MAX));
+
     // Update agent state and card data based on WebSocket event
     setData(prev => {
       if (!prev) return prev;
@@ -230,7 +235,7 @@ export function useArenaData() {
     });
   }, []);
 
-  return { data, loading, error, mentionedAgent, portfolioRisk, portfolioRiskLastUpdated, userInfo, fetchPortfolioRisk };
+  return { data, loading, error, mentionedAgent, portfolioRisk, portfolioRiskLastUpdated, userInfo, wsEvents, fetchPortfolioRisk };
 }
 
 function formatWsEvent(msg: WsActivityEvent): string {

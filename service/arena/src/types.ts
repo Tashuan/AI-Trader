@@ -290,6 +290,135 @@ export interface TimelineEvent {
   reactions: TimelineReaction[];
 }
 
+// ============================================================
+// Personality Log Types (runner-aware structured events)
+// ============================================================
+
+export type RunnerKey = 'scalprunner' | 'blitzrunner' | 'cryptorunner' | string;
+
+export type PersonalityPriority = 'info' | 'action' | 'trade' | 'critical' | 'error';
+
+export type PersonalityKind =
+  | 'phase'
+  | 'scan'
+  | 'decision'
+  | 'order'
+  | 'entry'
+  | 'exit'
+  | 'error'
+  | 'startup'
+  | 'shutdown'
+  | 'heartbeat'
+  | 'cycle_recap'
+  | 'aggregate'
+  | 'legacy_activity'
+  | 'switch'
+  | 'goal'
+  | 'portfolio'
+  | 'config'
+  | 'summary'
+  | string;
+
+export interface PersonalityLogEvent {
+  event_id: string;
+  timestamp: string;
+  runner: RunnerKey;
+  cycle_id?: string;
+  phase?: string;
+  kind?: PersonalityKind;
+  priority?: PersonalityPriority;
+  outcome?: string;
+  symbol?: string;
+  message: string;
+  facts?: Record<string, unknown>;
+  agent_name?: string;
+  agent_id?: number | null;
+  _received_at?: string;
+}
+
+export interface PersonalityLogResponse {
+  events: PersonalityLogEvent[];
+  total: number;
+  buffer_size: number;
+}
+
+export interface RunnerMeta {
+  key: RunnerKey;
+  label: string;
+  color: string;
+}
+
+export const RUNNER_METADATA: RunnerMeta[] = [
+  { key: 'scalprunner', label: 'ScalpRunner', color: 'arena-green' },
+  { key: 'blitzrunner', label: 'BlitzRunner', color: 'arena-orange' },
+  { key: 'cryptorunner', label: 'CryptoRunner', color: 'arena-blue' },
+];
+
+export function runnerLabel(key: string): string {
+  const meta = RUNNER_METADATA.find(m => m.key === key.toLowerCase());
+  return meta?.label ?? key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+export function runnerColor(key: string): string {
+  const meta = RUNNER_METADATA.find(m => m.key === key.toLowerCase());
+  return meta?.color ?? 'arena-purple';
+}
+
+// ============================================================
+// Normalized Timeline Feed Event (unified shape for the UI)
+// ============================================================
+
+export type FeedEventSource = 'personality' | 'legacy' | 'websocket';
+
+export type FeedEventType =
+  | 'trade'
+  | 'thought'
+  | 'strategy'
+  | 'discussion'
+  | 'reply'
+  | 'operation'
+  | 'phase'
+  | 'scan'
+  | 'decision'
+  | 'order'
+  | 'entry'
+  | 'exit'
+  | 'error'
+  | 'startup'
+  | 'shutdown'
+  | 'heartbeat'
+  | 'cycle_recap'
+  | 'aggregate'
+  | 'state_change'
+  | string;
+
+export interface FeedEvent {
+  id: string;
+  timestamp: string;
+  source: FeedEventSource;
+  type: FeedEventType;
+  runner?: RunnerKey;
+  agent: string;
+  agent_id?: number | null;
+  title?: string;
+  content: string;
+  detail?: string;
+  symbol?: string;
+  market?: string;
+  side?: string;
+  priority?: PersonalityPriority;
+  outcome?: string;
+  phase?: string;
+  kind?: string;
+  cycle_id?: string;
+  facts?: Record<string, unknown>;
+  pnl?: number;
+  pnl_pct?: number;
+  price?: number;
+  quantity?: number;
+  reactions: TimelineReaction[];
+}
+
 export interface ArenaFullResponse {
   agents: Agent[];
   markets: Record<string, MarketData>;
