@@ -54,6 +54,15 @@ _SCANNER_UNIVERSE = [
 _FALLBACK_SHORTLIST = ["NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL"]
 
 
+def _report(event_sink, kind: str, facts: dict[str, Any] | None = None) -> None:
+    """Send optional diagnostics without coupling pure scan logic to output."""
+    if event_sink:
+        try:
+            event_sink(kind, facts or {})
+        except Exception:
+            pass
+
+
 # ============================================================
 # Config Loading
 # ============================================================
@@ -152,13 +161,14 @@ def _fetch_level2(symbol: str) -> Optional[dict]:
 # Step 1: Discover Shortlist
 # ============================================================
 
-def _discover_shortlist(params: dict, token: Optional[str] = None) -> list[str]:
+def _discover_shortlist(params: dict, token: Optional[str] = None, event_sink=None) -> list[str]:
     """Step 1: Build shortlist from movers + news + scanner.
 
     Returns a list of symbols ranked by momentum score.
     """
     discovery_cfg = params.get("discovery", {})
     max_shortlist = discovery_cfg.get("max_shortlist", 15)
+    _report(event_sink, "phase", {"name": "discover", "sources": ["movers", "news", "scanner"]})
     candidates: dict[str, dict] = {}
 
     # 1a. Schwab movers are the live-equity discovery source.
@@ -239,11 +249,15 @@ def _discover_shortlist(params: dict, token: Optional[str] = None) -> list[str]:
     if not candidates:
         print("[ScalpScan] No candidates from movers/news/scanner — using fallback shortlist")
         fallback = discovery_cfg.get("fallback_shortlist", _FALLBACK_SHORTLIST)
-        return fallback[:max_shortlist]
+        result = fallback[:max_shortlist]
+        _report(event_sink, "decision", {"stage": "discover", "outcome": "fallback", "count": len(result)})
+        return result
 
     # Rank by change_pct (momentum) and return top N
     ranked = sorted(candidates.values(), key=lambda c: c.get("change_pct", 0), reverse=True)
-    return [c["symbol"] for c in ranked[:max_shortlist]]
+    result = [c["symbol"] for c in ranked[:max_shortlist]]
+    _report(event_sink, "decision", {"stage": "discover", "outcome": "shortlisted", "candidate_count": len(candidates), "shortlist": result})
+    return result
 
 
 def _fetch_news_tickers(token: str, lookback_hours: int,
@@ -282,7 +296,7 @@ def _fetch_news_tickers(token: str, lookback_hours: int,
 # Step 2: Liquidity Filter
 # ============================================================
 
-def _filter_liquidity(shortlist: list[str], params: dict) -> list[dict]:
+def _filter_liquidity(shortlist: list[str], params: dict, event_sink=None) -> list[dict]:
     """Step 2: Filter shortlist by liquidity (spread, depth, dollar volume).
 
     Returns list of {"symbol", "quote", "level2", "liquidity"} for passing symbols.
@@ -300,6 +314,11 @@ def _filter_liquidity(shortlist: list[str], params: dict) -> list[dict]:
             continue
 
         liq = scalp_scan_core.liquidity_score(quote or {}, level2, df, params)
+        _report(event_sink, "candidate", {
+            "stage": "liquidity", "symbol": sym,
+            "passes": bool(liq.get("passes", False)),
+            "score": liq.get("score", 0),
+        })
         if liq.get("passes", False):
             results.append({
                 "symbol": sym,
@@ -499,7 +518,7 @@ def _check_market_regime(direction: str, params: dict) -> tuple[bool, str]:
 # ============================================================
 
 def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
-             symbol: Optional[str] = None) -> dict[str, Any]:
+             symbol: Optional[str] = None, event_sink=None) -> dict[str, Any]:
     """Run the full 4-step scalp scan.
 
     If `symbol` is provided, only scan that single symbol (debug mode).
@@ -521,12 +540,14 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
     if symbol:
         shortlist = [symbol.upper()]
     else:
-        shortlist = _discover_shortlist(params, token)
+        shortlist = _discover_shortlist(params, token, event_sink)
 
+    _report(event_sink, "phase", {"name": "discover_complete", "count": len(shortlist)})
     print(f"[ScalpScan] Step 1: Shortlist = {shortlist}")
 
     # Step 2: Liquidity filter
-    liquid = _filter_liquidity(shortlist, params)
+    liquid = _filter_liquidity(shortlist, params, event_sink)
+    _report(event_sink, "phase", {"name": "filter_complete", "shortlist": len(shortlist), "liquid": len(liquid)})
     print(f"[ScalpScan] Step 2: {len(liquid)} liquid candidates (from {len(shortlist)})")
 
     # Step 3: Multi-TF analysis
@@ -540,6 +561,7 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
     if regime_cfg.get("enabled", True):
         # Determine regime using the configured direction mode
         _, spy_regime_label = _check_market_regime(direction_mode, params)
+    _report(event_sink, "decision", {"stage": "regime", "regime": spy_regime_label, "direction_mode": direction_mode})
     print(f"[ScalpScan] Market regime: {spy_regime_label}")
 
     for candidate in liquid:
@@ -547,6 +569,13 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
         df_5m = candidate["df_5m"]
         analysis = _analyze_setup(sym, candidate.get("quote"), candidate.get("level2"), df_5m, params)
         symbols_data[sym] = analysis
+        _report(event_sink, "candidate", {
+            "stage": "analyze", "symbol": sym,
+            "qualifies": bool(analysis.get("setup", {}).get("qualifies", False)),
+            "score": analysis.get("setup", {}).get("score", analysis.get("composite_score", 0)),
+            "direction": analysis.get("entry_direction", "unknown"),
+            "pattern": analysis.get("pattern", {}).get("pattern", "none"),
+        })
 
         setup = analysis.get("setup", {})
         if setup.get("qualifies", False):
@@ -554,12 +583,14 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
 
             # Pre-move cap filter
             if not _check_premove_filter(sym, direction, df_5m, params):
+                _report(event_sink, "decision", {"stage": "premove", "symbol": sym, "outcome": "blocked", "direction": direction})
                 print(f"[ScalpScan]   {sym} {direction}: blocked by pre-move cap")
                 continue
 
             # SPY market regime filter
             regime_pass, regime = _check_market_regime(direction, params)
             if not regime_pass:
+                _report(event_sink, "decision", {"stage": "regime", "symbol": sym, "outcome": "blocked", "regime": regime, "direction": direction})
                 print(f"[ScalpScan]   {sym} {direction}: blocked by market regime ({regime})")
                 continue
 
@@ -578,6 +609,10 @@ def run_scan(token: Optional[str] = None, inline_config: Optional[str] = None,
 
     # Rank by score
     ranked_setups.sort(key=lambda s: s.get("score", 0), reverse=True)
+    _report(event_sink, "phase", {
+        "name": "analyze_complete", "qualifying_setups": len(ranked_setups),
+        "top_symbols": [s["symbol"] for s in ranked_setups[:3]],
+    })
     print(f"[ScalpScan] Step 3: {len(ranked_setups)} qualifying setups")
 
     scan_time = (datetime.now(timezone.utc) - scan_start).total_seconds()

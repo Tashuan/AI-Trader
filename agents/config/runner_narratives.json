@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "default": {
+    "max_detail_events_per_cycle": 8,
+    "throttle_seconds": 2,
+    "phrases": {
+      "aggregate": [
+        "I compressed {suppressed_total} repetitive details into the evidence locker.",
+        "The small stuff is accounted for; {suppressed_total} repeats folded into one clean signal."
+      ],
+      "cycle_recap": [
+        "Cycle complete. The rules have spoken, and I have preserved the receipts.",
+        "Cycle wrapped: no improvisation, just a tidy trail of deterministic decisions."
+      ]
+    }
+  },
+  "runners": {
+    "scalprunner": {
+      "max_detail_events_per_cycle": 10,
+      "throttle_seconds": 1,
+      "phrases": {
+        "startup": [
+          "Laces tied, scanners awake. I am hunting movement, not making promises.",
+          "The opening bell has my attention. Tiny edges, strict filters, no heroics."
+        ],
+        "phase": [
+          "Phase check: {phase}. I am measuring first and getting dramatic later.",
+          "Moving through {phase}; the tape gets no free pass today."
+        ],
+        "scan": [
+          "Four-step scan engaged: discover, filter, analyze, then politely wait for price to prove it.",
+          "The shortlist is entering the audition. Liquidity gets the clipboard."
+        ],
+        "decision": [
+          "{symbol} is {outcome}; the checklist is stricter than my mood.",
+          "Decision on {symbol}: {outcome}. Almost exciting, which is usually when discipline matters."
+        ],
+        "order": [
+          "{symbol} gets a stop-limit seat reservation. No breakout, no admission.",
+          "Order logic is armed for {symbol}; risk is measured before enthusiasm is allowed."
+        ],
+        "summary": [
+          "I scanned the noise, kept the signal, and left the ego in the parking lot.",
+          "Scalp cycle complete: fast eyes, slow trigger finger."
+        ],
+        "cycle_recap": [
+          "Scalp cycle complete. Speed observed, patience enforced, receipts preserved.",
+          "Another cycle in the books: no chase, no chaos, no unauthorized enthusiasm."
+        ]
+      }
+    },
+    "blitzrunner": {
+      "max_detail_events_per_cycle": 8,
+      "throttle_seconds": 2,
+      "phrases": {
+        "startup": [
+          "Velocity systems online. If the setup is late, it is history.",
+          "Blitz protocol engaged: scan fast, obey the rules faster."
+        ],
+        "phase": [
+          "{phase} checkpoint. I am already checking the next thing.",
+          "Running {phase}; hesitation has been formally denied."
+        ],
+        "scan": [
+          "Scanning for acceleration. The chart either moves or gets ignored.",
+          "Momentum audit underway: no motion, no invitation."
+        ],
+        "decision": [
+          "{symbol}: {outcome}. The circuit breaker remains faster than the excuses.",
+          "Decision on {symbol}: {outcome}; speed with guardrails, not speed without brakes."
+        ],
+        "order": [
+          "{symbol} cleared the velocity gate. Execution rules are in the driver's seat.",
+          "Action queued for {symbol}; blink and you may miss the setup, not the risk controls."
+        ],
+        "cycle_recap": [
+          "Cycle complete. Fast hands, fixed rules, zero freestyle.",
+          "Momentum checked and accounted for. Next cycle can try its luck."
+        ]
+      }
+    },
+    "cryptorunner": {
+      "max_detail_events_per_cycle": 8,
+      "throttle_seconds": 4,
+      "phrases": {
+        "startup": [
+          "The 24-hour desk is open. Trends get time; noise gets ignored.",
+          "Crypto watch begins: EMA alignment first, excitement somewhere much later."
+        ],
+        "phase": [
+          "{phase} checkpoint: letting the larger trend do the talking.",
+          "Reviewing {phase}; four-hour patience is not a bug, it is the strategy."
+        ],
+        "scan": [
+          "Scanning the crypto field for aligned trends, not candle-sized gossip.",
+          "Regime and liquidity check underway; the market can wait for confirmation."
+        ],
+        "decision": [
+          "{symbol}: {outcome}. The trend must earn its allocation.",
+          "Decision on {symbol}: {outcome}; conviction is expensive, so I count it twice."
+        ],
+        "order": [
+          "{symbol} has cleared the trend stack. Stops and targets are coming along.",
+          "Position logic prepared for {symbol}; no pyramid scheme, just bounded exposure."
+        ],
+        "cycle_recap": [
+          "Cycle complete. Trend intact or politely declined; either way, the ledger is clean.",
+          "Crypto cycle wrapped: patience maintained across another noisy orbit."
+        ]
+      }
+    }
+  }
+}

@@ -42,10 +42,12 @@ if _WORKSPACE_DIR not in sys.path:
 
 import scan_core
 from strategy_registry import effective_params, position_notional
+from runner_narrative import RunnerNarrative
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
 logger = logging.getLogger("BlitzRunner")
+narrative = RunnerNarrative("blitzrunner")
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("[BlitzRunner] %(levelname)s: %(message)s"))
 logger.handlers = [handler]
@@ -157,9 +159,9 @@ def post_discussion(token: str, title: str, content: str, market: str = "crypto"
 
 
 def post_activity(token: str, text: str, market: str = "crypto", symbol: str = "") -> None:
-    """Post cycle activity as both a thought and a discussion for full UI visibility."""
-    post_thought(token, text)
-    post_discussion(token, text[:200], text, market=market, symbol=symbol)
+    """Compatibility wrapper that emits bounded stdout narration only."""
+    narrative.emit("activity", "legacy_activity", facts={"text": text}, message=text,
+                   symbol=symbol, throttle_key=f"activity:{text[:100]}:{symbol}")
 
 
 def login(name: str = "BlitzRunner", password: Optional[str] = None) -> Optional[str]:
@@ -339,12 +341,17 @@ def execute_close(token: str, symbol: str, side: str, quantity: float,
         result = _api_post(token, "/signals/realtime", body)
         logger.info(f"CLOSED {symbol} ({side}) — {reason} — signal_id={result.get('signal_id')}")
         post_activity(token, f"CLOSED {symbol} ({side}) — {reason}", symbol=symbol)
+        narrative.emit("exit", "exit", "complete", priority="trade", facts={
+            "symbol": symbol, "side": side, "quantity": quantity, "reason": reason,
+        })
         return True
     except urllib.error.HTTPError as e:
         logger.error(f"Close failed for {symbol}: {e.code} {e.reason}")
+        narrative.emit("exit", "error", "failed", priority="error", facts={"symbol": symbol, "reason": reason})
         return False
     except Exception as e:
         logger.error(f"Close failed for {symbol}: {e}")
+        narrative.emit("exit", "error", "failed", priority="error", facts={"symbol": symbol, "reason": reason})
         return False
 
 
@@ -374,12 +381,18 @@ def execute_entry(token: str, symbol: str, side: str, quantity: float,
         result = _api_post(token, "/signals/realtime", body)
         logger.info(f"ENTERED {symbol} ({side}) — qty={quantity:.6f} — SL={stop_loss_price:.4f} TP={take_profit_price:.4f} — signal_id={result.get('signal_id')}")
         post_activity(token, f"ENTERED {symbol} ({side}) — qty={quantity:.4f} — SL={stop_loss_price:.4f} TP={take_profit_price:.4f}", symbol=symbol)
+        narrative.emit("entry", "entry", "complete", priority="trade", facts={
+            "symbol": symbol, "side": side, "quantity": quantity,
+            "stop_loss_price": stop_loss_price, "take_profit_price": take_profit_price, "reason": reason,
+        })
         return True
     except urllib.error.HTTPError as e:
         logger.error(f"Entry failed for {symbol}: {e.code} {e.reason}")
+        narrative.emit("entry", "error", "failed", priority="error", facts={"symbol": symbol, "side": side, "reason": reason})
         return False
     except Exception as e:
         logger.error(f"Entry failed for {symbol}: {e}")
+        narrative.emit("entry", "error", "failed", priority="error", facts={"symbol": symbol, "side": side, "reason": reason})
         return False
 
 
@@ -440,10 +453,16 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     """Execute one deterministic trading cycle. Returns updated state."""
 
     # 1. Fetch goal status
+    narrative.emit("cycle", "phase", "started", priority="action")
     goal = fetch_goal_status(token)
     if goal.get("_unavailable"):
+        narrative.emit("goal", "error", "unavailable", priority="error")
         post_activity(token, "Cycle skipped: goal service unavailable")
         return state
+    narrative.emit("goal", "phase", "loaded", priority="action", facts={
+        "can_trade": goal.get("can_trade"), "goal_achieved": goal.get("goal_achieved", False),
+        "max_loss_hit": goal.get("max_loss_hit", False),
+    })
     can_trade = goal.get("can_trade", goal.get("status") == "no_goal")
     goal_achieved = goal.get("goal_achieved", False)
     max_loss_hit = goal.get("max_loss_hit", False)
@@ -457,6 +476,7 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     # 2. Fetch portfolio for equity calculation
     portfolio = fetch_portfolio(token)
     if portfolio.get("_unavailable"):
+        narrative.emit("portfolio", "error", "unavailable", priority="error")
         post_activity(token, "Cycle skipped: portfolio service unavailable")
         return state
     cash = float(portfolio.get("cash", 0.0))
@@ -485,8 +505,13 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     sys.path.insert(0, _WORKSPACE_DIR)
     import scan as scan_module
 
+    narrative.emit("scan", "scan", "started", priority="action", facts={"watchlist_size": len(params.get("watchlist", []))})
     post_activity(token, f"Cycle {state.get('cycles_run', 0) + 1}: scanning {len(params.get('watchlist', []))} symbols for setups...")
     scan_result = scan_module.run_scan(token=token)
+    narrative.emit("scan", "scan", "complete", priority="action", facts={
+        "ranked_setups": len(scan_result.get("ranked_setups", [])),
+        "positions_reviewed": len(scan_result.get("positions", [])),
+    })
 
     # 4. Process exits first (deterministic — no judgment)
     for pos_review in scan_result.get("positions", []):
@@ -509,6 +534,11 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
                     state["consecutive_losses"] = 0
                 else:
                     state["consecutive_losses"] = state.get("consecutive_losses", 0) + 1
+                narrative.emit("exit", "exit", "reviewed", priority="trade", facts={
+                    "symbol": symbol, "side": side, "reason": exit_reason,
+                    "pnl_pct": round(pnl_pct, 2),
+                    "consecutive_losses": state["consecutive_losses"],
+                })
 
                 # Set reentry cooldown
                 switch_cfg = params.get("switch_logic", {})
@@ -531,6 +561,10 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     if not can_trade or goal_achieved or max_positions_reached:
         logger.info(f"Cycle skip: can_trade={can_trade} goal_achieved={goal_achieved} max_pos_reached={max_positions_reached} open={open_position_count}")
         post_activity(token, f"Cycle skip: can_trade={can_trade} goal_achieved={goal_achieved} max_pos={max_positions_reached} open={open_position_count}")
+        narrative.emit("cycle", "skip", "skipped", priority="action", facts={
+            "can_trade": can_trade, "goal_achieved": goal_achieved,
+            "max_positions_reached": max_positions_reached, "open_positions": open_position_count,
+        })
         return state
 
     # 7. Rank setups with consecutive-loss filter
@@ -579,6 +613,10 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
                     market = _classify_market(pos_sym)
                     logger.info(f"SWITCH: {pos_sym} → {best['symbol']} (improvement={improvement:.1f}%)")
                     post_activity(token, f"SWITCH: {pos_sym} → {best['symbol']} (improvement={improvement:.1f}%)", symbol=best['symbol'])
+                    narrative.emit("switch", "switch", "ready", priority="trade", facts={
+                        "from_symbol": pos_sym, "to_symbol": best["symbol"],
+                        "improvement_pct": round(improvement, 1),
+                    })
                     success = execute_close(token, pos_sym, pos_side, qty, market, f"switch_to_{best['symbol']}")
 
                     if success:
@@ -667,6 +705,15 @@ def _enter_from_setup(token: str, setup: dict, scan_result: dict, state: dict,
         abs((tp_price - entry_price) / entry_price) * 100,
     )
 
+    if success:
+        narrative.emit("entry", "setup", "ready", priority="trade", facts={
+            "symbol": symbol, "side": side, "score": round(score, 1),
+            "signals": sig_count, "notional": round(notional, 2),
+        })
+    else:
+        narrative.emit("entry", "reject", "skipped", priority="action", facts={
+            "symbol": symbol, "side": side, "score": score, "reason": "broker_rejected",
+        })
     return success
 
 
@@ -680,8 +727,10 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
     token = connect()
     if not token:
         logger.error("Could not connect to platform. Exiting.")
+        narrative.emit("startup", "error", "failed", priority="error", message="Velocity systems offline; no trades, no theatrics.")
         return
 
+    narrative.emit("startup", "startup", "ready", priority="action")
     state = load_state()
     logger.info(f"State loaded: consecutive_losses={state.get('consecutive_losses', 0)} cycles_run={state.get('cycles_run', 0)}")
 
@@ -689,6 +738,7 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
     while not stop_event.is_set():
         cycle += 1
         cycle_start = time.time()
+        narrative.begin_cycle(cycle)
 
         try:
             # Fetch live config for poll interval
@@ -724,9 +774,11 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
 
             cycle_time = time.time() - cycle_start
             logger.info(f"Cycle {cycle} done in {cycle_time:.1f}s — losses={state.get('consecutive_losses', 0)} cooldowns={state.get('reentry_cooldown', {})}")
+            narrative.recap({"duration_seconds": round(cycle_time, 2), "consecutive_losses": state.get("consecutive_losses", 0)})
 
         except Exception as e:
             logger.error(f"Cycle {cycle} error: {e}", exc_info=True)
+            narrative.emit("cycle", "error", "failed", priority="error", facts={"error": str(e)[:300]})
 
         # Sleep in small increments so we can respond to stop signal
         sleep_secs = live_poll if 'live_poll' in dir() else poll_interval
@@ -736,6 +788,7 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
             time.sleep(1)
 
     logger.info(f"BlitzRunner stopped after {cycle} cycles.")
+    narrative.emit("shutdown", "shutdown", "complete", priority="action", facts={"cycles_run": cycle})
 
 
 # ============================================================

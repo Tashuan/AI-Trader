@@ -44,10 +44,12 @@ if _WORKSPACE_DIR not in sys.path:
 
 import scalp_scan_core
 from strategy_registry import effective_params, position_notional
+from runner_narrative import RunnerNarrative
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
 logger = logging.getLogger("ScalpRunner")
+narrative = RunnerNarrative("scalprunner")
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("[ScalpRunner] %(levelname)s: %(message)s"))
 logger.handlers = [handler]
@@ -153,9 +155,11 @@ def post_discussion(token: str, title: str, content: str,
 
 
 def post_activity(token: str, text: str, symbol: str = "") -> None:
-    """Post cycle activity as both a thought and a discussion for full UI visibility."""
-    post_thought(token, text)
-    post_discussion(token, text[:200], text, market="us-stock", symbol=symbol)
+    """Compatibility wrapper that emits bounded stdout narration only."""
+    narrative.emit(
+        "activity", "legacy_activity", facts={"text": text}, message=text,
+        symbol=symbol, throttle_key=f"activity:{text[:100]}:{symbol}",
+    )
 
 
 # ============================================================
@@ -462,6 +466,12 @@ def review_active_exits(token: str, positions: list[dict], params: dict,
             {"pnl_pct": pnl_pct, "side": side}, params, minutes_held, ind_data,
         )
 
+        narrative.emit(
+            "exits", "decision", review.get("verdict", "HOLD").lower(),
+            priority="action" if review.get("verdict") == "EXIT" else "info",
+            symbol=symbol, detail=review.get("verdict") != "EXIT",
+            facts={"pnl_pct": pnl_pct, "minutes_held": minutes_held, "reason": review.get("exit_reason", "")},
+        )
         if review.get("verdict") == "EXIT":
             exit_reason = review.get("exit_reason", "active_exit")
             success = execute_close(token, symbol, side, qty, exit_reason, params)
@@ -488,13 +498,20 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     # 1. Fetch goal status
     goal = fetch_goal_status(token)
     if goal.get("_unavailable"):
+        narrative.emit("goal", "error", "unavailable", priority="error")
         post_activity(token, "Cycle skipped: goal service unavailable")
         return state
+    narrative.emit("goal", "phase", "loaded", priority="action", facts={
+        "can_trade": goal.get("can_trade"),
+        "goal_achieved": goal.get("goal_achieved", False),
+        "max_loss_hit": goal.get("max_loss_hit", False),
+    })
     can_trade = goal.get("can_trade", goal.get("status") == "no_goal")
     goal_achieved = goal.get("goal_achieved", False)
     max_loss_hit = goal.get("max_loss_hit", False)
 
     if max_loss_hit:
+        narrative.emit("goal", "decision", "halted", priority="critical", message="Risk has hit the red line; I am standing down until reset.")
         logger.warning("Max loss hit — not trading. Waiting for user reset.")
         post_activity(token, "Max loss hit — not trading. Waiting for user reset.")
         return state
@@ -502,6 +519,7 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     # 2. Fetch portfolio for equity calculation
     portfolio = fetch_portfolio(token)
     if portfolio.get("_unavailable"):
+        narrative.emit("portfolio", "error", "unavailable", priority="error")
         post_activity(token, "Cycle skipped: portfolio service unavailable")
         return state
     cash = float(portfolio.get("cash", 0.0))
@@ -524,6 +542,11 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
     )
     goal_target = goal.get("goal", {}).get("target_amount", 0) if isinstance(goal.get("goal"), dict) else 0
 
+    narrative.emit("portfolio", "phase", "measured", priority="action", facts={
+        "cash": round(cash, 2), "equity": round(equity, 2),
+        "open_positions": len(positions), "gross_exposure": round(gross_exposure, 2),
+    })
+
     # 3. Active exit management (if not set-and-forget)
     state = review_active_exits(token, positions, params, state)
 
@@ -540,6 +563,11 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
             qty = abs(float(po.get("quantity", 0)))
             trigger = float(po.get("stop_price", 0)) or float(po.get("limit_price", 0))
             pending_gross_exposure += qty * trigger
+
+    narrative.emit("orders", "phase", "inventory_checked", priority="action", facts={
+        "pending_orders": len(active_pending_symbols),
+        "pending_exposure": round(pending_gross_exposure, 2),
+    })
 
     # Clean up state's pending_order_ids for orders no longer pending
     state_pending = dict(state.get("pending_order_ids", {}))
@@ -573,20 +601,35 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
         return state
 
     # 7. Run the 4-step scalp scan
+    narrative.emit("scan", "scan", "started", priority="action", facts={
+        "steps": ["discover", "filter", "analyze", "pre_position"],
+        "max_shortlist": params.get("discovery", {}).get("max_shortlist", 15),
+    })
     post_activity(token, f"Cycle {state.get('cycles_run', 0) + 1}: running 4-step scalp scan...")
 
     sys.path.insert(0, _WORKSPACE_DIR)
     import scan as scalp_scan_module
-    scan_result = scalp_scan_module.run_scan(token=token)
+    scan_result = scalp_scan_module.run_scan(
+        token=token,
+        event_sink=lambda kind, facts: narrative.emit(
+            "scan", kind, facts=facts, detail=kind in {"candidate", "diagnostic"},
+        ),
+    )
 
     ranked_setups = scan_result.get("ranked_setups", [])
     shortlist = scan_result.get("shortlist", [])
     liquid_count = len(scan_result.get("liquid_candidates", []))
 
+    narrative.emit("scan", "scan", "complete", priority="action", facts={
+        "shortlist": len(shortlist), "liquid_candidates": liquid_count,
+        "qualifying_setups": len(ranked_setups), "equity": round(equity, 2),
+        "market_regime": scan_result.get("market_regime", "unknown"),
+    })
     post_activity(token, f"Scan done: {len(shortlist)} shortlist → {liquid_count} liquid → "
                          f"{len(ranked_setups)} qualifying setups | equity=${equity:.0f}")
 
     if not ranked_setups:
+        narrative.emit("scan", "decision", "no_setup", priority="action", message="No setup cleared the full gauntlet; patience wins this round.")
         return state
 
     # 8. Place pending orders for top setups (up to capacity)
@@ -626,8 +669,17 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
         if qty <= 0:
             continue
 
+        narrative.emit(
+            "pre_position", "decision", "qualified", priority="action", symbol=symbol,
+            detail=True, facts={
+                "side": side, "score": setup.get("score", 0),
+                "entry": entry_price, "stop": sl_level, "quantity": qty,
+                "notional": notional,
+            },
+        )
         order_id = create_pending_order(token, setup, sym_data, qty, params)
         if order_id:
+            narrative.emit("pre_position", "order", "placed", priority="action", symbol=symbol, facts={"order_id": order_id, "quantity": qty})
             state["pending_order_ids"][symbol] = order_id
             active_pending_symbols.add(symbol)
             placed += 1
@@ -654,9 +706,18 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
     token = connect()
     if not token:
         logger.error("Could not connect to platform. Exiting.")
+        narrative.emit("startup", "error", "failed", priority="error", message="Connection failed; I am staying safely offline.")
         return
 
+    narrative.emit("startup", "startup", "ready", priority="action")
     state = load_state()
+    narrative.emit(
+        "startup", "state", facts={
+            "consecutive_losses": state.get("consecutive_losses", 0),
+            "cycles_run": state.get("cycles_run", 0),
+            "pending_orders": len(state.get("pending_order_ids", {})),
+        }, priority="action",
+    )
     logger.info(f"State loaded: consecutive_losses={state.get('consecutive_losses', 0)} "
                 f"cycles_run={state.get('cycles_run', 0)} "
                 f"pending={len(state.get('pending_order_ids', {}))}")
@@ -666,6 +727,8 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
     while not stop_event.is_set():
         cycle += 1
         cycle_start = time.time()
+        narrative.begin_cycle(cycle)
+        narrative.emit("cycle", "phase", facts={"cycle": cycle}, priority="action")
 
         try:
             # Fetch live config for poll interval
@@ -673,6 +736,7 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
             if config.get("_unavailable"):
                 raise RuntimeError("config service unavailable")
             live_poll = config.get("poll_interval", poll_interval)
+            narrative.emit("config", "phase", "loaded", facts={"poll_interval": live_poll}, priority="action")
 
             # Fetch strategy params through the agent-specific profile resolver
             stored_params = fetch_strategy_params(token)
@@ -683,6 +747,13 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
                         params["profile"], live_poll,
                         params["risk_controls"]["paper_account_budget"],
                         params["risk_controls"]["risk_per_trade_pct"])
+            narrative.emit(
+                "config", "profile", "resolved", priority="action", facts={
+                    "profile": params["profile"], "poll_interval": live_poll,
+                    "budget": params["risk_controls"]["paper_account_budget"],
+                    "risk_per_trade_pct": params["risk_controls"]["risk_per_trade_pct"],
+                },
+            )
 
             # Override watchlist from config if present
             if config.get("watchlist"):
@@ -696,6 +767,7 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
 
             # Send heartbeat
             send_heartbeat(token)
+            narrative.emit("heartbeat", "phase", "sent", priority="info")
 
             # Update state
             state["cycles_run"] = state.get("cycles_run", 0) + 1
@@ -706,9 +778,15 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
             logger.info(f"Cycle {cycle} done in {cycle_time:.1f}s — "
                         f"losses={state.get('consecutive_losses', 0)} "
                         f"pending={len(state.get('pending_order_ids', {}))}")
+            narrative.recap({
+                "duration_seconds": round(cycle_time, 2),
+                "consecutive_losses": state.get("consecutive_losses", 0),
+                "pending_orders": len(state.get("pending_order_ids", {})),
+            })
 
         except Exception as e:
             logger.error(f"Cycle {cycle} error: {e}", exc_info=True)
+            narrative.emit("cycle", "error", "failed", priority="error", facts={"error": str(e)[:300]})
 
         # Sleep in small increments so we can respond to stop signal
         sleep_secs = live_poll
