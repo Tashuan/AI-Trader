@@ -95,14 +95,16 @@ class RunnerNarrative:
         self._suppressed.clear()
         return self.cycle_id
 
-    def _phrase(self, kind: str, fallback: str, facts: dict[str, Any]) -> str:
+    def _phrase(self, kind: str, fallback: str, facts: dict[str, Any],
+                phase: str = "", outcome: str = "") -> str:
         phrases = self.profile.get("phrases", {}).get(kind, [])
         if not phrases:
             return fallback
         seed = f"{self.cycle_id}:{kind}:{facts.get('symbol', '')}"
         choice = random.Random(seed).choice(phrases)
+        fmt = {"phase": phase, "symbol": "", "outcome": outcome, **facts}
         try:
-            return choice.format(**facts)
+            return choice.format(**fmt)
         except (KeyError, ValueError):
             return choice
 
@@ -141,7 +143,8 @@ class RunnerNarrative:
         self._detail_count += int(detail)
         self._event_count += 1
         facts.setdefault("cycle_events_so_far", self._event_count)
-        rendered = message or self._phrase(kind, f"{phase}: {outcome}", facts)
+        rendered = message or self._phrase(kind, f"{phase}: {outcome}", facts,
+                                           phase=phase, outcome=outcome)
         event = NarrativeEvent(
             runner=self.runner,
             cycle_id=self.cycle_id,

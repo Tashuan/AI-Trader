@@ -39,11 +39,13 @@ import crypto_scan_core as scan_core
 import crypto_scan as scan_module
 from strategy_registry import effective_params, position_notional
 from runner_narrative import RunnerNarrative
+from personality_log_forwarder import PersonalityLogForwarder
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
 logger = logging.getLogger("CryptoRunner")
-narrative = RunnerNarrative("cryptorunner")
+_forwarder = PersonalityLogForwarder(runner="cryptorunner")
+narrative = RunnerNarrative("cryptorunner", printer=_forwarder.printer)
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("[CryptoRunner] %(levelname)s: %(message)s"))
 logger.handlers = [handler]

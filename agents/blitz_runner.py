@@ -43,11 +43,13 @@ if _WORKSPACE_DIR not in sys.path:
 import scan_core
 from strategy_registry import effective_params, position_notional
 from runner_narrative import RunnerNarrative
+from personality_log_forwarder import PersonalityLogForwarder
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
 logger = logging.getLogger("BlitzRunner")
-narrative = RunnerNarrative("blitzrunner")
+_forwarder = PersonalityLogForwarder(runner="blitzrunner")
+narrative = RunnerNarrative("blitzrunner", printer=_forwarder.printer)
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("[BlitzRunner] %(levelname)s: %(message)s"))
 logger.handlers = [handler]

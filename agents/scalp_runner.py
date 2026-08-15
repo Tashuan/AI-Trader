@@ -45,11 +45,13 @@ if _WORKSPACE_DIR not in sys.path:
 import scalp_scan_core
 from strategy_registry import effective_params, position_notional
 from runner_narrative import RunnerNarrative
+from personality_log_forwarder import PersonalityLogForwarder
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
 logger = logging.getLogger("ScalpRunner")
-narrative = RunnerNarrative("scalprunner")
+_forwarder = PersonalityLogForwarder(runner="scalprunner")
+narrative = RunnerNarrative("scalprunner", printer=_forwarder.printer)
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("[ScalpRunner] %(levelname)s: %(message)s"))
 logger.handlers = [handler]
@@ -61,6 +63,45 @@ logger.propagate = False
 API_BASE = "http://localhost:8000/api"
 STATE_FILE = os.path.join(_AGENTS_DIR, "scalp_runner_state.json")
 DEFAULT_POLL_INTERVAL = 15  # seconds — fast scalp cycle
+
+
+def _scan_message(kind: str, facts: dict) -> str:
+    """Build a human-readable message for scan sub-events.
+
+    The scan pipeline emits facts with keys like ``stage``, ``name``,
+    ``symbol``, ``outcome``, ``score`` — not the ``{phase}`` / ``{symbol}``
+    / ``{outcome}`` placeholders the personality templates expect.  This
+    helper translates the scan's fact shape into a concise line so the
+    timeline never shows a raw fallback like ``scan: observed``.
+    """
+    stage = facts.get("stage") or facts.get("name", "")
+    sym = facts.get("symbol", "")
+    outcome = facts.get("outcome", "")
+    if kind == "phase":
+        label = stage.replace("_", " ") if stage else "scan"
+        count = facts.get("count", facts.get("liquid", ""))
+        tail = f" ({count})" if count != "" else ""
+        return f"Scan phase: {label}{tail}"
+    if kind == "decision":
+        if sym and outcome:
+            direction = facts.get("direction", "")
+            mid = f" {direction}" if direction else ""
+            return f"{sym}{mid}: {outcome}"
+        if stage and outcome:
+            return f"{stage}: {outcome}"
+        if stage:
+            regime = facts.get("regime", "")
+            return f"{stage}: {regime}" if regime else f"{stage}"
+        return "scan decision"
+    if kind == "candidate":
+        passes = facts.get("passes")
+        score = facts.get("score", "")
+        verdict = "pass" if passes else "reject"
+        tail = f" score={score}" if score != "" else ""
+        return f"{sym} liquidity {verdict}{tail}" if sym else f"liquidity {verdict}{tail}"
+    if kind == "diagnostic":
+        return f"{stage or 'diagnostic'}: {facts}"
+    return ""
 
 
 # ============================================================
@@ -613,6 +654,8 @@ def run_cycle(token: str, state: dict, params: dict) -> dict:
         token=token,
         event_sink=lambda kind, facts: narrative.emit(
             "scan", kind, facts=facts, detail=kind in {"candidate", "diagnostic"},
+            message=_scan_message(kind, facts),
+            symbol=facts.get("symbol", ""),
         ),
     )
 
