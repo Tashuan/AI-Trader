@@ -1,0 +1,110 @@
+{
+  "strategy": "RelativeStrengthBacktester",
+  "provider": "cached-alpaca",
+  "start_date": "2024-10-01",
+  "end_date": "2026-08-11",
+  "eligible_windows": 15,
+  "signals": 4,
+  "long_signals": 2,
+  "short_signals": 2,
+  "avg_forward_3": -0.5405,
+  "avg_forward_6": -0.6136,
+  "avg_forward_12": -0.7053,
+  "avg_mfe_r": 0.2446,
+  "avg_mae_r": -0.8626,
+  "one_r_rate": 0.0,
+  "by_side": {
+    "long": {
+      "signals": 2,
+      "avg_forward_3": -0.3841,
+      "avg_forward_6": -0.6893,
+      "avg_mfe_r": 0.2663,
+      "avg_mae_r": -1.0524,
+      "one_r_rate": 0.0
+    },
+    "short": {
+      "signals": 2,
+      "avg_forward_3": -0.6968,
+      "avg_forward_6": -0.538,
+      "avg_mfe_r": 0.2229,
+      "avg_mae_r": -0.6728,
+      "one_r_rate": 0.0
+    }
+  },
+  "by_time_band": {
+    "10:00-11:00": {
+      "signals": 4,
+      "avg_forward_3": -0.5405,
+      "avg_forward_6": -0.6136,
+      "avg_mfe_r": 0.2446,
+      "avg_mae_r": -0.8626,
+      "one_r_rate": 0.0
+    }
+  },
+  "signals_detail": [
+    {
+      "window_id": 21,
+      "date": "2025-03-24",
+      "symbol": "TSLA",
+      "side": "long",
+      "entry_time": "2025-03-24 10:20:00",
+      "entry_price": 272.53,
+      "reason": "relative_strength_drive",
+      "time_band": "10:00-11:00",
+      "forward_return_3": -0.2898763438887286,
+      "forward_return_6": -0.1357648699225611,
+      "forward_return_12": 0.0568744725351511,
+      "mfe_r": 0.37461238636023114,
+      "mae_r": -0.31643728636075275,
+      "one_r_before_minus_one_r": false
+    },
+    {
+      "window_id": 28,
+      "date": "2025-05-07",
+      "symbol": "AMD",
+      "side": "short",
+      "entry_time": "2025-05-07 10:15:00",
+      "entry_price": 98.25,
+      "reason": "relative_strength_drive",
+      "time_band": "10:00-11:00",
+      "forward_return_3": -0.7976575121163232,
+      "forward_return_6": -0.8877231917683859,
+      "forward_return_12": -1.0275007555152538,
+      "mfe_r": 0.26821512512097495,
+      "mae_r": -0.7189271394995198,
+      "one_r_before_minus_one_r": false
+    },
+    {
+      "window_id": 29,
+      "date": "2025-05-12",
+      "symbol": "AMZN",
+      "side": "short",
+      "entry_time": "2025-05-12 10:25:00",
+      "entry_price": 206.83,
+      "reason": "relative_strength_drive",
+      "time_band": "10:00-11:00",
+      "forward_return_3": -0.5959532849521665,
+      "forward_return_6": -0.18820577164365693,
+      "forward_return_12": -0.004834654805641048,
+      "mfe_r": 0.17761726439810713,
+      "mae_r": -0.6265942382932896,
+      "one_r_before_minus_one_r": false
+    },
+    {
+      "window_id": 78,
+      "date": "2026-04-28",
+      "symbol": "NVDA",
+      "side": "long",
+      "entry_time": "2026-04-28 10:05:00",
+      "entry_price": 213.21,
+      "reason": "relative_strength_drive",
+      "time_band": "10:00-11:00",
+      "forward_return_3": -0.47840157591108046,
+      "forward_return_6": -1.2429060550630866,
+      "forward_return_12": -1.8455982364804613,
+      "mfe_r": 0.15790188784558473,
+      "mae_r": -1.7883306832745045,
+      "one_r_before_minus_one_r": false
+    }
+  ]
+}

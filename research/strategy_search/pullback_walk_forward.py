@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Walk-forward experiments for First Pullback."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "agents"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from first_pullback_backtester import FirstPullbackBacktester
+from strategy_walk_forward import (
+    DEFAULT_END,
+    DEFAULT_START,
+    build_provider,
+    run_holdout_split,
+    run_slippage_sensitivity,
+    run_walk_forward,
+    save_results,
+)
+
+BASELINE = {
+    "entry": {
+        "gap_threshold_pct": 1.00,
+        "ema_period": 9,
+        "min_confirm_move_pct": 0.25,
+    },
+    "risk": {"stop_buffer_pct": 0.10, "target_multiple_r": 2.0},
+}
+
+SWEEP = {
+    "gap_075": {"entry": {"gap_threshold_pct": 0.75}},
+    "gap_100": {"entry": {"gap_threshold_pct": 1.00}},
+    "gap_150": {"entry": {"gap_threshold_pct": 1.50}},
+    "ema_09": {"entry": {"ema_period": 9}},
+    "ema_12": {"entry": {"ema_period": 12}},
+    "ema_20": {"entry": {"ema_period": 20}},
+    "target_2r": {"risk": {"target_multiple_r": 2.0}},
+    "target_3r": {"risk": {"target_multiple_r": 3.0}},
+    "confirm_010": {"entry": {"min_confirm_move_pct": 0.10}},
+    "confirm_050": {"entry": {"min_confirm_move_pct": 0.50}},
+}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="First Pullback walk-forward")
+    parser.add_argument("--mode", choices=("reproduce", "sweep", "sensitivity", "holdout"), default="reproduce")
+    parser.add_argument("--start", default=DEFAULT_START)
+    parser.add_argument("--end", default=DEFAULT_END)
+    parser.add_argument("--slippage", type=float, default=5.0)
+    parser.add_argument("--max-symbols", type=int, default=15)
+    parser.add_argument("--json", default="")
+    args = parser.parse_args()
+
+    provider, label = build_provider()
+    common = dict(start=args.start, end=args.end, max_symbols=args.max_symbols,
+                  provider=provider, provider_label=label, strategy_name="first_pullback")
+    if args.mode == "reproduce":
+        result = run_walk_forward(FirstPullbackBacktester, BASELINE,
+                                  slippage_bps=args.slippage, **common)
+    elif args.mode == "sensitivity":
+        result = run_slippage_sensitivity(FirstPullbackBacktester, BASELINE, **common)
+    elif args.mode == "holdout":
+        result = run_holdout_split(FirstPullbackBacktester, BASELINE,
+                                   start=args.start, end=args.end,
+                                   slippage_bps=args.slippage, max_symbols=args.max_symbols,
+                                   provider=provider, provider_label=label)
+    else:
+        result = []
+        for name, override in SWEEP.items():
+            print(f"\n--- {name} ---", file=sys.stderr)
+            r = run_walk_forward(FirstPullbackBacktester, override,
+                                 slippage_bps=args.slippage, **common)
+            r["candidate_id"] = f"pullback_{name}"
+            result.append(r)
+        result.sort(key=lambda item: item.get("total_return_pct", -999), reverse=True)
+
+    print(json.dumps(result if isinstance(result, list) else {
+        key: value for key, value in result.items() if key != "window_details"
+    }, indent=2))
+    if args.json:
+        save_results(result if isinstance(result, dict) else {"results": result}, args.json)
+
+
+if __name__ == "__main__":
+    main()

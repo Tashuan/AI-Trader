@@ -1,8 +1,8 @@
 # VolFence — Volatility-Filtered Opening-Range Breakout
 
-> **Status:** PROMOTED — meets 60% walk-forward pass rate gate at 5bps slippage
-> **Validated:** Oct 2024 – Aug 2026 (94 windows, 22 months, 35 trades)
-> **Edge:** Thin but real. Profitable at 0–5bps, breakeven at 10bps.
+> **Status:** REJECTED pending reproduction — current code does not meet the 60% gate
+> **Validated:** Oct 2024 – Aug 2026 (94 windows, 22 months, 34 trades)
+> **Current result:** -0.15% at 5bps, 40% of 15 volatility-eligible windows passed
 
 ---
 
@@ -31,7 +31,7 @@ This is the key unlock. The strategy only trades on days where:
 
 In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts — price breaks out, reverses, and stops you out. In high-volatility regimes, the breakout has momentum behind it and follows through to the 2R target.
 
-**Without this filter, the strategy loses -11.92% over 22 months. With it, the strategy makes +0.80% at 5bps.**
+**The historical research artifact reported +0.80% with this filter, but the current implementation reproduces -0.15% at 5bps. The historical result must not be treated as validated until the discrepancy is resolved.**
 
 ---
 
@@ -176,23 +176,23 @@ On each trading day, one symbol is chosen from the discovered set by **highest f
 
 | Slippage | Return | Pass Rate | Trades | Max DD |
 |----------|--------|-----------|--------|--------|
-| 0 bps | +1.67% | 67% | 35 | 0.85% |
-| 2 bps | +1.32% | 67% | 35 | 0.86% |
-| **5 bps** | **+0.80%** | **60%** | 35 | 0.88% |
-| 10 bps | -0.08% | 53% | 35 | 0.92% |
+| 0 bps | not freshly reproduced | not freshly reproduced | 34 | not freshly reproduced |
+| 2 bps | not freshly reproduced | not freshly reproduced | 34 | not freshly reproduced |
+| **5 bps** | **-0.15%** | **40%** | 34 | **0.88%** |
+| 10 bps | not freshly reproduced | not freshly reproduced | 34 | not freshly reproduced |
 
 - **Pass rate** = fraction of active windows (windows with ≥1 trade) where return > 0 AND profit factor > 1.0
-- **15 of 94 windows are active** (84% of windows have zero trades due to the vol filter)
-- Average profit factor on active windows: varies, but 60% of active windows have PF > 1.0
+- **15 of 94 windows are volatility-eligible**; 13 of those produced trades in the current reproduction.
+- Current pass rate is 6/15 = 40%, below the 60% promotion gate.
 
-### Holdout Validation (70/30 split)
+### Holdout Validation
 
-| Set | Windows | Active | Return | Pass Rate | Trades | Max DD |
-|-----|---------|--------|--------|-----------|--------|--------|
-| Train (Win 0–64) | 65 | 12 | +0.83% | 58% | 25 | 0.88% |
-| Holdout (Win 65–93) | 29 | 3 | -0.03% | 67% | 10 | 0.48% |
+The historical holdout numbers below belong to the stale research artifact and are not considered current validation. A fresh holdout should be rerun after the implementation/data discrepancy is resolved.
 
-The holdout confirms the strategy generalizes (67% pass on unseen data) but the return is essentially breakeven. The edge is real but thin.
+| Set | Windows | Return | Pass Rate | Trades |
+|-----|---------|--------|-----------|--------|
+| Historical train artifact | 65 | +0.83% | 58% | 25 |
+| Historical holdout artifact | 29 | -0.03% | 67% | 10 |
 
 ---
 
@@ -270,9 +270,9 @@ for w in generate_windows('2024-10-01', '2026-08-11'):
 
 ## 10. Caveats & Known Limitations
 
-1. **Thin edge.** +0.80% at 5bps over 22 months. This is not a high-frequency money printer — it's a selective strategy that makes a small amount on a small number of trades.
+1. **Not currently validated.** The historical +0.80% result does not reproduce from the current committed implementation. Current reproduction is -0.15% at 5bps and 40% pass rate.
 
-2. **Low trade count.** 35 trades in 22 months = ~1.6 trades per month. Statistically thin — the 60% pass rate is based on 9/15 active windows passing, which is a small sample.
+2. **Low trade count.** 34 trades in 22 months = ~1.5 trades per month. Statistically thin — the current 40% pass rate is based on 6/15 eligible windows passing.
 
 3. **84% idle.** Only 15 of 94 windows are active. Capital sits unused most of the time. This is acceptable for a supplemental strategy but not a standalone portfolio.
 
@@ -293,7 +293,8 @@ for w in generate_windows('2024-10-01', '2026-08-11'):
 | `agents/fence_bar_strategy.py` | Core strategy logic — `FenceBarStrategy.on_bar()` |
 | `agents/fence_bar_backtester.py` | Backtester with fill/exit logic |
 | `research/strategy_search/fence_walk_forward.py` | Walk-forward harness + symbol discovery |
-| `research/strategy_search/run_fence_final.json` | Final backtest results (slippage sensitivity + holdout) |
-| `research/strategy_search/run_fence_extended_5bps.json` | Extended backtest without vol filter (-11.92%) |
+| `research/strategy_search/run_fence_final.json` | Historical backtest artifact; not reproducible from current code |
+| `research/strategy_search/run_fence_current_code_reproduction.json` | Current 94-window reproduction (-0.15%, 40% eligible-window pass rate) |
+| `research/strategy_search/run_fence_extended_5bps.json` | Historical extended backtest without vol filter (-11.92%) |
 | `research/strategy_search/state.json` | Full research state with all experiments |
 | `research/strategy_search/journal.md` | Research journal with all batches and lessons |

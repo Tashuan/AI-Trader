@@ -1,0 +1,19 @@
+{
+  "strategy": "CompressionBacktester",
+  "provider": "cached-alpaca",
+  "start_date": "2024-10-01",
+  "end_date": "2026-08-11",
+  "eligible_windows": 15,
+  "signals": 0,
+  "long_signals": 0,
+  "short_signals": 0,
+  "avg_forward_3": null,
+  "avg_forward_6": null,
+  "avg_forward_12": null,
+  "avg_mfe_r": null,
+  "avg_mae_r": null,
+  "one_r_rate": 0,
+  "by_side": {},
+  "by_time_band": {},
+  "signals_detail": []
+}

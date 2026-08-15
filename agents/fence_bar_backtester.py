@@ -1,96 +1,43 @@
-"""Historical replay engine for the standalone Fence Bar strategy."""
+"""Historical replay engine for the standalone Fence Bar strategy.
+
+Refactored to subclass VolFilteredBacktester for shared infrastructure
+(data fetching, fill model, exit logic, vol filter, run loop).
+Preserves premarket scanner support as an override of the symbol selection.
+"""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any
 
 import pandas as pd
 
-from arena_market_data import ArenaMarketDataProvider, get_arena_market_data
+from arena_market_data import ArenaMarketDataProvider
 from backtest_report import BacktestReport, TradeRecord
 from fence_bar_strategy import FENCE_BAR_DEFAULTS, FenceBarStrategy
 from premarket_scanner import DEFAULT_CONFIG as PREMARKET_DEFAULT_CONFIG, scan as scan_premarket
 from strategy_lab import deep_merge
+from vol_filter_base import VolFilteredBacktester
 
 logger = logging.getLogger(__name__)
 
 
-class FenceBarBacktester:
+class FenceBarBacktester(VolFilteredBacktester):
     """Replay one-symbol-per-session Fence Bar trades on completed 5m bars."""
 
-    def __init__(
-        self,
-        symbols: list[str],
-        params: dict | None = None,
-        start_date: str = "",
-        end_date: str = "",
-        initial_capital: float = 100_000.0,
-        slippage_bps: float = 5.0,
-        fee_rate: float = 0.001,
-        provider: ArenaMarketDataProvider | None = None,
-    ):
-        if not symbols:
-            raise ValueError("Fence Bar requires at least one symbol")
-        self.symbols = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
-        self.params = deep_merge(FENCE_BAR_DEFAULTS, params or {})
-        self.start_date = start_date
-        self.end_date = end_date
-        self.initial_capital = float(initial_capital)
-        self.slippage_bps = float(slippage_bps)
-        self.fee_rate = float(fee_rate)
-        self.provider = provider or get_arena_market_data()
+    @property
+    def agent_name(self) -> str:
+        return "Fence Bar"
 
-    def _fetch(self, symbol: str) -> pd.DataFrame | None:
-        try:
-            start = self.start_date
-            end = (datetime.fromisoformat(self.end_date) + timedelta(days=1)).strftime("%Y-%m-%d") if self.end_date else ""
-            if start:
-                start = (datetime.fromisoformat(start) - timedelta(days=3)).strftime("%Y-%m-%d")
-            kwargs = {"interval": "5m", "auto_adjust": False, "raise_errors": False}
-            if start:
-                kwargs.update(start=start, end=end)
-            else:
-                kwargs["period"] = "60d"
-            frame = self.provider.history(symbol, **kwargs)
-        except Exception as exc:
-            logger.warning("Failed to fetch Fence Bar data for %s: %s", symbol, exc)
-            return None
-        if frame is None or frame.empty:
-            return None
-        frame = frame.copy().reset_index()
-        time_col = "Datetime" if "Datetime" in frame.columns else "Date"
-        frame[time_col] = pd.to_datetime(frame[time_col], errors="coerce")
-        frame = frame.dropna(subset=[time_col]).rename(columns={time_col: "Timestamp"})
-        if getattr(frame["Timestamp"].dt, "tz", None) is not None:
-            frame["Timestamp"] = frame["Timestamp"].dt.tz_convert("America/New_York").dt.tz_localize(None)
-        else:
-            frame["Timestamp"] = frame["Timestamp"].dt.tz_localize(None)
-        for column in ("Open", "High", "Low", "Close", "Volume"):
-            if column not in frame.columns:
-                return None
-            frame[column] = pd.to_numeric(frame[column], errors="coerce")
-        frame = frame.dropna(subset=["Open", "High", "Low", "Close"]).sort_values("Timestamp")
-        frame = frame[(frame["Timestamp"].dt.time >= datetime.strptime("09:30", "%H:%M").time()) &
-                      (frame["Timestamp"].dt.time <= datetime.strptime("16:00", "%H:%M").time())]
-        if self.start_date:
-            frame = frame[frame["Timestamp"].dt.date >= datetime.fromisoformat(self.start_date).date()]
-        if self.end_date:
-            frame = frame[frame["Timestamp"].dt.date <= datetime.fromisoformat(self.end_date).date()]
-        return frame.reset_index(drop=True)
+    @property
+    def default_params(self) -> dict[str, Any]:
+        return FENCE_BAR_DEFAULTS
 
-    @staticmethod
-    def _choose_symbol(frames: dict[str, pd.DataFrame], date) -> str | None:
-        """Choose one symbol using only its first opening bar for that session."""
-        candidates = []
-        for symbol, frame in frames.items():
-            day = frame[frame["Timestamp"].dt.date == date]
-            if day.empty:
-                continue
-            first = day.iloc[0]
-            candidates.append((float(first["Close"]) * float(first.get("Volume", 0)), symbol))
-        return max(candidates)[1] if candidates else None
+    def create_strategy(self, symbol: str, date=None, day=None):
+        return FenceBarStrategy(symbol, self.params)
+
+    # ── Premarket symbol selection (preserved from original) ────
 
     def _choose_premarket_symbol(self, date) -> tuple[str | None, dict]:
         """Select the top premarket-ranked symbol before the regular open."""
@@ -110,8 +57,8 @@ class FenceBarBacktester:
         )
         watchlist = result.get("watchlist", [])
         if cfg.get("require_monitor", True):
-            watchlist = [candidate for candidate in watchlist if candidate["status"] == "monitor"]
-        watchlist = [candidate for candidate in watchlist if candidate["score"] >= scanner_config["min_score"]]
+            watchlist = [c for c in watchlist if c["status"] == "monitor"]
+        watchlist = [c for c in watchlist if c["score"] >= scanner_config["min_score"]]
         if not watchlist:
             return None, {
                 "date": str(date),
@@ -131,115 +78,54 @@ class FenceBarBacktester:
             "monitor_count": result.get("monitor_count", 0),
         }
 
-    def _fill(self, price: float, side: str, entry: bool) -> float:
-        impact = self.slippage_bps / 10_000
-        if side == "long":
-            return price * (1 + impact if entry else 1 - impact)
-        return price * (1 - impact if entry else 1 + impact)
-
-    def _check_exit(self, position: dict, bar: pd.Series, timestamp, params: dict) -> tuple[float | None, str]:
-        """Check all exit conditions for a position on one bar.
-
-        Returns (exit_price, reason) or (None, "").
-        Supports: fixed stop, fixed target, trailing stop, time-based exit,
-        force exit at session end.
-        """
-        side = position["side"]
-        exit_cfg = params.get("exit", {})
-        exit_mode = exit_cfg.get("mode", "fixed_sl_tp")
-        high = float(bar["High"])
-        low = float(bar["Low"])
-        close = float(bar["Close"])
-
-        # ── Fixed stop/target (always active as a hard stop) ──
-        if side == "long":
-            if low <= position["stop"]:
-                return position["stop"], "stop_loss"
-            if exit_mode == "fixed_sl_tp" and high >= position["target"]:
-                return position["target"], "take_profit"
-        else:
-            if high >= position["stop"]:
-                return position["stop"], "stop_loss"
-            if exit_mode == "fixed_sl_tp" and low <= position["target"]:
-                return position["target"], "take_profit"
-
-        # ── Trailing stop ──
-        if exit_mode == "trailing":
-            trail_pct = float(exit_cfg.get("trailing_pct", 0.3))
-            trail_act_pct = float(exit_cfg.get("trailing_activation_pct", 0.3))
-            entry = position["entry_price"]
-            if side == "long":
-                position["peak"] = max(position.get("peak", entry), high)
-                gain_pct = (position["peak"] - entry) / entry * 100
-                if gain_pct >= trail_act_pct:
-                    trail_level = position["peak"] * (1 - trail_pct / 100)
-                    if low <= trail_level:
-                        return trail_level, "trailing_stop"
-            else:
-                position["trough"] = min(position.get("trough", entry), low)
-                gain_pct = (entry - position["trough"]) / entry * 100
-                if gain_pct >= trail_act_pct:
-                    trail_level = position["trough"] * (1 + trail_pct / 100)
-                    if high >= trail_level:
-                        return trail_level, "trailing_stop"
-
-        # ── Time-based exit ──
-        if exit_mode in ("time_based", "trailing"):
-            max_bars = int(exit_cfg.get("max_bars", 0))
-            if max_bars > 0 and position.get("bars_held", 0) >= max_bars:
-                return close, "time_exit"
-
-        # ── Force exit at session end ──
-        force_time = datetime.strptime(params["session"]["force_exit"], "%H:%M").time()
-        if timestamp.time() >= force_time:
-            return close, "force_exit"
-
-        return None, ""
-
     def run(self) -> BacktestReport:
-        frames = {symbol: self._fetch(symbol) for symbol in self.symbols}
-        frames = {symbol: frame for symbol, frame in frames.items() if frame is not None and not frame.empty}
+        """Override run() to support premarket scanner symbol selection."""
+        premarket_enabled = bool(self.params.get("premarket", {}).get("enabled", False))
+        if not premarket_enabled:
+            return super().run()
+
+        # Premarket path: same loop but uses _choose_premarket_symbol
+        frames = {sym: self._fetch(sym) for sym in self.symbols}
+        frames = {sym: f for sym, f in frames.items() if f is not None and not f.empty}
         if not frames:
             return BacktestReport.calculate_metrics(
-                agent_name="Fence Bar", symbols=self.symbols, start_date=self.start_date,
+                agent_name=self.agent_name, symbols=self.symbols, start_date=self.start_date,
                 end_date=self.end_date, initial_capital=self.initial_capital,
                 final_equity=self.initial_capital, equity_curve=[], trades=[], interval="5m",
                 slippage_bps=self.slippage_bps, periods_per_year=252 * 78,
                 diagnostics={"error": "no historical data"},
             )
 
-        all_dates = sorted({date for frame in frames.values() for date in frame["Timestamp"].dt.date})
+        all_dates = sorted({d for f in frames.values() for d in f["Timestamp"].dt.date})
         cash = self.initial_capital
         equity_curve: list[dict] = []
         trades: list[TradeRecord] = []
-        premarket_enabled = bool(self.params.get("premarket", {}).get("enabled", False))
-        diagnostics = {"sessions": 0, "selected_sessions": 0, "fence_rejected": 0,
-                       "breakouts": 0, "retests": 0, "entries": 0,
-                       "selection": "premarket-scanner" if premarket_enabled else "first-bar-dollar-volume",
-                       "premarket_enabled": premarket_enabled, "premarket_skipped": 0,
-                       "premarket_selections": []}
+        diagnostics = {"sessions": 0, "vol_filtered": 0, "selected_sessions": 0,
+                       "entries": 0, "no_symbol": 0, "premarket_skipped": 0,
+                       "premarket_selections": [],
+                       "selection": "premarket-scanner"}
         actual_start = all_dates[0].isoformat()
         actual_end = all_dates[-1].isoformat()
 
         for date in all_dates:
             diagnostics["sessions"] += 1
-            if premarket_enabled:
-                try:
-                    symbol, selection = self._choose_premarket_symbol(date)
-                except Exception as exc:
-                    logger.warning("Premarket selection failed for %s: %s", date, exc)
-                    symbol, selection = None, {"date": str(date), "error": str(exc)}
-                diagnostics["premarket_selections"].append(selection)
-                if not symbol:
-                    diagnostics["premarket_skipped"] += 1
-                    continue
-            else:
-                symbol = self._choose_symbol(frames, date)
+            if not self._vol_filter_passes(date):
+                diagnostics["vol_filtered"] += 1
+                continue
+            try:
+                symbol, selection = self._choose_premarket_symbol(date)
+            except Exception as exc:
+                logger.warning("Premarket selection failed for %s: %s", date, exc)
+                symbol, selection = None, {"date": str(date), "error": str(exc)}
+            diagnostics["premarket_selections"].append(selection)
             if not symbol:
+                diagnostics["premarket_skipped"] += 1
                 continue
             diagnostics["selected_sessions"] += 1
+            if symbol not in frames:
+                continue
             day = frames[symbol][frames[symbol]["Timestamp"].dt.date == date].reset_index(drop=True)
-            strategy = FenceBarStrategy(symbol, self.params)
+            strategy = self.create_strategy(symbol)
             position = None
             for index, bar in day.iterrows():
                 timestamp = bar["Timestamp"]
@@ -265,10 +151,9 @@ class FenceBarBacktester:
                 signal = strategy.on_bar(timestamp, bar, index)
                 if signal is not None and position is None:
                     entry = self._fill(signal.entry_price, signal.side, True)
-                    equity = cash
-                    risk_budget = equity * float(self.params["risk"]["risk_per_trade_pct"]) / 100
+                    risk_budget = cash * float(self.params["risk"]["risk_per_trade_pct"]) / 100
                     quantity = risk_budget / signal.risk_per_share
-                    quantity = min(quantity, equity * 0.25 / entry)
+                    quantity = min(quantity, cash * 0.25 / entry)
                     if quantity > 0:
                         entry_fee = entry * quantity * self.fee_rate
                         cash -= entry * quantity + entry_fee if signal.side == "long" else -entry * quantity + entry_fee
@@ -280,8 +165,8 @@ class FenceBarBacktester:
                         diagnostics["entries"] += 1
                 marked = cash
                 if position is not None:
-                    close = float(bar["Close"])
-                    marked += position["quantity"] * close if position["side"] == "long" else -position["quantity"] * close
+                    close_px = float(bar["Close"])
+                    marked += position["quantity"] * close_px if position["side"] == "long" else -position["quantity"] * close_px
                 equity_curve.append({"date": str(timestamp), "equity": round(marked, 2)})
 
             if position is not None:
@@ -301,7 +186,7 @@ class FenceBarBacktester:
                 ))
 
         report = BacktestReport.calculate_metrics(
-            agent_name="Fence Bar", symbols=self.symbols, start_date=actual_start,
+            agent_name=self.agent_name, symbols=self.symbols, start_date=actual_start,
             end_date=actual_end, initial_capital=self.initial_capital, final_equity=cash,
             equity_curve=equity_curve, trades=trades, interval="5m",
             slippage_bps=self.slippage_bps, periods_per_year=252 * 78, diagnostics=diagnostics,

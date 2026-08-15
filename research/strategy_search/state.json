@@ -4,8 +4,52 @@
   "strategy_lab": "agents/scalp_experiments.py",
   "status": "completed",
   "phase": "final_findings",
-  "experiment_count": 12,
-  "active_question": null,
+  "experiment_count": 18,
+  "active_question": "Compression Expansion failed full validation; identify the next structurally different signal",
+  "new_strategy_experiments": {
+    "shared_infrastructure": {
+      "base": "agents/vol_filter_base.py",
+      "harness": "research/strategy_search/strategy_walk_forward.py",
+      "discovery": "daily_bar_scanner",
+      "period": "2024-10-01 to 2026-08-11 (94 windows)",
+      "execution": "5m, 5bps slippage, 0.1% fee, 0.5% risk, window vol filter"
+    },
+    "vwap_magnet": {
+      "status": "rejected",
+      "baseline_return_5bps": -14.03,
+      "best_config": "displacement 1.00%",
+      "best_return_5bps": -6.73,
+      "best_pass_rate": 0.13,
+      "best_trades": 73,
+      "holdout_return": -0.55,
+      "holdout_pass_rate": 0.25
+    },
+    "first_pullback": {
+      "status": "rejected",
+      "baseline_return_5bps": -3.74,
+      "best_config": "EMA20",
+      "best_return_5bps": -1.73,
+      "best_pass_rate": 0.33,
+      "best_trades": 34,
+      "holdout_return": 0.08,
+      "holdout_pass_rate": 0.67
+    },
+    "fakeout_fade": {
+      "status": "rejected",
+      "baseline_return_5bps": -9.03,
+      "best_config": "one-bar failure confirmation",
+      "best_return_5bps": -4.78,
+      "best_pass_rate": 0.27,
+      "best_trades": 60,
+      "holdout_return": -2.51,
+      "holdout_pass_rate": 0.25
+    },
+    "signal_audit_program": {
+      "relstrength": {"signals": 4, "forward_3": -0.54, "forward_6": -0.61, "forward_12": -0.71, "one_r_rate": 0.0, "status": "audit_rejected"},
+      "sweep_reclaim": {"signals": 11, "forward_3": -0.27, "forward_6": -0.17, "forward_12": -0.29, "one_r_rate": 0.364, "status": "audit_rejected"},
+      "compression_loose": {"signals": 39, "forward_3": 0.102, "forward_6": 0.169, "forward_12": 0.189, "mfe_r": 0.957, "mae_r": -0.718, "one_r_rate": 0.385, "status": "full_validation_rejected"}
+    }
+  },
   "baseline": {
     "config_id": "base_short_sl1.5",
     "description": "Short-only, 30m, 1.5 ATR SL, 2.5 ATR TP, trailing 0.4/0.5, no filters",
@@ -31,7 +75,7 @@
       "holdout_pass_rate": 0.67,
       "holdout_return": -0.03,
       "holdout_trades": 10,
-      "status": "PROMOTED — meets 60% pass rate gate at 5bps",
+      "status": "HISTORICAL PROMOTION NOT REPRODUCED — current code below gate",
       "caveats": [
         "Only 35 trades across 15 active windows — statistically thin",
         "Profitable at 0-5bps, breakeven at 10bps — edge is thin",
@@ -157,16 +201,16 @@
   ],
   "key_finding": {
     "date": "2026-08-13",
-    "title": "Fence Bar with volatility filter is the first strategy to meet the 60% pass rate gate",
-    "summary": "The Fence Bar strategy (no retest, fence[0.35-1.05], 2R target) requires a SPY volatility filter to be profitable. Without it, the strategy loses -11.92% over 22 months (94 windows) — the original +2.09% on the Mar-Aug 2026 period was a lucky high-vol regime artifact. With SPY vol>1.0% and ATR>1.2% filters, the strategy only trades on high-volatility days where opening-range breakouts are reliable. Result: +0.80% at 5bps, 60% pass rate, 35 trades, 0.88% max DD over 22 months. Profitable at 0-5bps, breakeven at 10bps. Holdout test (last 30% of windows) confirms generalization with 67% pass rate. ScalpRunner is rejected entirely.",
+    "title": "Current reproduction invalidated the historical Fence Bar promotion claim",
+    "summary": "The historical Fence Bar research artifact reported +0.80% at 5bps and 60% pass rate, but the current implementation reproduces -0.15%, 40% of 15 volatility-eligible windows passing, and 34 trades over the same 94-window period. The refactored backtester matches the actual committed pre-refactor class on identical data; the discrepancy is between the historical artifact and current code/data state. Fence Bar is not currently promoted. The three new hypotheses (VWAP Magnet, First Pullback, Fakeout Fade) also fail the gate.",
     "verification": "22-month walk-forward with daily-bar symbol discovery (15 symbols per window). 70/30 train/holdout split. Slippage sensitivity at 0/2/5/10 bps."
   },
   "next_queue": [
-    "The edge is thin (+0.80% at 5bps). Need more trades for statistical confidence — consider relaxing vol filter slightly or adding more symbols to the universe.",
-    "Test with the real premarket scanner (not daily-bar proxy) once yfinance 60-day limit is resolved",
-    "The strategy only trades on 15 of 94 windows (84% inactive). Consider whether this is acceptable for live trading — capital sits idle most of the time.",
-    "Investigate whether the vol filter can be made adaptive (e.g., percentile-based rather than absolute threshold) to handle regime shifts",
-    "Consider paper trading to validate the edge in real-time before committing capital"
+    "Resolve the discrepancy between the historical Fence Bar artifact and the current reproducible implementation before further optimization",
+    "Reproduce the exact historical data/config snapshot that generated run_fence_final.json, if available",
+    "Do not promote VWAP Magnet, First Pullback, or Fakeout Fade; all fail the 60% gate",
+    "Test with the real premarket scanner only after a stable reproducible baseline exists",
+    "Consider paper trading only after a strategy passes fresh walk-forward and holdout validation"
   ],
   "data_availability": {
     "cached_5m": "1M+ rows, 29 symbols, 2024-10-01 to 2026-08-11 (8 quarterly chunks)",
@@ -174,5 +218,5 @@
     "cached_daily": "2186 entries for all universe symbols, 2024-09-01 to 2026-08-11",
     "provider": "CachedProvider(AlpacaProvider())"
   },
-  "last_updated": "2026-08-13"
+  "last_updated": "2026-08-14"
 }
