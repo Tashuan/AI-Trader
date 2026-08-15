@@ -47,7 +47,7 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "min_depth_dollars": 50_000,
         "require_trend_agreement": True,
         "block_on_obv_divergence": True,
-        "direction_mode": "short",
+        "direction_mode": "adaptive",
     },
     "timeframes": {
         "entry_interval": "1m",
@@ -75,6 +75,10 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "block_shorts_in_bull": True,
         "block_longs_in_bear": False,
         "threshold_pct": 0.0,
+        "adaptive_direction": True,
+        "adaptive_long_in_bull": True,
+        "adaptive_short_in_bear": True,
+        "adaptive_both_in_neutral": True,
     },
     "indicators": {
         "rsi_period": 14,
@@ -91,6 +95,15 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "candle_body_doji": 0.3,
         "vol_ratio_bullish": 2.0,
         "vol_ratio_dead": 0.5,
+        "tape_reading": {
+            "enabled": True,
+            "velocity_lookback": 5,
+            "velocity_threshold": 1.5,
+            "vol_accel_lookback": 10,
+            "vol_accel_threshold": 1.8,
+            "velocity_weight": 0.05,
+            "vol_accel_weight": 0.05,
+        },
     },
     "cycle_timing": {
         "poll_interval_default": 15,
@@ -181,6 +194,15 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "news_process_limit": 50,
         "news_max_ticker_length": 5,
         "news_max_symbols": 20,
+        "catalyst": {
+            "enabled": True,
+            "fresh_window_hours": 4,
+            "min_confidence": 0.60,
+            "bullish_boost": 1.5,
+            "bearish_penalty": 0.5,
+            "no_catalyst_penalty": 0.9,
+            "block_bearish_catalyst": False,
+        },
     },
     "data_fetch": {
         "intraday_period": "5d",
@@ -203,6 +225,14 @@ SCALP_DEFAULT_PARAMS: dict[str, Any] = {
         "exit_mode": "set_and_forget",
         "reentry_cooldown_cycles": 3,
         "default_rsi": 50,
+        "adaptive_exit": True,
+        "phase1_minutes": 15,
+        "phase1_sl_atr_multiple": 1.5,
+        "phase2_minutes": 45,
+        "phase2_sl_atr_multiple": 1.0,
+        "phase2_trailing_activation_pct": 0.4,
+        "phase3_sl_atr_multiple": 0.5,
+        "phase3_stagnation_exit": True,
     },
     "position_sizing": {
         "max_positions": 3,
@@ -742,6 +772,14 @@ def deep_scan_multi_tf(
     base_qualifies = scan_1m.get("qualifies_for_entry", False)
     qualifies = base_qualifies and trend_agrees
 
+    # Tape reading signals (opt-in)
+    tape_cfg = params.get("indicators", {}).get("tape_reading", {})
+    tape_signals: dict[str, Any] = {}
+    if tape_cfg.get("enabled", False):
+        closes_1m = pre_1m.get("close", [])
+        volumes_1m = pre_1m.get("volume", [])
+        tape_signals = compute_tape_signals(closes_1m, volumes_1m, bar_idx_1m, params)
+
     return {
         **scan_1m,
         "trend_5m": trend_5m,
@@ -750,6 +788,7 @@ def deep_scan_multi_tf(
         "trend_agrees": trend_agrees,
         "atr": atr,
         "qualifies_for_entry": qualifies,
+        "tape_signals": tape_signals,
     }
 
 
@@ -816,15 +855,33 @@ def score_scalp_setup(
     vol_bull = params.get("indicators", {}).get("vol_ratio_bullish", 2.0)
     vol_momentum = min(1.0, vol_ratio_val / vol_bull) if vol_bull > 0 else 0
 
+    # Tape reading signals (opt-in)
+    tape_cfg = params.get("indicators", {}).get("tape_reading", {})
+    tape_enabled = tape_cfg.get("enabled", False)
+    tape_score_val = 0.0
+    tape_bullish = False
+    tape_bearish = False
+    if tape_enabled:
+        tape_data = mtf_result.get("tape_signals", {})
+        tape_score_val = tape_data.get("tape_score", 0.0)
+        tape_bullish = tape_data.get("tape_bullish", False)
+        tape_bearish = tape_data.get("tape_bearish", False)
+
     # Composite
     score_scale = float(st.get("score_scale", 10.0))
-    score = (
+    base_score = (
         confluence * float(sw.get("confluence_weight", 0.30))
         + level_alignment * float(sw.get("level_alignment_weight", 0.25))
         + pattern_conf * float(sw.get("pattern_weight", 0.20))
         + liq_score * float(sw.get("liquidity_weight", 0.15))
         + vol_momentum * float(sw.get("volume_momentum_weight", 0.10))
-    ) * score_scale
+    )
+    # Add tape reading bonus when enabled
+    if tape_enabled:
+        tape_vel_w = float(tape_cfg.get("velocity_weight", 0.05))
+        tape_vol_w = float(tape_cfg.get("vol_accel_weight", 0.05))
+        base_score += tape_score_val * (tape_vel_w + tape_vol_w)
+    score = base_score * score_scale
 
     # Determine direction
     direction = mtf_result.get("entry_direction", pattern.get("direction", "long"))
@@ -835,6 +892,12 @@ def score_scalp_setup(
     entry_cfg = params.get("entry_criteria", {})
     if entry_cfg.get("entry_style", "breakout") == "mean_reversion":
         direction = "short" if direction == "long" else "long"
+
+    # Tape reading direction bias: when tape strongly disagrees with pattern direction, flip
+    if tape_enabled and tape_bullish and direction == "short":
+        direction = "long"
+    elif tape_enabled and tape_bearish and direction == "long":
+        direction = "short"
 
     # Compute entry/SL/TP from levels + ATR
     price = mtf_result.get("price", 0)
@@ -883,6 +946,9 @@ def score_scalp_setup(
         "pattern_confidence": round(pattern_conf, 2),
         "liquidity_score": round(liq_score, 2),
         "vol_momentum": round(vol_momentum, 2),
+        "tape_score": round(tape_score_val, 2) if tape_enabled else 0.0,
+        "tape_bullish": tape_bullish,
+        "tape_bearish": tape_bearish,
         "pattern_type": pattern.get("pattern_type", "none"),
         "breakout_level": breakout.get("level_price", 0),
         "reason": _build_reason(mtf_result, pattern, breakout, liquidity),
@@ -903,6 +969,187 @@ def _build_reason(mtf: dict, pattern: dict, breakout: dict, liquidity: dict) -> 
 
 
 # ============================================================
+# Tape Reading Proxies (bar velocity, volume acceleration)
+# ============================================================
+
+def compute_bar_velocity(
+    closes: list[float] | Any, bar_idx: int, lookback: int = 5,
+) -> dict[str, Any]:
+    """Bar velocity: rate of price change per bar vs recent average.
+
+    Measures the speed of recent price movement relative to the trailing
+    average speed. A velocity > threshold indicates a rapid move (tape speeding up).
+
+    Returns {"velocity": float, "avg_velocity": float, "ratio": float,
+             "direction": "up"/"down", "surging": bool}
+    """
+    if bar_idx < lookback or lookback < 2:
+        return {"velocity": 0.0, "avg_velocity": 0.0, "ratio": 1.0,
+                "direction": "up", "surging": False}
+
+    # Convert to list if needed
+    if hasattr(closes, "__getitem__") and not isinstance(closes, list):
+        close_vals = [float(closes[i]) for i in range(max(0, bar_idx - lookback - 1), bar_idx + 1)]
+    else:
+        close_vals = [float(c) for c in closes[max(0, bar_idx - lookback - 1):bar_idx + 1]]
+
+    if len(close_vals) < lookback + 1:
+        return {"velocity": 0.0, "avg_velocity": 0.0, "ratio": 1.0,
+                "direction": "up", "surging": False}
+
+    # Recent velocity: last bar change
+    recent_vel = close_vals[-1] - close_vals[-2]
+    # Average velocity over lookback
+    velocities = [close_vals[i] - close_vals[i - 1] for i in range(1, len(close_vals))]
+    avg_vel = sum(velocities) / len(velocities) if velocities else 0.0
+
+    # Normalize by price to get percentage
+    price = close_vals[-1] if close_vals[-1] != 0 else 1.0
+    recent_vel_pct = abs(recent_vel) / price * 100
+    avg_vel_pct = abs(avg_vel) / price * 100
+
+    ratio = recent_vel_pct / avg_vel_pct if avg_vel_pct > 0.001 else 1.0
+    direction = "up" if recent_vel > 0 else "down"
+
+    return {
+        "velocity": round(recent_vel_pct, 4),
+        "avg_velocity": round(avg_vel_pct, 4),
+        "ratio": round(ratio, 2),
+        "direction": direction,
+        "surging": ratio >= 1.5,
+    }
+
+
+def compute_volume_acceleration(
+    volumes: list[float] | Any, bar_idx: int, lookback: int = 10,
+) -> dict[str, Any]:
+    """Volume acceleration: current bar volume vs trailing average, accelerating or decaying.
+
+    Returns {"current_vol": float, "avg_vol": float, "ratio": float,
+             "accelerating": bool, "decaying": bool}
+    """
+    if bar_idx < 1 or lookback < 2:
+        return {"current_vol": 0.0, "avg_vol": 0.0, "ratio": 1.0,
+                "accelerating": False, "decaying": False}
+
+    if hasattr(volumes, "__getitem__") and not isinstance(volumes, list):
+        vol_vals = [float(volumes[i]) for i in range(max(0, bar_idx - lookback), bar_idx + 1)]
+    else:
+        vol_vals = [float(v) for v in volumes[max(0, bar_idx - lookback):bar_idx + 1]]
+
+    if len(vol_vals) < 3:
+        return {"current_vol": 0.0, "avg_vol": 0.0, "ratio": 1.0,
+                "accelerating": False, "decaying": False}
+
+    current_vol = vol_vals[-1]
+    avg_vol = sum(vol_vals[:-1]) / len(vol_vals[:-1]) if len(vol_vals) > 1 else current_vol
+
+    if avg_vol <= 0:
+        return {"current_vol": current_vol, "avg_vol": 0.0, "ratio": 1.0,
+                "accelerating": False, "decaying": False}
+
+    ratio = current_vol / avg_vol
+
+    return {
+        "current_vol": round(current_vol, 2),
+        "avg_vol": round(avg_vol, 2),
+        "ratio": round(ratio, 2),
+        "accelerating": ratio >= 1.8,
+        "decaying": ratio <= 0.5,
+    }
+
+
+def compute_tape_signals(
+    closes: list[float] | Any, volumes: list[float] | Any,
+    bar_idx: int, params: dict,
+) -> dict[str, Any]:
+    """Compute combined tape reading signals (velocity + volume acceleration).
+
+    Returns {"velocity": dict, "vol_accel": dict, "tape_score": float,
+             "tape_bullish": bool, "tape_bearish": bool}
+    """
+    tape_cfg = params.get("indicators", {}).get("tape_reading", {})
+    if not tape_cfg.get("enabled", False):
+        return {"velocity": {}, "vol_accel": {}, "tape_score": 0.0,
+                "tape_bullish": False, "tape_bearish": False}
+
+    vel_lookback = int(tape_cfg.get("velocity_lookback", 5))
+    vol_lookback = int(tape_cfg.get("vol_accel_lookback", 10))
+    vel_thresh = float(tape_cfg.get("velocity_threshold", 1.5))
+    vol_thresh = float(tape_cfg.get("vol_accel_threshold", 1.8))
+
+    velocity = compute_bar_velocity(closes, bar_idx, vel_lookback)
+    vol_accel = compute_volume_acceleration(volumes, bar_idx, vol_lookback)
+
+    # Tape score: 0-1, combines velocity ratio and volume acceleration
+    vel_component = min(1.0, velocity.get("ratio", 1.0) / vel_thresh) if vel_thresh > 0 else 0
+    vol_component = min(1.0, vol_accel.get("ratio", 1.0) / vol_thresh) if vol_thresh > 0 else 0
+    tape_score = (vel_component * 0.5 + vol_component * 0.5)
+
+    # Directional bias from velocity
+    tape_bullish = velocity.get("surging", False) and velocity.get("direction") == "up" and vol_accel.get("accelerating", False)
+    tape_bearish = velocity.get("surging", False) and velocity.get("direction") == "down" and vol_accel.get("accelerating", False)
+
+    return {
+        "velocity": velocity,
+        "vol_accel": vol_accel,
+        "tape_score": round(tape_score, 2),
+        "tape_bullish": tape_bullish,
+        "tape_bearish": tape_bearish,
+    }
+
+
+# ============================================================
+# Adaptive Exit (phase-based stops)
+# ============================================================
+
+def compute_adaptive_exit(
+    pos: dict, params: dict, minutes_held: int, ind_data: dict,
+) -> dict[str, Any]:
+    """Phase-based adaptive exit logic.
+
+    Phase 1 (0–phase1_minutes): Wide stop, no trailing — let the trade breathe.
+    Phase 2 (phase1_minutes–phase2_minutes): Tighten stop, activate trailing.
+    Phase 3 (phase2_minutes+): Very tight stop, exit on any stagnation.
+
+    Returns {"verdict": "HOLD"/"EXIT", "exit_reason": str,
+             "phase": 1|2|3, "adjusted_sl": float|None}
+    """
+    exit_cfg = params.get("exit_rules", {})
+    phase1_min = int(exit_cfg.get("phase1_minutes", 15))
+    phase2_min = int(exit_cfg.get("phase2_minutes", 45))
+    pnl_pct = pos.get("pnl_pct", 0)
+
+    if minutes_held < phase1_min:
+        phase = 1
+        # Phase 1: wide stop, no early exit
+        return {"verdict": "HOLD", "exit_reason": "", "phase": phase, "adjusted_sl": None}
+
+    if minutes_held < phase2_min:
+        phase = 2
+        # Phase 2: check stagnation with tighter threshold
+        stagnation_thresh = float(exit_cfg.get("stagnation_threshold_pct", 0.1))
+        if minutes_held >= phase1_min + 5 and abs(pnl_pct) < stagnation_thresh:
+            return {"verdict": "EXIT", "exit_reason": f"phase2_stagnation_{minutes_held}min",
+                     "phase": phase, "adjusted_sl": None}
+        return {"verdict": "HOLD", "exit_reason": "", "phase": phase, "adjusted_sl": None}
+
+    # Phase 3: very tight — exit on stagnation or minimal negative
+    phase = 3
+    if exit_cfg.get("phase3_stagnation_exit", True):
+        if abs(pnl_pct) < float(exit_cfg.get("stagnation_threshold_pct", 0.1)):
+            return {"verdict": "EXIT", "exit_reason": f"phase3_stagnation_{minutes_held}min",
+                     "phase": phase, "adjusted_sl": None}
+        # Exit if barely positive and momentum dying
+        vol_ratio = ind_data.get("vol_ratio", 1.0)
+        if vol_ratio < float(exit_cfg.get("momentum_death_vol_ratio", 0.5)) and pnl_pct < 0.5:
+            return {"verdict": "EXIT", "exit_reason": f"phase3_momentum_death_{minutes_held}min",
+                     "phase": phase, "adjusted_sl": None}
+
+    return {"verdict": "HOLD", "exit_reason": "", "phase": phase, "adjusted_sl": None}
+
+
+# ============================================================
 # Position Review (active mode only)
 # ============================================================
 
@@ -918,6 +1165,15 @@ def review_scalp_position(
     """
     exit_cfg = params.get("exit_rules", {})
     mode = exit_cfg.get("exit_mode", "set_and_forget")
+
+    if mode == "set_and_forget" and not exit_cfg.get("adaptive_exit", False):
+        return {"verdict": "HOLD", "exit_reason": ""}
+
+    # Adaptive exit: check phase-based stagnation
+    if exit_cfg.get("adaptive_exit", False):
+        phase_result = compute_adaptive_exit(pos, params, minutes_held, ind_data)
+        if phase_result.get("verdict") == "EXIT":
+            return phase_result
 
     if mode == "set_and_forget":
         return {"verdict": "HOLD", "exit_reason": ""}

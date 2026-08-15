@@ -107,6 +107,8 @@ class ScalpScanBacktester:
         fill_config: FillConfig | None = None,
         spread_multiplier: float = 1.0,
         liquidity_mode: str = "estimated",
+        discovery_fn=None,
+        catalyst_fn=None,
     ):
         self.symbols = symbols
         self.params = params
@@ -130,6 +132,8 @@ class ScalpScanBacktester:
             slippage_bps=slippage_bps, fee_rate=0.001,
             market="us-stock", interval=base_interval,
         )
+        self.discovery_fn = discovery_fn
+        self.catalyst_fn = catalyst_fn
 
     @staticmethod
     def _new_diagnostics() -> dict:
@@ -471,9 +475,17 @@ class ScalpScanBacktester:
         """Execute the multi-timeframe scalp backtest."""
         if self.fill_simulator is not None:
             self.fill_simulator.reset_stats()
+
+        # When discovery_fn is set, fetch the full universe but only scan
+        # the discovered symbols per day. Otherwise use the static list.
+        fetch_symbols = self.symbols
+        if self.discovery_fn is not None:
+            from backtest_discovery import DEFAULT_UNIVERSE
+            fetch_symbols = list(set(self.symbols + DEFAULT_UNIVERSE))
+
         # Fetch base-interval data for all symbols (primary simulation timeline)
         historical: dict[str, pd.DataFrame] = {}
-        for sym in self.symbols:
+        for sym in fetch_symbols:
             df = self._fetch(sym, self.base_interval)
             if df is not None and not df.empty:
                 historical[sym] = df
@@ -597,12 +609,30 @@ class ScalpScanBacktester:
         max_positions = int(ps_cfg.get("max_positions", 3))
         max_pending = int(ps_cfg.get("max_pending_orders", 5))
 
+        # ── Per-day discovery symbol tracking ──────────────────────
+        active_symbols: set[str] | None = None  # None = use all historical
+        last_discovery_date: str | None = None
+
         for i, ts in enumerate(all_ts):
             # Decrement cooldowns
             for sym in list(cooldown):
                 cooldown[sym] -= 1
                 if cooldown[sym] <= 0:
                     del cooldown[sym]
+
+            # ── Per-day discovery: refresh active symbols on date change ──
+            if self.discovery_fn is not None:
+                cur_date = pd.Timestamp(ts).strftime("%Y-%m-%d")
+                if cur_date != last_discovery_date:
+                    last_discovery_date = cur_date
+                    try:
+                        discovered = self.discovery_fn(cur_date)
+                        active_symbols = set(discovered)
+                        diagnostics.setdefault("discovery_calls", 0)
+                        diagnostics["discovery_calls"] += 1
+                    except Exception as exc:
+                        logger.debug("Discovery failed for %s: %s", cur_date, exc)
+                        active_symbols = None
 
             # Current bar price data
             prices: dict[str, float] = {}
@@ -613,6 +643,9 @@ class ScalpScanBacktester:
             scans: dict[str, dict] = {}
 
             for sym, df in historical.items():
+                # Skip symbols not in today's discovered set
+                if active_symbols is not None and sym not in active_symbols:
+                    continue
                 info = prepared[sym]
                 base_idx = info["base_indices"].get(ts)
                 if base_idx is None:
@@ -747,15 +780,21 @@ class ScalpScanBacktester:
                             if hi >= trail:
                                 exit_px, exit_reason = trail, "trailing_stop"
 
-                # Active mode exit review
-                if exit_px is None and self.params.get("exit_rules", {}).get("exit_mode") == "active":
+                # Active mode / adaptive exit review
+                exit_cfg = self.params.get("exit_rules", {})
+                if exit_px is None and (exit_cfg.get("exit_mode") == "active" or exit_cfg.get("adaptive_exit", False)):
                     minutes_held = pos["bars_held"] * self.bar_minutes
                     ind_data = scans.get(sym, {}).get("mtf", {}).get("indicators", {})
+                    # Compute actual pnl_pct for the position
+                    if side == "long":
+                        live_pnl_pct = (px - entry) / entry * 100
+                    else:
+                        live_pnl_pct = (entry - px) / entry * 100
                     review = core.review_scalp_position(
-                        {"pnl_pct": 0, "side": side}, self.params, minutes_held, ind_data,
+                        {"pnl_pct": live_pnl_pct, "side": side}, self.params, minutes_held, ind_data,
                     )
                     if review.get("verdict") == "EXIT":
-                        exit_px, exit_reason = px, review.get("exit_reason", "active_exit")
+                        exit_px, exit_reason = px, review.get("exit_reason", "adaptive_exit")
 
                 if exit_px is not None:
                     tick_fill_price = None
@@ -832,8 +871,49 @@ class ScalpScanBacktester:
             )
 
             direction_mode = self.params.get("entry_criteria", {}).get("direction_mode", "both")
+
+            # ── Adaptive direction: override based on SPY regime ──
+            spy_cfg = self.params.get("market_regime", {})
+            if direction_mode == "adaptive" and spy_cfg.get("adaptive_direction", False):
+                date_key = pd.Timestamp(ts).strftime("%Y-%m-%d")
+                mkt_regime = spy_regime_lookup.get(date_key, "neutral") if spy_regime_lookup else "neutral"
+                if mkt_regime == "bull" and spy_cfg.get("adaptive_long_in_bull", True):
+                    direction_mode = "long"
+                elif mkt_regime == "bear" and spy_cfg.get("adaptive_short_in_bear", True):
+                    direction_mode = "short"
+                else:
+                    direction_mode = "both" if spy_cfg.get("adaptive_both_in_neutral", True) else "short"
+
             if direction_mode in ("long", "short"):
                 ranked = [s for s in ranked if s["direction"] == direction_mode]
+
+            # ── Catalyst scoring: boost/penalty based on news ──
+            cat_cfg = self.params.get("discovery", {}).get("catalyst", {})
+            if cat_cfg.get("enabled", False) and self.catalyst_fn is not None and ranked:
+                date_str = pd.Timestamp(ts).strftime("%Y-%m-%d")
+                for setup in ranked:
+                    try:
+                        cat_bias = self.catalyst_fn(setup["symbol"], date_str)
+                        if cat_bias is None:
+                            continue
+                        bias = cat_bias.get("bias", "neutral")
+                        if bias == "bullish" and setup["direction"] == "long":
+                            setup["score"] *= float(cat_cfg.get("bullish_boost", 1.5))
+                        elif bias == "bearish" and setup["direction"] == "short":
+                            setup["score"] *= float(cat_cfg.get("bullish_boost", 1.5))
+                        elif bias == "bearish" and setup["direction"] == "long":
+                            setup["score"] *= float(cat_cfg.get("bearish_penalty", 0.5))
+                            if cat_cfg.get("block_bearish_catalyst", False):
+                                setup["_catalyst_blocked"] = True
+                        elif bias == "bullish" and setup["direction"] == "short":
+                            setup["score"] *= float(cat_cfg.get("bearish_penalty", 0.5))
+                            if cat_cfg.get("block_bearish_catalyst", False):
+                                setup["_catalyst_blocked"] = True
+                        else:
+                            setup["score"] *= float(cat_cfg.get("no_catalyst_penalty", 0.9))
+                    except Exception:
+                        pass
+                ranked = [s for s in ranked if not s.get("_catalyst_blocked", False)]
 
             # ── Regime filter: only trade in direction of EMA trend ──
             regime_cfg = self.params.get("regime_filter", {})
@@ -883,7 +963,11 @@ class ScalpScanBacktester:
                 date_key = pd.Timestamp(ts).strftime("%Y-%m-%d")
                 mkt_regime = spy_regime_lookup.get(date_key, "neutral")
                 block_shorts = mkt_regime == "bull" and spy_regime_cfg.get("block_shorts_in_bull", True)
-                block_longs = mkt_regime == "bear" and spy_regime_cfg.get("block_longs_in_bear", False)
+                # When adaptive direction is on, also block longs in bear
+                block_longs_bear = spy_regime_cfg.get("block_longs_in_bear", False)
+                if spy_regime_cfg.get("adaptive_direction", False):
+                    block_longs_bear = True
+                block_longs = mkt_regime == "bear" and block_longs_bear
                 if block_shorts or block_longs:
                     for setup in ranked:
                         if block_shorts and setup["direction"] == "short":

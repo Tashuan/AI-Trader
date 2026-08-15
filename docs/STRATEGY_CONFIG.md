@@ -142,16 +142,16 @@ The ScalpRunner schema has 19 strategy field sections plus shared fields and ris
 | Section | Fields | Purpose |
 |---|---|---|
 | `entry_criteria` | 9 | Entry qualification thresholds (signals, spread, volume, direction) |
-| `exit_rules` | 12 | Stop loss, take profit, trailing, stagnation, exit mode, reentry cooldown |
+| `exit_rules` | 18 | Stop loss, take profit, trailing, stagnation, exit mode, reentry cooldown, adaptive exit phases |
 | `position_sizing` | 8 | Max positions, sizing %, consecutive loss rules, final stretch threshold |
 | `timeframes` | 4 | Entry/pattern/trend intervals, lookback bars |
 | `levels` | 6 | Fibonacci ratios, S/R detection params, breakout confirmation |
-| `discovery` | 19 | Movers, news, scanner settings, symbol universes |
+| `discovery` | 25 | Movers, news, scanner settings, symbol universes, catalyst tagging |
 | `order` | 9 | Order type, offset, expiry, ATR multiples, price precision, market type |
-| `indicators` | 14 | RSI, MACD, EMA, ATR, BB, candle body params |
+| `indicators` | 20 | RSI, MACD, EMA, ATR, BB, candle body, tape reading (bar velocity, volume acceleration) |
 | `cycle_timing` | 3 | Poll interval min/default/max |
 | `premove_filter` | 3 | Pre-move cap filter (reject setups with excessive prior movement) |
-| `market_regime` | 6 | SPY daily EMA regime filter (block shorts in bull, longs in bear) |
+| `market_regime` | 10 | SPY daily EMA regime filter, adaptive direction (long in bull, short in bear) |
 | `breakout_detection` | 2 | Approaching and consolidation thresholds |
 | `pattern_detection` | 12 | Pattern recognition params (range breakout, flag, wedge) |
 | `liquidity_scoring` | 6 | Liquidity score weights and verdict thresholds |
@@ -277,13 +277,17 @@ The current production config, validated via backtesting to be profitable across
 
 | Section | Key Fields | Values |
 |---|---|---|
-| `entry_criteria` | `direction_mode` | `"short"` (short-only) |
+| `entry_criteria` | `direction_mode` | `"adaptive"` (SPY regime-driven) |
 | `exit_rules` | `trailing_sl_pct` / `trailing_activation_pct` | 0.4 / 0.5 |
 | `order` | `sl_atr_multiple` / `tp_atr_multiple` | 1.5 / 2.5 |
 | `order` | `order_expiry_minutes` | 180 |
 | `premove_filter` | `enabled` / `max_move_pct` / `lookback_bars` | True / 2.0 / 8 |
 | `market_regime` | `enabled` / `daily_ema_period` | True / 10 |
+| `market_regime` | `adaptive_direction` | True (long in bull, short in bear) |
 | `market_regime` | `block_shorts_in_bull` | True |
+| `indicators` | `tape_reading.enabled` | True (bar velocity + vol acceleration) |
+| `exit_rules` | `adaptive_exit` | True (phase-based: 15/45 min thresholds) |
+| `discovery` | `catalyst.enabled` | True (news catalyst boost/penalty) |
 
 ### All Parameter Sections
 
@@ -300,7 +304,7 @@ Entry qualification thresholds.
 | `min_depth_dollars` | number | 50,000 | Minimum L2 depth in dollars |
 | `require_trend_agreement` | bool | True | Require multi-TF trend alignment |
 | `block_on_obv_divergence` | bool | True | Block entries on OBV divergence |
-| `direction_mode` | enum | `"short"` | `"both"`, `"long"`, or `"short"` |
+| `direction_mode` | enum | `"adaptive"` | `"both"`, `"long"`, `"short"`, or `"adaptive"` (SPY regime-driven) |
 
 #### `exit_rules` (12 fields)
 Position exit management.
@@ -319,6 +323,14 @@ Position exit management.
 | `exit_mode` | enum | `"set_and_forget"` | `"set_and_forget"` or `"active"` |
 | `reentry_cooldown_cycles` | number | 3 | Cycles to wait before re-entering a symbol |
 | `default_rsi` | number | 50 | Fallback RSI when no data available |
+| `adaptive_exit` | bool | True | Enable phase-based adaptive exit (wide→tight→stagnation) |
+| `phase1_minutes` | number | 15 | Phase 1 duration — wide stop, no trailing |
+| `phase1_sl_atr_multiple` | number | 1.5 | Phase 1 stop = N × ATR (loose) |
+| `phase2_minutes` | number | 45 | Phase 2 start — tighten stop, activate trailing |
+| `phase2_sl_atr_multiple` | number | 1.0 | Phase 2 stop = N × ATR (tighter) |
+| `phase2_trailing_activation_pct` | number | 0.4 | Profit % to activate trailing in phase 2 |
+| `phase3_sl_atr_multiple` | number | 0.5 | Phase 3 stop = N × ATR (very tight) |
+| `phase3_stagnation_exit` | bool | True | Exit on stagnation in phase 3 |
 
 #### `position_sizing` (8 fields)
 Position size calculation.
@@ -380,6 +392,12 @@ Symbol discovery pipeline.
 | `news_process_limit` | number | 50 | Max news items to process |
 | `news_max_ticker_length` | number | 5 | Max ticker char length |
 | `news_max_symbols` | number | 20 | Max symbols from news |
+| `catalyst.enabled` | bool | True | Enable catalyst-based score boost/penalty |
+| `catalyst.fresh_window_hours` | number | 4 | Hours to consider a catalyst "fresh" |
+| `catalyst.min_confidence` | number | 0.60 | Min tag confidence to apply boost/penalty |
+| `catalyst.bullish_boost` | number | 1.5 | Score multiplier when catalyst aligns with direction |
+| `catalyst.bearish_penalty` | number | 0.5 | Score multiplier when catalyst opposes direction |
+| `catalyst.no_catalyst_penalty` | number | 0.9 | Score multiplier when no catalyst present |
 
 #### `order` (9 fields)
 Order construction.
@@ -415,6 +433,13 @@ Technical indicator parameters.
 | `candle_body_doji` | number | 0.3 | Max body/range for doji |
 | `vol_ratio_bullish` | number | 2.0 | Volume ratio considered bullish |
 | `vol_ratio_dead` | number | 0.5 | Volume ratio considered dead |
+| `tape_reading.enabled` | bool | True | Enable bar velocity + volume acceleration signals |
+| `tape_reading.velocity_lookback` | number | 5 | Bars to measure bar velocity |
+| `tape_reading.velocity_threshold` | number | 1.5 | Velocity ratio to flag as "surging" |
+| `tape_reading.vol_accel_lookback` | number | 10 | Bars to measure volume acceleration |
+| `tape_reading.vol_accel_threshold` | number | 1.8 | Vol ratio to flag as "accelerating" |
+| `tape_reading.velocity_weight` | number | 0.05 | Score weight for velocity component |
+| `tape_reading.vol_accel_weight` | number | 0.05 | Score weight for volume acceleration component |
 
 #### `premove_filter` (3 fields)
 Reject setups where the stock already moved too far before entry.
@@ -436,6 +461,10 @@ SPY daily EMA regime filter.
 | `block_shorts_in_bull` | bool | True | Block shorts when SPY > EMA |
 | `block_longs_in_bear` | bool | False | Block longs when SPY < EMA |
 | `threshold_pct` | number | 0.0 | Distance from EMA to trigger (%) |
+| `adaptive_direction` | bool | True | Enable adaptive direction mode (long in bull, short in bear) |
+| `adaptive_long_in_bull` | bool | True | Go long-only when SPY regime is bull |
+| `adaptive_short_in_bear` | bool | True | Go short-only when SPY regime is bear |
+| `adaptive_both_in_neutral` | bool | True | Allow both directions when regime is neutral |
 
 #### `breakout_detection` (2 fields)
 | Field | Type | Default | Description |

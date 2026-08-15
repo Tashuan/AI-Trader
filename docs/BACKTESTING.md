@@ -53,6 +53,32 @@ The scan core modules (`scan_core.py`, `crypto_scan_core.py`) are **side-effect-
 - Unified timeline across all symbols
 - Per-symbol statistics
 
+### ScalpScanBacktester (ScalpRunner / Multi-TF Scalp)
+
+**File**: `agents/scalp_scan_backtester.py`
+
+| Setting | Default |
+|---|---|
+| Symbols | 42-symbol universe (see `backtest_discovery.py`) |
+| Interval | 1m (configurable) |
+| Initial capital | $100,000 |
+| Base slippage | 2 bps (configurable) |
+| Max positions | 3 |
+
+**Features**:
+- Multi-timeframe scan (1m entry, 5m pattern, 15m trend) with confluence scoring
+- **Dynamic symbol discovery** — per-day symbol selection via `discovery_fn` callback (static/daily/intraday modes)
+- **Adaptive direction** — SPY regime drives long/short/both selection (`direction_mode: "adaptive"`)
+- **Tape reading signals** — bar velocity + volume acceleration scoring (opt-in via `indicators.tape_reading`)
+- **Adaptive exit logic** — phase-based stops (Phase 1: wide 1.5×ATR, Phase 2: tight 1.0×ATR + trailing, Phase 3: very tight 0.5×ATR + stagnation exit)
+- **Catalyst scoring** — news headline classification via `catalyst_fn` callback; bullish/bearish bias boosts or penalizes setup scores
+- ATR-based SL/TP with side-specific multiples
+- SPY market regime filter (block shorts in bull, longs in bear)
+- Liquidity-constrained fill simulation with partial fills
+- Goal-aware sizing with consecutive-loss circuit breaker
+- Reentry cooldown per symbol
+- Precomputed indicators (O(n) per symbol)
+
 ### CryptoScanBacktester (CryptoRunner / Crypto)
 
 **File**: `agents/crypto_scan_backtester.py`
@@ -254,15 +280,42 @@ The following are guaranteed to be identical between backtest and live execution
 | File | Role |
 |---|---|
 | `agents/scan_backtester.py` | BlitzRunner historical replay engine |
+| `agents/scalp_scan_backtester.py` | ScalpRunner multi-TF historical replay engine |
 | `agents/crypto_scan_backtester.py` | CryptoRunner historical replay engine |
+| `agents/backtest_discovery.py` | Shared symbol discovery module (daily-bar + intraday scanner) |
+| `agents/catalyst_tagger.py` | News headline catalyst classification (8 categories, bias detection) |
 | `agents/backtest_report.py` | Report dataclass, metrics calculation, activation gate |
 | `agents/run_backtest.py` | CLI entry point for running backtests |
 | `agents/scan_core.py` | Shared equity indicator math + exit review |
+| `agents/scalp_scan_core.py` | ScalpRunner indicator math, tape reading, adaptive exit, scoring |
 | `agents/crypto_scan_core.py` | Shared crypto indicator math + exit review |
 | `agents/strategy_registry.py` | Default params, risk controls, position sizing |
 | `agents/market_data.py` | Market data provider abstraction |
+| `research/strategy_search/walk_forward_harness.py` | Walk-forward validation harness |
+| `research/strategy_search/fence_walk_forward.py` | Fence walk-forward with discovery integration |
 | `service/server/routes_backtest.py` | API endpoints for running backtests |
 | `service/arena/src/pages/BacktestPage.tsx` | Arena UI backtest page |
+
+## Walk-Forward Validation
+
+The walk-forward harness (`research/strategy_search/walk_forward_harness.py`) validates strategies across multiple time windows to detect overfitting:
+
+```bash
+# Run walk-forward with daily symbol discovery
+python research/strategy_search/walk_forward_harness.py \
+  --discovery daily --max-symbols 10
+
+# Run with static symbol list (legacy mode)
+python research/strategy_search/walk_forward_harness.py \
+  --discovery static
+```
+
+**Discovery modes**:
+- `static` — Use the full symbol list for all windows (default, backward-compatible)
+- `daily` — Discover symbols per trading day using daily-bar scanning (volume/price movers)
+- `intraday` — Discover symbols using intraday bar scanning (more responsive)
+
+The harness passes `discovery_fn` and `catalyst_fn` callbacks to the backtester, enabling per-day symbol selection and catalyst-aware scoring during walk-forward validation.
 
 ## Tips for Meaningful Backtests
 

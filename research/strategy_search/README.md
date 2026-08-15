@@ -7,12 +7,16 @@ This directory is the persistent workspace for the Devin `strategy-researcher` a
 ScalpRunner is the primary research target. The default search surface is the Strategy Lab and its realistic execution stack:
 
 - `agents/scalp_experiments.py` — scenario matrix, holdout, and walk-forward workflows
-- `agents/scalp_scan_backtester.py` — scanner-integrated backtests
-- `agents/scalp_scan_core.py` — deterministic signal and parameter behavior
+- `agents/scalp_scan_backtester.py` — scanner-integrated backtests with discovery_fn + catalyst_fn callbacks
+- `agents/scalp_scan_core.py` — deterministic signal and parameter behavior, tape reading, adaptive exit
+- `agents/backtest_discovery.py` — shared symbol discovery module (daily-bar + intraday scanner, 42-symbol universe)
+- `agents/catalyst_tagger.py` — news headline catalyst classification (8 categories, bullish/bearish bias)
 - `agents/strategy_lab.py` — deep parameter merge/config helpers
 - `agents/execution_simulator.py` — fees, slippage, spread/quote-side pricing, partial fills, volatility widening, and tick rounding
 - `agents/backtest_liquidity.py` — conservative liquidity assumptions
 - `agents/sweep_params_crypto_scalp.py` and related experiment tools where applicable
+- `research/strategy_search/walk_forward_harness.py` — walk-forward validation with --discovery and --max-symbols CLI flags
+- `research/strategy_search/fence_walk_forward.py` — fence walk-forward using shared discovery module
 
 Other strategy families are comparison or fallback work only unless the journal explicitly promotes them to the active question.
 

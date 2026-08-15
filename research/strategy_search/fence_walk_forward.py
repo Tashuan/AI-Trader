@@ -32,6 +32,7 @@ from equity_data_providers import AlpacaProvider
 from fence_bar_backtester import FenceBarBacktester
 from fence_bar_strategy import FENCE_BAR_DEFAULTS
 from strategy_registry import deep_merge
+from backtest_discovery import discover_symbols_for_date as _discover_symbols
 
 RESEARCH_DIR = REPO_ROOT / "research" / "strategy_search"
 
@@ -69,64 +70,11 @@ def generate_windows(start: str, end: str) -> list[dict[str, str]]:
 
 
 def discover_symbols(test_start: str, provider, max_symbols: int = MAX_SYMBOLS) -> list[str]:
-    """Rank universe symbols by gap, volume ratio, and proximity to prior-day levels."""
-    import pandas as pd
+    """Rank universe symbols by gap, volume ratio, and proximity to prior-day levels.
 
-    UNIVERSE = [
-        "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL",
-        "NFLX", "INTC", "MU", "QQQ", "SPY", "IWM", "BA", "DIS", "BABA",
-        "COIN", "MARA", "RIOT", "SOFI", "AAL", "UAL", "F", "GM", "NIO",
-        "XPEV", "PLUG", "DKNG",
-    ]
-    DEFAULT_SYMBOLS = ["NVDA", "TSLA", "AAPL", "AMD", "META"]
-
-    end_date = test_start
-    start_date = (datetime.fromisoformat(test_start) - timedelta(days=10)).strftime("%Y-%m-%d")
-
-    candidates = []
-    for sym in UNIVERSE:
-        try:
-            df = provider.history(sym, interval="1d", start=start_date, end=end_date)
-            if df is None or df.empty or len(df) < 2:
-                continue
-            df = df.reset_index() if df.index.name else df
-            col = "Datetime" if "Datetime" in df.columns else "Date"
-            df[col] = pd.to_datetime(df[col])
-
-            prior = df.iloc[-2]
-            today = df.iloc[-1]
-
-            prev_close = float(prior["Close"])
-            today_open = float(today["Open"])
-            today_close = float(today["Close"])
-            today_volume = float(today["Volume"])
-            avg_volume = float(df["Volume"].iloc[:-1].tail(20).mean())
-
-            if prev_close <= 0 or avg_volume <= 0:
-                continue
-
-            gap_pct = (today_open / prev_close - 1) * 100
-            vol_ratio = today_volume / avg_volume
-            prior_high = float(prior["High"])
-            prior_low = float(prior["Low"])
-            dist_to_high = abs(today_close - prior_high) / prior_high * 100
-            dist_to_low = abs(today_close - prior_low) / prior_low * 100
-            min_dist = min(dist_to_high, dist_to_low)
-
-            score = 0.0
-            score += min(25.0, abs(gap_pct) * 5) if abs(gap_pct) >= 1.0 else 0
-            score += min(20.0, vol_ratio * 6) if vol_ratio >= 1.25 else 0
-            adv = today_close * avg_volume
-            score += 20.0 if adv >= 25_000_000 else 0
-            score += 15.0 if min_dist <= 1.0 else 0
-
-            candidates.append({"symbol": sym, "score": round(score, 2)})
-        except Exception:
-            continue
-
-    candidates.sort(key=lambda c: c["score"], reverse=True)
-    symbols = [c["symbol"] for c in candidates[:max_symbols]]
-    return symbols if symbols else DEFAULT_SYMBOLS
+    Delegates to the shared backtest_discovery module.
+    """
+    return _discover_symbols(test_start, provider, max_symbols=max_symbols)
 
 
 def run_fence_walk_forward(

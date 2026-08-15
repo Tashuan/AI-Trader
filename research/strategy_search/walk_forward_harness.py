@@ -38,6 +38,7 @@ from scalp_scan_backtester import ScalpScanBacktester
 from scalp_scan_core import SCALP_DEFAULT_PARAMS
 from strategy_registry import deep_merge, effective_params
 from schwab_provider import get_schwab_provider
+from backtest_discovery import make_discovery_fn
 
 RESEARCH_DIR = REPO_ROOT / "research" / "strategy_search"
 
@@ -130,6 +131,8 @@ def run_walk_forward_candidate(
     interval: str = INTERVAL, slippage_bps: float = SLIPPAGE,
     fee_rate: float = FEE_RATE, capital: float = CAPITAL,
     realistic: bool = True, provider=None, provider_label: str = "",
+    discovery_mode: str = "static", max_symbols: int = 10,
+    catalyst_fn=None,
 ) -> dict[str, Any]:
     if provider is None:
         provider, provider_label = build_provider()
@@ -139,6 +142,12 @@ def run_walk_forward_candidate(
     if not windows:
         return {"error": "No windows generated", "candidate_id": candidate_id}
 
+    # Build discovery callback if mode is not static
+    discovery_fn = make_discovery_fn(
+        mode=discovery_mode, provider=provider, max_symbols=max_symbols,
+        interval=interval,
+    ) if discovery_mode != "static" else None
+
     window_results = []
     for w in windows:
         bt = ScalpScanBacktester(
@@ -147,6 +156,8 @@ def run_walk_forward_candidate(
             initial_capital=capital, slippage_bps=slippage_bps,
             provider=provider, base_interval=interval,
             fill_config=fill_cfg,
+            discovery_fn=discovery_fn,
+            catalyst_fn=catalyst_fn,
         )
         report = bt.run()
         window_results.append({
@@ -197,7 +208,9 @@ def mode_reproduce(args):
     """Reproduce a single candidate walk-forward."""
     cand = load_candidate(args.candidate)
     result = run_walk_forward_candidate(cand["config_id"], cand["override"],
-                                         slippage_bps=args.slippage)
+                                         slippage_bps=args.slippage,
+                                         discovery_mode=args.discovery,
+                                         max_symbols=args.max_symbols)
     print(json.dumps(result, indent=2))
     if args.json:
         _save(result, args.json, f"run_reproduce_{cand['config_id']}")
@@ -349,6 +362,10 @@ def main():
     parser.add_argument("--candidate", default="cap2_spy10", help="Candidate config ID")
     parser.add_argument("--slippage", type=float, default=SLIPPAGE, help="Slippage in bps")
     parser.add_argument("--json", default="", help="Save full results to JSON path")
+    parser.add_argument("--discovery", choices=("static", "daily", "intraday"), default="static",
+                        help="Symbol discovery mode (default: static)")
+    parser.add_argument("--max-symbols", type=int, default=10,
+                        help="Max symbols per discovery window")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--reproduce", action="store_true", help="Reproduce single candidate")
     mode.add_argument("--ablation", action="store_true", help="Run ablation: base/cap2/spy10/both")

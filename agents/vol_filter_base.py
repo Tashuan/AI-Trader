@@ -65,6 +65,7 @@ class VolFilteredBacktester:
         slippage_bps: float = 5.0,
         fee_rate: float = 0.001,
         provider: ArenaMarketDataProvider | None = None,
+        discovery_fn=None,
     ):
         if not symbols:
             raise ValueError("Backtester requires at least one symbol")
@@ -77,6 +78,7 @@ class VolFilteredBacktester:
         self.slippage_bps = float(slippage_bps)
         self.fee_rate = float(fee_rate)
         self.provider = provider or get_arena_market_data()
+        self.discovery_fn = discovery_fn
         self._vol_map: dict | None = None
         self._previous_close_cache: dict[tuple[str, object], float | None] = {}
         self._previous_levels_cache: dict[tuple[str, object], dict[str, float] | None] = {}
@@ -327,7 +329,13 @@ class VolFilteredBacktester:
     # ── Main run loop ───────────────────────────────────────────
 
     def run(self) -> BacktestReport:
-        frames = {sym: self._fetch(sym) for sym in self.symbols}
+        # Fetch data for the full universe when discovery_fn is set
+        fetch_symbols = self.symbols
+        if self.discovery_fn is not None:
+            from backtest_discovery import DEFAULT_UNIVERSE
+            fetch_symbols = list(set(self.symbols + DEFAULT_UNIVERSE))
+
+        frames = {sym: self._fetch(sym) for sym in fetch_symbols}
         frames = {sym: f for sym, f in frames.items() if f is not None and not f.empty}
         if not frames:
             return BacktestReport.calculate_metrics(
@@ -343,7 +351,7 @@ class VolFilteredBacktester:
         equity_curve: list[dict] = []
         trades: list[TradeRecord] = []
         diagnostics = {"sessions": 0, "vol_filtered": 0, "selected_sessions": 0,
-                       "entries": 0, "no_symbol": 0,
+                       "entries": 0, "no_symbol": 0, "discovery_calls": 0,
                        "vol_filter_passed": self._vol_filter_passes(all_dates[0])}
         actual_start = all_dates[0].isoformat()
         actual_end = all_dates[-1].isoformat()
@@ -353,7 +361,20 @@ class VolFilteredBacktester:
             if not self._vol_filter_passes(date):
                 diagnostics["vol_filtered"] += 1
                 continue
-            symbol = self._choose_symbol(frames, date)
+
+            # ── Per-day discovery: select symbols for this date ──
+            if self.discovery_fn is not None:
+                date_str = date.isoformat()
+                try:
+                    discovered = self.discovery_fn(date_str)
+                    diagnostics["discovery_calls"] += 1
+                    day_frames = {s: f for s, f in frames.items() if s in discovered}
+                except Exception:
+                    day_frames = frames
+            else:
+                day_frames = frames
+
+            symbol = self._choose_symbol(day_frames, date)
             if not symbol:
                 diagnostics["no_symbol"] += 1
                 continue
