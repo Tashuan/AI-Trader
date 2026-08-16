@@ -540,3 +540,30 @@ Each detector degrades gracefully — if market data is unavailable, it returns 
 - Does not trade live capital (paper_only = true)
 - Does not guarantee profitability (the edge is thin and regime-dependent)
 - Does not replace the backtest (forward paper trading is the validation step)
+
+### Batch 7 — Human-in-the-loop backtest harness (2026-08-16)
+
+- **Hypothesis:** The four StockBoy detectors improve Fence Bar returns when replayed deterministically on 5m bars.
+- **Candidate:** Fence Bar no-retest, 1R target, fixed SL/TP, SPY vol/ATR day filter (threshold 1.8%)
+- **Harness:** `research/strategy_search/hitl_experiment.py` walk-forward vs `human_in_loop_backtester.py`
+- **Symbols:** Dynamic discovery, max 15 per window (matches original sweep)
+- **Dates:** 2024-10-01 to 2026-08-11 (94 windows)
+- **Interval:** 5m
+- **Costs:** 5 bps slippage, 0.1% fee rate
+- **Key metrics (full period):**
+  | Variant | Return | Trades | Active windows | Max DD |
+  |---|---|---|---|---|
+  | Baseline | -0.36% | 4 | 3 / 94 | 0.29% |
+  | +HITL | +0.00% | 2 | 2 / 94 | 0.15% |
+- **HITL delta:** +0.35 percentage points, 50% fewer trades, max DD cut 48%
+- **Observations:** Two baseline losers were vetoed; the remaining trade was managed to a smaller loss. Sample is too thin to validate the projected +4-5%. The ATR 1.8% filter remains extremely selective and the current cached 5m data produced far fewer trades than the original 16-trade run.
+- **Decision:** HITL harness works and shows beneficial directionality, but the result is not statistically meaningful. Use the harness for parameter sweeps with a lower ATR threshold to generate more signal.
+
+## Next Steps
+
+- [ ] Run HITL ablation: enable/disable each of the 4 detectors independently
+- [ ] Loosen vol filter to ATR 1.2%-1.5% to get a meaningful trade sample
+- [ ] Compare HITL with and without the vol override on a larger sample
+- [ ] Start forward paper trading: launch FenceBarRunner + StockBoy and verify detector firing
+
+33. **HITL backtest harness confirms directionality but not magnitude.** The four StockBoy supervisors raised the 22-month Fence Bar return by +0.35 percentage points and cut drawdown 48% in a 4-trade baseline sample, but the sample is too thin to validate the hand-calculated +4-5% projection. The ATR 1.8% threshold is too selective for robust HITL measurement.
