@@ -61,7 +61,7 @@ ORB_CONFIG = {
     "target_pct": 1.2,
     "latest_entry": "10:30",
     "max_positions": 3,
-    "position_pct": 30.0,  # % of equity per trade (equity equivalent)
+    "position_pct": 15.0,  # % of equity per trade (equity equivalent)
 }
 
 # Strike steps per symbol (common US equity option strike increments)
@@ -155,25 +155,70 @@ class ORBSignalGenerator:
 
 
 # ── Option bar cache ───────────────────────────────────────────────────
+_CACHE_DIR = _PROJECT_ROOT / "research" / "strategy_search" / "option_bars_cache"
+
+
 class OptionBarCache:
-    """Caches option bars per contract, indexed by timestamp.
+    """Caches option bars per contract, with disk persistence.
 
     Uses Schwab options provider which returns DataFrames with UTC DatetimeIndex.
+    Bars are cached both in-memory and on disk (parquet format) so subsequent
+    backtest runs skip the API calls entirely.
     """
 
     def __init__(self, provider: SchwabOptionsProvider):
         self.provider = provider
-        self._cache: dict[str, pd.DataFrame] = {}  # schwab_symbol -> DataFrame
+        self._cache: dict[str, pd.DataFrame] = {}
+        self._disk_hits = 0
+        self._api_calls = 0
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    def _cache_path(self, option_symbol: str) -> Path:
+        """Filesystem path for a cached contract's bars."""
+        safe = option_symbol.replace(" ", "__").replace("/", "_")
+        return _CACHE_DIR / f"{safe}.parquet"
 
     def get_bars(self, option_symbol: str, start: str, end: str) -> pd.DataFrame | None:
-        """Get option bars as a DataFrame (cached)."""
+        """Get option bars as a DataFrame (memory → disk → API)."""
+        # 1. In-memory cache
         if option_symbol in self._cache:
             return self._cache[option_symbol]
+
+        # 2. Disk cache (parquet or NO_DATA marker)
+        cache_file = self._cache_path(option_symbol)
+        if cache_file.exists():
+            # NO_DATA marker files are tiny text; parquet files are binary
+            if cache_file.stat().st_size < 20:
+                if cache_file.read_text() == "NO_DATA":
+                    self._cache[option_symbol] = None
+                    self._disk_hits += 1
+                    return None
+            try:
+                df = pd.read_parquet(cache_file)
+                if not df.empty:
+                    self._cache[option_symbol] = df
+                    self._disk_hits += 1
+                    return df
+            except Exception:
+                pass  # Corrupt cache file — re-fetch
+
+        # 3. API fetch
+        self._api_calls += 1
         df = self.provider.get_bars(option_symbol, start, end, "minute", 1)
         if df is not None and not df.empty:
             self._cache[option_symbol] = df
+            # Persist to disk
+            try:
+                df.to_parquet(cache_file)
+            except Exception:
+                pass  # Disk write failed — still cached in memory
         else:
             self._cache[option_symbol] = None
+            # Cache "no data" result with a marker file to avoid re-fetching
+            try:
+                cache_file.write_text("NO_DATA")
+            except Exception:
+                pass
         return self._cache[option_symbol]
 
     def get_price_at(self, option_symbol: str, target_ts: pd.Timestamp,
@@ -520,6 +565,8 @@ def run_options_backtest(
     r = report.to_dict()
     r["diagnostics"] = dict(diagnostics)
     r["skipped_no_option_data"] = skipped_no_option_data
+    r["cache_disk_hits"] = option_bar_cache._disk_hits
+    r["cache_api_calls"] = option_bar_cache._api_calls
     return r
 
 
@@ -634,6 +681,8 @@ def main():
     for k, v in sorted(diag.items()):
         print(f"    {k}: {v}")
     print(f"    skipped_no_option_data: {result.get('skipped_no_option_data', 0)}")
+    print(f"    cache disk hits: {result.get('cache_disk_hits', 0)}")
+    print(f"    cache api calls: {result.get('cache_api_calls', 0)}")
 
     # Per-symbol breakdown
     ps = result.get("per_symbol_stats", {})
