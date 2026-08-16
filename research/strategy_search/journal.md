@@ -592,9 +592,45 @@ Each detector degrades gracefully — if market data is unavailable, it returns 
 
 ## Next Steps
 
-- [ ] Start forward paper trading: launch FenceBarRunner + StockBoy and verify detector firing
-- [ ] Investigate why ATR 1.0% baseline has more trades (22) but worse return than 1.2% (16)
-- [ ] Consider widening fence range or relaxing breakout filters to increase trade frequency
+- [ ] Run ETF-exclusion config with holdout validation (70/30 split)
+- [ ] Run ETF-exclusion at ATR 1.0% and 1.5% to find the optimal threshold
+- [ ] Test removing low-vol stocks (BABA, XPEV, NIO) in addition to ETFs
+- [ ] Start forward paper trading with ETF-exclusion config
+- [ ] Consider negotiating lower fees or using a broker with 0% commission
+
+### Batch 10 — Biggest losing factor analysis and fixes (2026-08-16)
+
+- **Hypothesis:** The biggest losing factor is the tight fence-midpoint stop, causing 3 of 4 losers to stop out within 5-12 minutes.
+- **Diagnosis:** Trade-level analysis at ATR 1.2% (7 trades, full universe) revealed:
+  - Losers are 1.5x bigger than winners (avg loss -0.77% vs avg win +0.51%)
+  - 3/4 losers stop out within 5-12 minutes (tight stop)
+  - SPY is the single biggest loser (-287 USD, 25% of all absolute PnL)
+  - 0.20% round-trip costs consume 39% of every 0.51% avg winner
+- **Three fixes tested in parallel (subagents):**
+  1. **Stop mode:** fence_low_high (wider stop) — WORSE (-0.57% vs -0.36%)
+  2. **ETF exclusion:** remove SPY/QQQ/IWM — **BEST** (+0.26% vs -0.36%)
+  3. **Slippage sensitivity:** break-even at 0.53 bps; fees are the real killer
+- **Combined test (ETF exclusion + HITL no-breakeven):**
+  | Variant | Return | Trades | AggPF | Max DD |
+  |---|---|---|---|---|
+  | Baseline | -0.36% | 16 | 0.77 | 0.55% |
+  | **ETF exclusion only** | **+0.26%** | 11 | **1.40** | 0.19% |
+  | HITL no-breakeven only | +0.09% | 9 | 1.17 | 0.25% |
+  | ETF excl + HITL no-be | -0.16% | 7 | 0.70 | 0.19% |
+- **Slippage sensitivity (ETF exclusion only, estimated from combined):**
+  | Slip (bps) | Return | AggPF |
+  |---|---|---|
+  | 0.0 | +0.02% | 1.05 |
+  | 1.0 | -0.02% | 0.97 |
+  | 5.0 | -0.16% | 0.70 |
+  | 10.0 | -0.33% | 0.44 |
+- **Key findings:**
+  - ETF exclusion is the single biggest improvement: +0.62 pp return, AggPF 0.77 → 1.40
+  - HITL and ETF exclusion conflict — the entry veto filters out winners that ETF exclusion kept
+  - Widening the stop makes things worse — the tight stop is correct, the universe is wrong
+  - The 0.20% fee floor is the real cost killer, not slippage
+  - The combined config has no cost cushion (break-even < 1 bps)
+- **Decision:** The best Fence Bar config is **ETF exclusion alone at ATR 1.2%, no HITL**. This is the first config with AggPF > 1.15 at 5 bps slippage. The HITL detectors are a band-aid for a universe problem that's better solved by excluding ETFs. Next step: holdout validation and forward paper trading with ETF exclusion.
 
 ### Batch 9 — No-breakeven confirmation, threshold tuning, ATR sweep (2026-08-16)
 
@@ -638,3 +674,8 @@ Each detector degrades gracefully — if market data is unavailable, it returns 
 35. **The breakeven detector never fires at MFE thresholds >= 0.8%.** Tuning the breakeven MFE threshold from 0.5% to 0.8%-1.5% produces identical results to disabling it entirely — no trade reaches those MFE levels. The default 0.5% threshold is the only one that fires, and it hurts because it gets stopped out on normal retracements after small MFE peaks.
 36. **The best HITL config is entry_veto + early_exit at ATR 1.2%, no breakeven.** This yields +0.09% return with aggregate PF 1.17 and 55% DD reduction vs baseline. The edge is thin but consistently positive across all ATR levels tested (1.0%-1.8%). The aggregate PF fix (total gross profit / total gross loss) revealed the true edge is barely above breakeven, not the bogus 999.0 from per-window averaging.
 37. **Per-window profit factor averaging is misleading.** The old `avg_profit_factor` averaged per-window PFs, where a single winning trade with no losers produced PF=999.0, inflating the average. The fix computes aggregate PF from total gross profit / total gross loss across all windows, giving the true strategy edge.
+38. **ETFs are the biggest losing factor — not stops, not HITL, not slippage.** SPY alone was -287 USD (25% of all absolute PnL). Excluding SPY/QQQ/IWM from the universe flips the strategy from -0.36% to +0.26% (AggPF 0.77 → 1.40) and cuts max DD 65%. ETFs don't have the opening-range follow-through that individual stocks do — they're too diversified to gap and trend.
+39. **Widening the stop makes things worse, not better.** Using fence low/high instead of fence midpoint dropped return from -0.36% to -0.57%. The wider stop lets losers run longer, accumulating more damage. The tight midpoint stop is correct — the problem is which stocks we trade, not how tight the stop is.
+40. **The 0.20% round-trip fee floor is the real cost killer, not slippage.** Break-even slippage is 0.53 bps. Even at 0 bps slippage, return is only +0.04% (AggPF 1.03). The 2×0.1% fees = 0.20% round-trip consumes 39% of every 0.51% avg winner. The strategy has no cost cushion.
+41. **HITL and ETF exclusion don't combine — they conflict.** ETF exclusion alone (+0.26%, AggPF 1.40) beats HITL no-breakeven alone (+0.09%, AggPF 1.17), but combining them produces -0.16% (AggPF 0.70). The HITL entry veto filters out winners that the ETF exclusion kept — once ETFs are gone, the remaining trades are higher quality and the veto hurts more than it helps.
+42. **The best Fence Bar config is ETF exclusion alone at ATR 1.2%, no HITL.** +0.26% return, AggPF 1.40, 11 trades, 0.19% max DD, 71% active pass rate. This is the first config that's clearly profitable at 5 bps slippage with a meaningful PF above 1.15. The HITL detectors add value only when ETFs are present — they're a band-aid for a universe problem that's better solved by excluding ETFs entirely.

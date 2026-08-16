@@ -231,7 +231,11 @@ class FenceBarStrategy:
         entry = float(bar["Close"])
         if not self._anchor_allows(entry, side):
             return None
-        stop = self.fence.midpoint
+        stop_mode = self.params.get("risk", {}).get("stop_mode", "fence_midpoint")
+        if stop_mode == "fence_low_high":
+            stop = self.fence.low if side == "long" else self.fence.high
+        else:
+            stop = self.fence.midpoint
         risk = entry - stop if side == "long" else stop - entry
         if risk <= 0:
             return None

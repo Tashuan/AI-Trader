@@ -1,0 +1,105 @@
+{
+  "params": {
+    "session": {
+      "timezone": "America/New_York",
+      "market_open": "09:30",
+      "fence_end": "09:35",
+      "latest_breakout": "10:30",
+      "force_exit": "15:55"
+    },
+    "fence": {
+      "min_range_pct": 0.35,
+      "max_range_pct": 0.8
+    },
+    "breakout": {
+      "require_body_outside": true,
+      "min_close_distance_pct": 0.0,
+      "max_bars_after_fence": 12
+    },
+    "retest": {
+      "enabled": false,
+      "max_bars_after_breakout": 3,
+      "require_wick_into_fence": true,
+      "require_close_back_outside": true,
+      "allow_breakout_bar_retest": false,
+      "max_retest_depth_pct": 100.0
+    },
+    "anchor": {
+      "enabled": true,
+      "period": 20,
+      "require_trend_alignment": false,
+      "max_distance_pct": 2.0,
+      "extended_action": "reject"
+    },
+    "risk": {
+      "stop_mode": "fence_midpoint",
+      "target_multiple_r": 1.0,
+      "risk_per_trade_pct": 0.5,
+      "max_trades_per_day": 1
+    },
+    "exit": {
+      "mode": "fixed_sl_tp",
+      "trailing_pct": 0.3,
+      "trailing_activation_pct": 0.3,
+      "max_bars": 0
+    },
+    "premarket": {
+      "enabled": false,
+      "interval": "5m",
+      "require_monitor": true,
+      "min_score": 35.0,
+      "use_news": false,
+      "history_period": "3mo"
+    },
+    "vol_filter": {
+      "enabled": true,
+      "mode": "day",
+      "spy_vol_threshold": 1.0,
+      "spy_atr_threshold": 1.2
+    }
+  },
+  "fee_rate": 0.001,
+  "rows": [
+    {
+      "slippage_bps": 0.0,
+      "round_trip_cost_pct": 0.2,
+      "total_return_pct": 0.0423,
+      "total_trades": 16,
+      "avg_profit_factor": 1.0313,
+      "max_drawdown_pct": 0.4991
+    },
+    {
+      "slippage_bps": 1.0,
+      "round_trip_cost_pct": 0.2002,
+      "total_return_pct": -0.0377,
+      "total_trades": 16,
+      "avg_profit_factor": 0.9728,
+      "max_drawdown_pct": 0.5091
+    },
+    {
+      "slippage_bps": 2.0,
+      "round_trip_cost_pct": 0.2004,
+      "total_return_pct": -0.1177,
+      "total_trades": 16,
+      "avg_profit_factor": 0.9171,
+      "max_drawdown_pct": 0.5191
+    },
+    {
+      "slippage_bps": 5.0,
+      "round_trip_cost_pct": 0.201,
+      "total_return_pct": -0.3576,
+      "total_trades": 16,
+      "avg_profit_factor": 0.7655,
+      "max_drawdown_pct": 0.5491
+    },
+    {
+      "slippage_bps": 10.0,
+      "round_trip_cost_pct": 0.202,
+      "total_return_pct": -0.7571,
+      "total_trades": 16,
+      "avg_profit_factor": 0.5543,
+      "max_drawdown_pct": 0.5991
+    }
+  ],
+  "break_even_slippage_bps": 0.52875
+}
