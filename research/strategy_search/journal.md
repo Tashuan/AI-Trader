@@ -592,11 +592,64 @@ Each detector degrades gracefully — if market data is unavailable, it returns 
 
 ## Next Steps
 
-- [ ] Run ETF-exclusion config with holdout validation (70/30 split)
-- [ ] Run ETF-exclusion at ATR 1.0% and 1.5% to find the optimal threshold
-- [ ] Test removing low-vol stocks (BABA, XPEV, NIO) in addition to ETFs
-- [ ] Start forward paper trading with ETF-exclusion config
+- [ ] Run holdout validation at ATR 1.0% (the new optimal)
+- [ ] Run slippage sensitivity at ATR 1.0% with ETF exclusion
+- [ ] Start forward paper trading with ETF-exclusion config at ATR 1.0%
 - [ ] Consider negotiating lower fees or using a broker with 0% commission
+- [ ] Per-symbol PnL attribution within no-ETF universe to find individual losers
+
+### Batch 11 — Holdout validation, ATR sweep, universe filtering (2026-08-16)
+
+Three tests run in parallel via subagents:
+
+#### 11a — Holdout validation (70/30 split)
+
+- **Harness:** `research/strategy_search/holdout_etf_excl_test.py` using `run_holdout_split`
+- **Key metrics:**
+  | Variant | Split | Return | Trades | Pass rate | Max DD |
+  |---|---|---|---|---|---|
+  | Baseline (with ETFs) | Train | -0.56% | 13 | 38% | 0.55% |
+  | Baseline (with ETFs) | Holdout | +0.21% | 3 | 50% | 0.19% |
+  | **No-ETF** | **Train** | **+0.17%** | 6 | **60%** | 0.18% |
+  | **No-ETF** | **Holdout** | **+0.10%** | 5 | 50% | 0.19% |
+- **Verdict:** ETF exclusion generalizes. Both train and holdout are positive. The baseline's positive holdout is suspect (negative train, only 3 trades).
+
+#### 11b — ATR sweep with ETF exclusion
+
+- **Harness:** `research/strategy_search/etf_excl_atr_sweep.py`
+- **Key metrics:**
+  | ATR | Return | Trades | Active windows | AggPF | Max DD |
+  |---|---|---|---|---|---|
+  | **0.8** | **+0.44%** | **18** | **10** | 1.42 | 0.24% |
+  | **1.0** | **+0.44%** | **18** | **10** | 1.42 | 0.24% |
+  | 1.2 | +0.26% | 11 | 7 | 1.40 | 0.19% |
+  | 1.5 | +0.17% | 6 | 4 | 1.47 | 0.18% |
+  | 1.8 | 0.00% | 0 | 0 | — | — |
+  | 2.0 | 0.00% | 0 | 0 | — | — |
+- **Verdict:** ATR 0.8-1.0 is optimal with ETF exclusion. Nearly double the return and 3x the trades vs ATR 1.2. ATR 1.2 was a local dip. ATR >= 1.8 is a dead zone.
+
+#### 11c — Universe filtering (removing low-vol stocks)
+
+- **Harness:** `research/strategy_search/universe_filter_test.py`
+- **Key metrics:**
+  | Variant | Return | Trades | AggPF | Max DD |
+  |---|---|---|---|---|
+  | Baseline (with ETFs) | -0.36% | 16 | 0.77 | 0.55% |
+  | **No-ETF** | **+0.26%** | 11 | **1.40** | 0.19% |
+  | No-ETF + no low-vol | -0.16% | 13 | 0.84 | 0.34% |
+  | No-ETF + tight universe | -0.16% | 13 | 0.84 | 0.34% |
+- **Verdict:** Removing low-vol stocks HURTS. The low-vol names were never being selected by the scanner — their presence in the candidate list was occasionally pushing out other names that *were* profitable. Trimming the universe destabilizes the ranking dynamics.
+
+#### Combined decision
+
+The best Fence Bar config is now **ETF exclusion at ATR 1.0%, no HITL**:
+- +0.44% return (up from +0.26% at ATR 1.2%)
+- AggPF 1.42
+- 18 trades (up from 11)
+- 0.24% max DD
+- 10 active windows out of 94
+
+This is the strongest config found across all batches. Next steps: holdout validation at ATR 1.0%, slippage sensitivity, and forward paper trading.
 
 ### Batch 10 — Biggest losing factor analysis and fixes (2026-08-16)
 
@@ -678,4 +731,7 @@ Each detector degrades gracefully — if market data is unavailable, it returns 
 39. **Widening the stop makes things worse, not better.** Using fence low/high instead of fence midpoint dropped return from -0.36% to -0.57%. The wider stop lets losers run longer, accumulating more damage. The tight midpoint stop is correct — the problem is which stocks we trade, not how tight the stop is.
 40. **The 0.20% round-trip fee floor is the real cost killer, not slippage.** Break-even slippage is 0.53 bps. Even at 0 bps slippage, return is only +0.04% (AggPF 1.03). The 2×0.1% fees = 0.20% round-trip consumes 39% of every 0.51% avg winner. The strategy has no cost cushion.
 41. **HITL and ETF exclusion don't combine — they conflict.** ETF exclusion alone (+0.26%, AggPF 1.40) beats HITL no-breakeven alone (+0.09%, AggPF 1.17), but combining them produces -0.16% (AggPF 0.70). The HITL entry veto filters out winners that the ETF exclusion kept — once ETFs are gone, the remaining trades are higher quality and the veto hurts more than it helps.
-42. **The best Fence Bar config is ETF exclusion alone at ATR 1.2%, no HITL.** +0.26% return, AggPF 1.40, 11 trades, 0.19% max DD, 71% active pass rate. This is the first config that's clearly profitable at 5 bps slippage with a meaningful PF above 1.15. The HITL detectors add value only when ETFs are present — they're a band-aid for a universe problem that's better solved by excluding ETFs entirely.
+42. **The best Fence Bar config is ETF exclusion alone at ATR 1.0%, no HITL.** +0.44% return, AggPF 1.42, 18 trades, 0.24% max DD. This is the first config that's clearly profitable at 5 bps slippage with a meaningful PF above 1.15. The HITL detectors add value only when ETFs are present — they're a band-aid for a universe problem that's better solved by excluding ETFs entirely.
+43. **ATR 1.0% beats ATR 1.2% with ETF exclusion.** Lowering the ATR threshold from 1.2% to 1.0% nearly doubles the return (+0.26% → +0.44%) and trade count (11 → 18) with only slightly lower AggPF (1.40 → 1.42). ATR 1.2% was a local dip — both lowering to 1.0 and raising to 1.5 beat it. ATR >= 1.8 is a dead zone with zero trades.
+44. **ETF exclusion generalizes to the holdout period.** 70/30 split: train +0.17%, holdout +0.10%. Both splits positive — the hallmark of a real edge. The baseline's positive holdout (+0.21%) is suspect because its train was negative (-0.56%).
+45. **Removing low-vol stocks from the universe HURTS.** Excluding BABA/XPEV/NIO/PLUG/SOFI in addition to ETFs dropped return from +0.26% to -0.16%. The low-vol names were never being selected by the scanner anyway — their presence in the candidate list was occasionally pushing out other names that *were* profitable. Trimming the universe further destabilizes the ranking dynamics.

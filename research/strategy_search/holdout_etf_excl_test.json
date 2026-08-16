@@ -1,0 +1,75 @@
+{
+  "baseline": {
+    "train": {
+      "name": "train",
+      "active_windows": 8,
+      "return_pct": -0.5631,
+      "pass_rate": 0.375,
+      "trades": 13,
+      "max_dd": 0.5491
+    },
+    "holdout": {
+      "name": "holdout",
+      "active_windows": 2,
+      "return_pct": 0.2055,
+      "pass_rate": 0.5,
+      "trades": 3,
+      "max_dd": 0.1916
+    }
+  },
+  "no_etf": {
+    "train": {
+      "name": "train",
+      "active_windows": 5,
+      "return_pct": 0.1687,
+      "pass_rate": 0.6,
+      "trades": 6,
+      "max_dd": 0.1779
+    },
+    "holdout": {
+      "name": "holdout",
+      "active_windows": 4,
+      "return_pct": 0.0951,
+      "pass_rate": 0.5,
+      "trades": 5,
+      "max_dd": 0.1916
+    }
+  },
+  "etf_symbols_excluded": [
+    "IWM",
+    "QQQ",
+    "SPY"
+  ],
+  "override": {
+    "retest": {
+      "enabled": false
+    },
+    "fence": {
+      "min_range_pct": 0.35,
+      "max_range_pct": 0.8
+    },
+    "risk": {
+      "stop_mode": "fence_midpoint",
+      "target_multiple_r": 1.0,
+      "risk_per_trade_pct": 0.5,
+      "max_trades_per_day": 1
+    },
+    "exit": {
+      "mode": "fixed_sl_tp",
+      "trailing_pct": 0.3,
+      "trailing_activation_pct": 0.3,
+      "max_bars": 0
+    },
+    "vol_filter": {
+      "enabled": true,
+      "mode": "day",
+      "spy_vol_threshold": 1.0,
+      "spy_atr_threshold": 1.2
+    }
+  },
+  "split_ratio": 0.7,
+  "start": "2024-10-01",
+  "end": "2026-08-11",
+  "slippage_bps": 5.0,
+  "max_symbols": 15
+}
