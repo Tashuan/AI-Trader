@@ -3,7 +3,11 @@
   "display_name": "FenceBarRunner — Opening-Range Fence Bar",
   "schema_name": "fence_bar",
   "parity_status": "live_backtest_matched",
-  "symbols": ["NVDA", "TSLA", "AAPL", "AMD", "META"],
+  "symbols": [
+    "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL",
+    "NFLX", "INTC", "MU", "BA", "DIS", "BABA", "COIN", "MARA", "RIOT",
+    "SOFI", "AAL", "UAL", "F", "GM", "NIO", "XPEV", "PLUG", "DKNG"
+  ],
   "interval": "5m",
   "effective_strategy_params": {
     "session": {
@@ -14,8 +18,8 @@
       "force_exit": "15:55"
     },
     "fence": {
-      "min_range_pct": 0.10,
-      "max_range_pct": 1.50
+      "min_range_pct": 0.35,
+      "max_range_pct": 0.80
     },
     "breakout": {
       "require_body_outside": true,
@@ -39,7 +43,7 @@
     },
     "risk": {
       "stop_mode": "fence_midpoint",
-      "target_multiple_r": 1.0,
+      "target_multiple_r": 2.0,
       "risk_per_trade_pct": 0.50,
       "max_trades_per_day": 1
     },
@@ -53,7 +57,7 @@
       "enabled": true,
       "mode": "day",
       "spy_vol_threshold": 1.0,
-      "spy_atr_threshold": 1.8
+      "spy_atr_threshold": 1.2
     },
     "premarket": {
       "enabled": false,
@@ -68,7 +72,11 @@
       "poll_interval_min": 10,
       "poll_interval_max": 300
     },
-    "watchlist": ["NVDA", "TSLA", "AAPL", "AMD", "META"],
+    "watchlist": [
+      "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL",
+      "NFLX", "INTC", "MU", "BA", "DIS", "BABA", "COIN", "MARA", "RIOT",
+      "SOFI", "AAL", "UAL", "F", "GM", "NIO", "XPEV", "PLUG", "DKNG"
+    ],
     "risk_controls": {
       "paper_only": true,
       "paper_account_budget": 10000.0,
@@ -80,11 +88,11 @@
       "max_position_dollar_cap": null,
       "daily_loss_halt_pct": 3.0,
       "loss_streak_size_cut_pct": 50.0,
-      "max_positions": 5
+      "max_positions": 1
     },
     "profile": "fence_bar",
-    "schema_version": 1
+    "schema_version": 2
   },
   "shared_config": {},
-  "exported_at": "2026-08-15T00:00:00.000000+00:00"
+  "exported_at": "2026-08-16T00:00:00.000000+00:00"
 }

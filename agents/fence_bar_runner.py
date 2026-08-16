@@ -8,15 +8,22 @@ Executes the Fence Bar strategy with zero LLM judgment:
   3. Throughout the day: monitor open positions for SL/TP (server-side auto-close)
   4. 15:55 ET: force-close any remaining positions
 
-The runner uses the proven winning parameters from 22 months of walk-forward
-backtesting:
-  - 1R target (target_multiple_r = 1.0)
-  - ATR 1.8% vol filter (SPY 20-day ATR threshold = 1.8%)
+The runner uses the winning parameters from 12 batches of walk-forward
+backtesting with holdout validation:
+  - 2R target (target_multiple_r = 2.0) — 4.5x return improvement over 1R
+  - ATR 1.2% vol filter (SPY 20-day ATR threshold = 1.2%) — generalizes to holdout
   - No retest (retest.enabled = false)
-  - 5 core symbols: NVDA, TSLA, AAPL, AMD, META
+  - ETF exclusion (SPY/QQQ/IWM removed — biggest single fix found)
+  - 26-symbol universe (individual stocks only, no ETFs)
+  - Fence range 0.35%-0.80% (ceiling is critical guardrail)
   - 5m bars
   - Fixed SL/TP exit (trailing kills the edge)
   - Force exit at 15:55 ET
+  - Max 1 trade per day
+
+Winning config backtest results (Oct 2024 - Aug 2026, 94 windows):
+  - Full period: +1.18% return, AggPF 2.78, 11 trades, 0.23% max DD
+  - Holdout (70/30 split): train +0.80%, holdout +0.38% (both positive)
 """
 
 import json
@@ -60,18 +67,39 @@ STATE_FILE = os.path.join(_AGENTS_DIR, "fence_bar_runner_state.json")
 DEFAULT_POLL_INTERVAL = 30  # seconds
 ET = ZoneInfo("America/New_York")
 
-DEFAULT_SYMBOLS = ["NVDA", "TSLA", "AAPL", "AMD", "META"]
+# 26-symbol universe — individual stocks only, ETFs excluded (SPY/QQQ/IWM)
+# ETFs don't have opening-range follow-through; excluding them was the
+# single biggest improvement found in 12 batches of testing.
+DEFAULT_SYMBOLS = [
+    "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL",
+    "NFLX", "INTC", "MU", "BA", "DIS", "BABA", "COIN", "MARA", "RIOT",
+    "SOFI", "AAL", "UAL", "F", "GM", "NIO", "XPEV", "PLUG", "DKNG",
+]
 CONFIG_FILE = os.path.join(_AGENTS_DIR, "fence_bar_runner_config.json")
 
 # Winning parameter overrides on top of FENCE_BAR_DEFAULTS
+# Found through 12 batches of walk-forward backtesting with holdout validation.
+# See research/strategy_search/STRATEGY_VolFence.md for full documentation.
 WINNING_OVERRIDES: dict[str, Any] = {
     "retest": {"enabled": False},
-    "risk": {"target_multiple_r": 1.0},
+    "fence": {"min_range_pct": 0.35, "max_range_pct": 0.80},
+    "risk": {
+        "stop_mode": "fence_midpoint",
+        "target_multiple_r": 2.0,
+        "risk_per_trade_pct": 0.50,
+        "max_trades_per_day": 1,
+    },
+    "exit": {
+        "mode": "fixed_sl_tp",
+        "trailing_pct": 0.3,
+        "trailing_activation_pct": 0.3,
+        "max_bars": 0,
+    },
     "vol_filter": {
         "enabled": True,
         "mode": "day",
         "spy_vol_threshold": 1.0,
-        "spy_atr_threshold": 1.8,
+        "spy_atr_threshold": 1.2,
     },
 }
 
@@ -513,11 +541,14 @@ def run_fence_signals(token: str, symbols: list[str], params: dict,
                       state: dict, equity: float) -> dict:
     """Run FenceBarStrategy.on_bar() for each symbol and post pending orders.
 
-    Returns updated state.
+    Returns updated state. Enforces max_trades_per_day from params.
     """
     today = et_date_str()
-    # One trade per day per symbol — skip if already signaled today
     signals_posted = state.get("signals_posted", {})
+    max_trades = int(params.get("risk", {}).get("max_trades_per_day", 1))
+
+    # Count how many signals already posted today across all symbols
+    trades_today = sum(1 for s, d in signals_posted.items() if d == today)
 
     # Check vol filter once per day
     if not check_vol_filter(params):
@@ -526,12 +557,22 @@ def run_fence_signals(token: str, symbols: list[str], params: dict,
         post_activity(token, "Vol filter failed — skipping fence bar signals today")
         return state
 
+    if trades_today >= max_trades:
+        logger.info(f"Max trades per day ({max_trades}) already reached — skipping scan")
+        return state
+
     narrative.emit("scan", "phase", "started", priority="action", facts={
         "symbols": symbols, "window": "09:30-10:30",
+        "trades_today": trades_today, "max_trades": max_trades,
     })
 
     placed = 0
     for symbol in symbols:
+        # Stop if we've hit the daily trade limit
+        if trades_today + placed >= max_trades:
+            logger.info(f"Daily trade limit ({max_trades}) reached — stopping scan")
+            break
+
         # Skip if already signaled for this symbol today
         if signals_posted.get(symbol) == today:
             continue
@@ -585,6 +626,7 @@ def run_fence_signals(token: str, symbols: list[str], params: dict,
 
     narrative.emit("scan", "phase", "complete", priority="action", facts={
         "signals_placed": placed, "symbols_checked": len(symbols),
+        "trades_today": trades_today + placed, "max_trades": max_trades,
     })
     if placed == 0:
         post_activity(token, f"Fence bar scan complete — 0 signals from {len(symbols)} symbols")
