@@ -178,7 +178,7 @@ class BacktestReport:
         # Per-symbol stats
         per_symbol: dict[str, dict] = {}
         for sym in symbols:
-            sym_trades = [t for t in trades if t.symbol == sym]
+            sym_trades = [t for t in trades if t.symbol == sym or t.symbol.startswith(sym + " ")]
             sym_wins = [t for t in sym_trades if t.pnl > 0]
             sym_pnl = sum(t.pnl for t in sym_trades)
             per_symbol[sym] = {
