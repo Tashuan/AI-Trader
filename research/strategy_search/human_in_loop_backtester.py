@@ -42,13 +42,21 @@ class HumanInLoopBacktester(FenceBarBacktester):
     def agent_name(self) -> str:
         return "Fence Bar + HITL"
 
-    def __init__(self, *args, hitl_enabled: dict[str, bool] | None = None, **kwargs):
+    def __init__(self, *args, hitl_enabled: dict[str, bool] | None = None, hitl_thresholds: dict[str, float] | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.hitl = hitl_enabled or {
             "vol_override": True,
             "entry_veto": True,
             "breakeven": True,
             "early_exit": True,
+        }
+        self.hitl_thresholds = hitl_thresholds or {
+            "mfe_breakeven_pct": 0.5,
+            "mfe_breakeven_entry_minutes": 10,
+            "mfe_breakeven_stall_minutes": 15,
+            "mfe_early_pct": 0.5,
+            "mfe_early_stall_minutes": 30,
+            "mfe_early_after_time": "11:00",
         }
         self._catalyst_dates: set[str] | None = None
         self._spy_daily: pd.DataFrame | None = None
@@ -197,15 +205,20 @@ class HumanInLoopBacktester(FenceBarBacktester):
 
         # Breakeven stop (Decision 3)
         if self.hitl["breakeven"] and not position["stop_breakeven"]:
-            if mfe_pct >= 0.5 and minutes_since_entry >= 10 and minutes_since_mfe >= 15:
+            if (mfe_pct >= self.hitl_thresholds["mfe_breakeven_pct"]
+                    and minutes_since_entry >= self.hitl_thresholds["mfe_breakeven_entry_minutes"]
+                    and minutes_since_mfe >= self.hitl_thresholds["mfe_breakeven_stall_minutes"]):
                 position["stop_breakeven"] = True
                 position["stop"] = position["entry_price"]
                 logger.debug("HITL: moved stop to breakeven at %s", position["entry_price"])
 
         # Early exit (Decision 4)
         if self.hitl["early_exit"]:
-            if mfe_pct >= 0.5 and minutes_since_mfe >= 30 and self._drifting_back(position, close, side):
-                if timestamp.time() >= time(11, 0):
+            if (mfe_pct >= self.hitl_thresholds["mfe_early_pct"]
+                    and minutes_since_mfe >= self.hitl_thresholds["mfe_early_stall_minutes"]
+                    and self._drifting_back(position, close, side)):
+                after_time = datetime.strptime(self.hitl_thresholds["mfe_early_after_time"], "%H:%M").time()
+                if timestamp.time() >= after_time:
                     logger.debug("HITL: early exit at %s", close)
                     return close, "early_exit"
 

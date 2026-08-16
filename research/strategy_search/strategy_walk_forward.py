@@ -160,6 +160,9 @@ def run_walk_forward(
             fee_rate=fee_rate, provider=provider,
         )
         report = bt.run()
+        gross_profit = sum(t["pnl"] for t in report.trades if t["pnl"] > 0)
+        gross_loss = abs(sum(t["pnl"] for t in report.trades if t["pnl"] <= 0))
+        window_pf = (gross_profit / gross_loss) if gross_loss > 0 else (float("inf") if gross_profit > 0 else 0.0)
         window_results.append({
             "window_id": w["window_id"],
             "test_start": w["test_start"],
@@ -167,6 +170,9 @@ def run_walk_forward(
             "symbols": symbols,
             "return_pct": report.total_return_pct,
             "profit_factor": report.profit_factor,
+            "aggregate_profit_factor": 999.0 if window_pf == float("inf") else round(window_pf, 4),
+            "gross_profit": round(gross_profit, 2),
+            "gross_loss": round(gross_loss, 2),
             "max_drawdown_pct": report.max_drawdown_pct,
             "total_trades": report.total_trades,
             "win_rate": report.win_rate,
@@ -177,7 +183,9 @@ def run_walk_forward(
         })
 
     returns = [r["return_pct"] for r in window_results]
-    pfs = [r["profit_factor"] for r in window_results if r["profit_factor"] > 0]
+    total_gross_profit = sum(r["gross_profit"] for r in window_results)
+    total_gross_loss = sum(r["gross_loss"] for r in window_results)
+    aggregate_pf = (total_gross_profit / total_gross_loss) if total_gross_loss > 0 else (float("inf") if total_gross_profit > 0 else 0.0)
     trades = [r["total_trades"] for r in window_results]
     eligible = [r for r in window_results if r["eligible"]]
     passed = sum(1 for r in eligible if r["passed"])
@@ -202,7 +210,7 @@ def run_walk_forward(
         "active_pass_rate": round(active_passed / len(active), 4) if active else 0,
         "total_return_pct": round(sum(returns), 4) if returns else 0,
         "avg_return_pct": round(sum(returns) / len(returns), 4) if returns else 0,
-        "avg_profit_factor": round(sum(pfs) / len(pfs), 4) if pfs else 0,
+        "avg_profit_factor": 999.0 if aggregate_pf == float("inf") else round(aggregate_pf, 4),
         "total_trades": sum(trades),
         "max_drawdown_pct": round(max(r["max_drawdown_pct"] for r in window_results), 4) if window_results else 0,
         "window_details": window_results,
