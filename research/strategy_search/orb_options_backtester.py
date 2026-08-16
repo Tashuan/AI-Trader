@@ -48,7 +48,7 @@ import pandas as pd
 from data_cache import CachedProvider
 from equity_data_providers import AlpacaProvider
 from backtest_report import BacktestReport, TradeRecord
-from alpaca_options_provider import AlpacaOptionsProvider, OptionContract, build_occ_symbol
+from schwab_options_provider import SchwabOptionsProvider, build_schwab_symbol
 from scalp_alt_signals import (
     fetch_1m_data, fetch_prev_closes, SLIPPAGE_BPS,
     DEFAULT_SYMBOLS, DEFAULT_START, DEFAULT_END,
@@ -156,40 +156,52 @@ class ORBSignalGenerator:
 
 # ── Option bar cache ───────────────────────────────────────────────────
 class OptionBarCache:
-    """Caches option bars per contract, indexed by timestamp."""
+    """Caches option bars per contract, indexed by timestamp.
 
-    def __init__(self, provider: AlpacaOptionsProvider):
+    Uses Schwab options provider which returns DataFrames with UTC DatetimeIndex.
+    """
+
+    def __init__(self, provider: SchwabOptionsProvider):
         self.provider = provider
-        self._cache: dict[str, dict[str, dict]] = {}  # symbol -> {ts_str -> bar}
+        self._cache: dict[str, pd.DataFrame] = {}  # schwab_symbol -> DataFrame
 
-    def get_bars(self, option_symbol: str, start: str, end: str) -> dict[str, dict]:
-        """Get option bars indexed by timestamp string."""
+    def get_bars(self, option_symbol: str, start: str, end: str) -> pd.DataFrame | None:
+        """Get option bars as a DataFrame (cached)."""
         if option_symbol in self._cache:
             return self._cache[option_symbol]
-        bars = self.provider.get_bars(option_symbol, start, end, "1Min", 10000)
-        indexed = {}
-        for b in bars:
-            # Convert UTC timestamp to ET-aware key for matching
-            ts = pd.to_datetime(b["t"], utc=True)
-            indexed[ts] = b
-        self._cache[option_symbol] = indexed
-        return indexed
+        df = self.provider.get_bars(option_symbol, start, end, "minute", 1)
+        if df is not None and not df.empty:
+            self._cache[option_symbol] = df
+        else:
+            self._cache[option_symbol] = None
+        return self._cache[option_symbol]
 
     def get_price_at(self, option_symbol: str, target_ts: pd.Timestamp,
-                     bars_indexed: dict = None) -> float | None:
-        """Get option close price at or nearest before target timestamp."""
-        if bars_indexed is None:
-            bars_indexed = self.get_bars(option_symbol, "", "")
-        # Try exact match first
-        if target_ts in bars_indexed:
-            return float(bars_indexed[target_ts]["c"])
-        # Find nearest bar before target_ts
-        before = [ts for ts in bars_indexed if ts <= target_ts]
-        if before:
-            nearest = max(before)
-            return float(bars_indexed[nearest]["c"])
-        # No bar before this time — option may not have traded yet
-        return None
+                     bars_df: pd.DataFrame = None) -> float | None:
+        """Get option close price at or nearest before target timestamp.
+
+        Handles timezone mismatch: equity bars are tz-naive (ET times),
+        Schwab option bars are tz-aware UTC. We convert the target timestamp
+        to UTC before comparing.
+        """
+        if bars_df is None:
+            bars_df = self.get_bars(option_symbol, "", "")
+        if bars_df is None or bars_df.empty:
+            return None
+        idx = bars_df.index
+        # Normalize: option bars are UTC, equity timestamps are naive ET
+        if idx.tz is not None:
+            if target_ts.tz is None:
+                # target_ts is naive ET — localize to ET then convert to UTC
+                target_ts = target_ts.tz_localize("US/Eastern").tz_convert("UTC")
+        else:
+            if target_ts.tz is not None:
+                target_ts = target_ts.tz_localize(None)
+        # Find the nearest bar at or before target_ts
+        mask = idx <= target_ts
+        if not mask.any():
+            return None
+        return float(bars_df.loc[mask].iloc[-1]["Close"])
 
 
 # ── Backtest runner ────────────────────────────────────────────────────
@@ -197,7 +209,7 @@ def run_options_backtest(
     symbols: list[str],
     frames: dict[str, pd.DataFrame],
     prev_closes: dict,
-    options_provider: AlpacaOptionsProvider,
+    options_provider: SchwabOptionsProvider,
     capital: float,
     slippage_bps: float,
     option_slippage_bps: float,
@@ -215,7 +227,7 @@ def run_options_backtest(
         symbols: List of underlying tickers
         frames: 1m equity bars per symbol
         prev_closes: Previous day closes (unused for ORB but kept for compat)
-        options_provider: AlpacaOptionsProvider instance
+        options_provider: SchwabOptionsProvider instance
         capital: Starting capital
         slippage_bps: Equity slippage (for signal generation reference)
         option_slippage_bps: Option slippage (wider bid-ask)
@@ -401,27 +413,42 @@ def run_options_backtest(
                 strike_step = STRIKE_STEPS.get(sym, 2.5)
 
                 # Find nearest expiration within DTE range
-                # We construct the date directly
                 expiry = _find_expiration(date, dte_min, dte_max)
                 if expiry is None:
                     skipped_no_option_data += 1
                     continue
 
-                contract = options_provider.get_atm_contract(
-                    sym, expiry, spot, option_type,
-                    strike_offset=strike_offset, strike_step=strike_step,
-                )
-                if contract is None:
+                # Construct Schwab option symbol directly (no API call needed)
+                atm_strike = round(spot / strike_step) * strike_step
+                target_strike = atm_strike + strike_offset * strike_step
+
+                # Try the expiration, with fallback to next week if no data
+                option_bars = None
+                option_symbol = None
+                for attempt in range(3):
+                    test_expiry = _find_expiration(
+                        date, dte_min + attempt * 7, dte_max + attempt * 7
+                    )
+                    if test_expiry is None:
+                        break
+                    test_sym = build_schwab_symbol(
+                        sym, test_expiry, option_type, target_strike
+                    )
+                    test_bars = option_bar_cache.get_bars(
+                        test_sym, start_date, end_date
+                    )
+                    if test_bars is not None and not test_bars.empty:
+                        option_symbol = test_sym
+                        option_bars = test_bars
+                        expiry = test_expiry
+                        break
+
+                if option_bars is None or option_symbol is None:
                     skipped_no_option_data += 1
                     continue
-
-                # Fetch option bars for this contract
-                option_bars = option_bar_cache.get_bars(
-                    contract.symbol, start_date, end_date
-                )
                 # Get option entry price
                 option_entry = option_bar_cache.get_price_at(
-                    contract.symbol, ts, option_bars
+                    option_symbol, ts, option_bars
                 )
                 if option_entry is None or option_entry <= 0:
                     skipped_no_option_data += 1
@@ -441,11 +468,11 @@ def run_options_backtest(
 
                 positions[sym] = OptionPosition(
                     symbol=sym,
-                    option_symbol=contract.symbol,
+                    option_symbol=option_symbol,
                     side=signal["side"],
                     option_type=option_type,
-                    strike=contract.strike,
-                    expiration=contract.expiration,
+                    strike=target_strike,
+                    expiration=expiry,
                     entry_price=entry_px,
                     entry_ts=str(ts),
                     qty=qty_contracts,
@@ -501,6 +528,9 @@ def _find_expiration(date, dte_min: int, dte_max: int) -> str | None:
 
     Options typically expire on Fridays. We find the nearest Friday
     that's >= dte_min days away and <= dte_max days away.
+
+    Note: dte_min should be >= 2 to avoid expiration-day contracts
+    which may have no historical data after expiry.
     """
     d = datetime.fromisoformat(str(date))
     # Find next Friday (0=Monday, 4=Friday)
@@ -529,7 +559,7 @@ def main():
     parser.add_argument("--zero-cost", action="store_true")
     parser.add_argument("--strike-offset", type=int, default=0,
                         help="0=ATM, 1=OTM, -1=ITM")
-    parser.add_argument("--dte-min", type=int, default=1)
+    parser.add_argument("--dte-min", type=int, default=2)
     parser.add_argument("--dte-max", type=int, default=14)
     parser.add_argument("--json", default="")
     args = parser.parse_args()
@@ -554,9 +584,9 @@ def main():
         print("ERROR: Alpaca not configured")
         sys.exit(1)
     equity_provider = CachedProvider(alpaca)
-    options_provider = AlpacaOptionsProvider()
+    options_provider = SchwabOptionsProvider()
     if not options_provider.available:
-        print("ERROR: Alpaca options not configured")
+        print("ERROR: Schwab options not configured. Run schwab_oauth_flow.py first.")
         sys.exit(1)
 
     # Fetch equity 1m bars
@@ -619,9 +649,14 @@ def main():
     if result.get("trades"):
         print(f"\n  --- Sample Trades (first 10) ---")
         for t in result["trades"][:10]:
-            print(f"    {t.symbol:12s} {t.side:5s} "
-                  f"pnl=${t.pnl:+8.2f} ({t.pnl_pct:+6.2f}%) "
-                  f"hold={t.hold_hours:.1f}h reason={t.reason}")
+            if isinstance(t, dict):
+                print(f"    {t.get('symbol',''):12s} {t.get('side',''):5s} "
+                      f"pnl=${t.get('pnl',0):+8.2f} ({t.get('pnl_pct',0):+6.2f}%) "
+                      f"hold={t.get('hold_hours',0):.1f}h reason={t.get('reason','')}")
+            else:
+                print(f"    {t.symbol:12s} {t.side:5s} "
+                      f"pnl=${t.pnl:+8.2f} ({t.pnl_pct:+6.2f}%) "
+                      f"hold={t.hold_hours:.1f}h reason={t.reason}")
 
     if args.json:
         with open(args.json, "w") as f:
