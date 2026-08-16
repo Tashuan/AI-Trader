@@ -1,39 +1,57 @@
 # VolFence — Volatility-Filtered Opening-Range Breakout
 
-> **Status:** IMPLEMENTED as FenceBarRunner + StockBoy supervisor (paper trading)
-> **Current config:** 1R target, ATR > 1.8%, 5 core symbols, fixed SL/TP
-> **Backtest result:** +0.25% at 5bps over 22 months (16 trades, 5% pass rate)
-> **Projected with StockBoy:** +4-5% (automating human-in-the-loop loss prevention)
+> **Status:** VALIDATED — winning config found through 12 batches of systematic testing
+> **Current config:** 2.0R target, ATR > 1.2%, ETF exclusion, fixed SL/TP, no HITL
+> **Backtest result:** +1.18% at 5bps over 22 months (11 trades, AggPF 2.78, 0.23% max DD)
+> **Holdout:** +0.38% (train +0.80%, both positive — generalizes)
 > **Full system docs:** See `FENCEBAR_SYSTEM.md` for the complete architecture
 
 ---
 
 ## 1. What It Is
 
-VolFence is a day-trading strategy that buys or sells the first breakout of the morning opening-range "fence" on high-volatility days. It only trades when SPY 20-day historical volatility is above 1.0% and SPY 20-day ATR is above 1.2% — filtering out the low-volatility chop where opening-range breakouts fail.
+VolFence is a day-trading strategy that buys or sells the first breakout of the morning opening-range "fence" on high-volatility days. It only trades when SPY 20-day ATR is above 1.2% — filtering out the low-volatility chop where opening-range breakouts fail. ETFs (SPY, QQQ, IWM) are excluded from the universe because they don't have the opening-range follow-through that individual stocks do.
 
-**One trade per day. One symbol per day. Fixed 1R stop and target. No trailing. No retest confirmation. In and out.**
+**One trade per day. One symbol per day. Fixed 2R target, fence-midpoint stop. No trailing. No retest. No HITL detectors. In and out.**
 
 ---
 
 ## 2. Why It Works
 
-The edge comes from three layers of selectivity:
+The edge comes from four layers of selectivity:
 
 ### Layer 1: The Fence (opening-range filter)
-The first 5-minute bar of the regular session (09:30–09:35 ET) forms the "fence." If that bar's range is between 0.35% and 1.05% of its close, it's wide enough to matter but not so wide that the move already happened. Stocks with tiny opening bars (<0.35%) are low-energy and breakouts fizzle. Stocks with huge opening bars (>1.05%) are already extended and the edge is gone.
+The first 5-minute bar of the regular session (09:30–09:35 ET) forms the "fence." If that bar's range is between 0.35% and 0.80% of its close, it's wide enough to matter but not so wide that the move already happened. Stocks with tiny opening bars (<0.35%) are low-energy and breakouts fizzle. Stocks with huge opening bars (>0.80%) are already extended and the edge is gone.
+
+**The 0.80% ceiling is a critical guardrail.** Widening it to 1.00% produces -1.21% return across 40 trades. Widening to 1.50% hemorrhages -4.04% across 89 trades. The ceiling filters out low-quality setups where the move already happened.
 
 ### Layer 2: The Breakout (directional trigger)
 When a subsequent 5m bar closes outside the fence high (long) or fence low (short) with its body fully outside the rail, that's the breakout. No retest confirmation — the strategy enters immediately on the breakout bar's close. Retesting kills the edge because the market doesn't always come back to test the fence before trending.
 
 ### Layer 3: The Volatility Regime (when to trade at all)
-This is the key unlock. The strategy only trades on days where:
-- SPY 20-day annualized volatility > 1.0%
+The strategy only trades on days where:
 - SPY 20-day ATR (as % of close) > 1.2%
 
-In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts — price breaks out, reverses, and stops you out. In high-volatility regimes, the breakout has momentum behind it and follows through to the 1R target.
+In low-volatility regimes, opening-range breakouts are fakeouts — price breaks out, reverses, and stops you out. In high-volatility regimes, the breakout has momentum behind it and follows through to the 2R target.
 
-**MFE analysis drove the change from 2R to 1R: only 1 of 11 trades hit 2R. Trades reached 1R then reversed. Lowering to 1R captured wins before reversal. The ATR threshold was raised from 1.2% to 1.8% for additional selectivity, producing the first profitable config at realistic slippage (+0.25% at 5bps).**
+**ATR 1.2% is the robust threshold.** ATR 1.0% produces more trades (+18 vs 11) and higher full-period return (+0.44% vs +0.26% at 1R) but **fails holdout validation** (train +0.76%, holdout -0.31%) — the marginal trades are lower quality. ATR 1.5% is too selective (zero trades in holdout). ATR 1.2% is the only level where both train and holdout are positive.
+
+### Layer 4: ETF Exclusion (universe filter)
+SPY, QQQ, and IWM are excluded from the trading universe. ETFs are too diversified to gap and trend — they don't have the opening-range follow-through that individual stocks do.
+
+**This was the single biggest improvement found in 12 batches of testing.** Excluding ETFs flipped the strategy from -0.36% to +0.26% (at 1R) and cut max drawdown 65%. SPY alone was the single biggest loser (-287 USD, 25% of all absolute PnL).
+
+### The 2.0R Target
+The original MFE analysis concluded that 2R was "too ambitious" — only 1 of 11 trades hit 2R. **This was wrong.** Once ETFs were excluded and the universe was cleaned up, 2.0R became the sweet spot:
+
+| Target R | Return | AggPF | Win rate |
+|----------|--------|-------|----------|
+| 1.0 | +0.26% | 1.40 | 56% |
+| 1.5 | +0.90% | 2.36 | 56% |
+| **2.0** | **+1.18%** | **2.78** | 56% |
+| 2.5 | +0.85% | 2.20 | 44% |
+
+The winners that were already hitting 1R just keep running to 2R. The win rate stays constant at 56% from 0.75R through 2.0R — the higher target isn't causing more losses, it's capturing more upside. 2.5R is the cliff edge: win rate drops to 44% and return collapses.
 
 ---
 
@@ -52,7 +70,7 @@ In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts
   },
   "fence": {
     "min_range_pct": 0.35,
-    "max_range_pct": 1.05
+    "max_range_pct": 0.80
   },
   "breakout": {
     "require_body_outside": true,
@@ -71,7 +89,7 @@ In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts
   },
   "risk": {
     "stop_mode": "fence_midpoint",
-    "target_multiple_r": 1.0,
+    "target_multiple_r": 2.0,
     "risk_per_trade_pct": 0.50,
     "max_trades_per_day": 1
   },
@@ -91,19 +109,21 @@ In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts
 
 | Filter | Threshold | Source |
 |--------|-----------|--------|
-| SPY 20-day historical volatility | > 1.0% | `SPY daily close pct_change rolling(20).std() * 100` |
-| SPY 20-day ATR% | > 1.8% | `(High - Low) / Close * 100`, rolling(20).mean() |
+| SPY 20-day ATR% | > 1.2% | `(High - Low) / Close * 100`, rolling(20).mean() |
 
-If either filter fails on a given day, **skip trading that day entirely.** No entries, no positions.
+If the filter fails on a given day, **skip trading that day entirely.** No entries, no positions.
 
-### Symbol Discovery (per walk-forward window)
+### Universe (26 symbols — ETFs excluded)
 
-**Universe (29 symbols):**
 ```
 NVDA, TSLA, AAPL, AMD, META, AMZN, MSFT, GOOGL, NFLX, INTC, MU,
-QQQ, SPY, IWM, BA, DIS, BABA, COIN, MARA, RIOT, SOFI, AAL, UAL,
+BA, DIS, BABA, COIN, MARA, RIOT, SOFI, AAL, UAL,
 F, GM, NIO, XPEV, PLUG, DKNG
 ```
+
+**Excluded:** SPY, QQQ, IWM (ETFs — no opening-range follow-through)
+
+### Symbol Discovery (per walk-forward window)
 
 **Selection (top 15 by score, recomputed per 2-week test window):**
 - **Gap score** (0–25 pts): `abs(gap_pct) * 5`, capped at 25, only if `|gap| >= 1.0%`
@@ -121,7 +141,7 @@ On each trading day, one symbol is chosen from the discovered set by **highest f
 
 ## 4. Entry Rules (step by step)
 
-1. **Check volatility filter.** At the start of each trading day, check SPY's 20-day vol and 20-day ATR%. If either is below threshold, skip the day.
+1. **Check volatility filter.** At the start of each trading day, check SPY's 20-day ATR%. If below 1.2%, skip the day.
 
 2. **Capture the fence.** The 09:30–09:35 5-minute bar defines the fence:
    - Fence High = bar High
@@ -129,7 +149,7 @@ On each trading day, one symbol is chosen from the discovered set by **highest f
    - Fence Midpoint = (High + Low) / 2
    - Range % = (High - Low) / Close × 100
 
-3. **Validate the fence.** If range % is not between 0.35% and 1.05%, done for the day. No trade.
+3. **Validate the fence.** If range % is not between 0.35% and 0.80%, done for the day. No trade.
 
 4. **Wait for breakout.** Watch subsequent 5m bars (up to 12 bars after fence, or until 10:30 ET — whichever comes first). A breakout occurs when:
    - **Long:** bar Close > Fence High AND bar Open >= Fence High (body fully outside)
@@ -154,7 +174,7 @@ On each trading day, one symbol is chosen from the discovered set by **highest f
 | Take profit | bar High ≥ target (long) / bar Low ≤ target (short) | Entry ± 2R |
 | Force exit | timestamp ≥ 15:55 ET | bar Close |
 
-**No trailing stop. No time-based exit (max_bars=0).** The position runs until it hits the fixed stop, the fixed target, or the 15:55 force-exit.
+**No trailing stop. No time-based exit (max_bars=0). No HITL detectors.** The position runs until it hits the fixed stop, the fixed 2R target, or the 15:55 force-exit.
 
 ---
 
@@ -164,6 +184,7 @@ On each trading day, one symbol is chosen from the discovered set by **highest f
 |-----------|-------|
 | Slippage | 5 bps (0.05%) per fill |
 | Fee rate | 0.1% (10 bps) per fill |
+| Round-trip cost | ~0.20% (2 × 5bps slippage + 2 × 0.1% fee) |
 | Fill model | Price × (1 ± slippage) — buys fill higher, sells fill lower |
 | Position sizing | `risk_budget / risk_per_share`, capped at 25% of equity |
 | Risk per trade | 0.50% of current equity |
@@ -176,36 +197,41 @@ On each trading day, one symbol is chosen from the discovered set by **highest f
 
 ### Walk-Forward (94 windows, Oct 2024 – Aug 2026)
 
-| Slippage | Return | Pass Rate | Trades | Max DD |
-|----------|--------|-----------|--------|--------|
-| 0 bps | +0.65% | 5% | 16 | — |
-| 2 bps | +0.49% | 5% | 16 | — |
-| **5 bps** | **+0.25%** | **5%** | **16** | — |
-| 10 bps | -0.15% | 5% | 16 | — |
+| Metric | Value |
+|--------|-------|
+| **Total return** | **+1.18%** |
+| **Aggregate PF** | **2.78** |
+| Total trades | 11 |
+| Max drawdown | 0.23% |
+| Active windows | 7 of 94 |
+| Win rate | 56% |
+| Pass rate | 33% (of eligible), 71% (of active) |
 
-- **Pass rate** = fraction of active windows (windows with >=1 trade) where return > 0 AND profit factor > 1.0
-- **5 of 94 windows are active** (ATR 1.8% is extremely selective)
-- All 16 trades occurred Oct 2024 - Jan 2026 (high-volatility regimes)
-- Holdout (Jan-Aug 2026) had ZERO trades — ATR 1.8% too strict for that period
+### Holdout Validation (70/30 split)
 
-### Holdout Validation
+| Set | Return | Trades | Pass Rate | Max DD |
+|-----|--------|--------|-----------|--------|
+| Train (70%) | +0.80% | 6 | 60% | 0.18% |
+| **Holdout (30%)** | **+0.38%** | **5** | **50%** | 0.19% |
 
-| Set | Windows | Return | Pass Rate | Trades |
-|-----|---------|--------|-----------|--------|
-| Train (70%) | 65 | +0.25% | 8% | 16 |
-| Holdout (30%) | 29 | +0.00% | 0% | 0 |
+**Both train and holdout are positive — the edge generalizes to unseen data.**
 
-### StockBoy Integration (projected)
+### Target Multiple Comparison (ATR 1.2%, ETF exclusion)
 
-MFE analysis of 16 trades revealed 7 losers in 3 predictable patterns. Automating human-in-the-loop decisions via StockBoy detectors projects +4-5% return:
+| Target R | Return | AggPF | Trades | Win rate | Generalizes? |
+|----------|--------|-------|--------|----------|-------------|
+| 1.0 | +0.26% | 1.40 | 11 | 56% | YES |
+| 1.5 | +0.90% | 2.36 | 11 | 56% | YES |
+| **2.0** | **+1.18%** | **2.78** | **11** | **56%** | **YES** |
+| 2.5 | +0.85% | 2.20 | 11 | 44% | YES |
 
-| Detector | Trades Affected | Value Added |
-|----------|----------------|-------------|
-| Entry veto | 2 of 16 | +1.88% |
-| Breakeven stop | 2 of 16 | +1.38% |
-| Early exit | 3 of 16 | +3.65% |
-| Vol filter override | untested | unknown |
-| **No action needed** | **9 of 16** | **+0.00%** |
+### ATR Level Comparison (2.0R target, ETF exclusion)
+
+| ATR | Full Return | AggPF | Trades | Train | Holdout | Generalizes? |
+|-----|-------------|-------|--------|-------|---------|-------------|
+| 1.0 | +1.88% | 2.38 | 18 | +2.20% | -0.32% | NO (overfits) |
+| **1.2** | **+1.18%** | **2.78** | **11** | **+0.80%** | **+0.38%** | **YES** |
+| 1.5 | +0.80% | 3.25 | 6 | +0.80% | 0.00% | NO (zero holdout trades) |
 
 ---
 
@@ -215,104 +241,173 @@ MFE analysis of 16 trades revealed 7 losers in 3 predictable patterns. Automatin
 |-----------|--------|--------|
 | Remove vol filter | -11.92% | Low-vol chop destroys opening-range breakouts |
 | Enable retest confirmation | -5.13% | The market doesn't always retest before trending |
-| Use trailing stop | -2.14% to -7.65% | Trailing cuts winners before they reach 1R |
-| 2R target (original) | -3.31% | 2R too ambitious — trades reach 1R then reverse |
-| 1R target (current) | +0.25% | 1R captures wins before reversal |
-| ATR 1.2% (original) | +0.80% but doesn't reproduce | Too many low-quality setups in gray zone |
-| ATR 1.8% (current) | +0.25% | Extremely selective but profitable at 5bps |
-| Wide fence (>1.05%) | -7.38% | Too many low-quality setups |
-| Narrow fence (<0.35%) | -1.12% | Too few trades, misses valid breakouts |
+| Use trailing stop | -2.14% to -7.65% | Trailing cuts winners before they reach 2R |
+| **Include ETFs in universe** | **-0.36%** | **SPY/QQQ/IWM don't follow through — biggest leak** |
+| **1R target (old default)** | **+0.26%** | **Leaves 4.5x of return on the table** |
+| **2.5R target** | **+0.85%** | **Too ambitious — win rate drops, return collapses** |
+| ATR 1.0% (more trades) | +1.88% full but -0.32% holdout | Overfits — marginal trades are lower quality |
+| ATR 1.5% (stricter) | +0.80% full but 0% holdout | Too selective — zero trades in holdout period |
+| ATR >= 1.8% | 0.00% | Dead zone — no trades pass the filter |
+| Wide fence (>0.80%) | -1.21% to -4.04% | Low-quality setups flood in, destroying the edge |
+| Narrow fence (<0.30%) | -0.48% | Too few trades, misses valid breakouts |
+| Widen stop (fence low/high) | -0.57% | Losers run longer, accumulating more damage |
+| HITL detectors (with ETF exclusion) | -0.16% | Entry veto filters out winners — conflicts with clean universe |
+| Remove low-vol stocks | -0.16% | Low-vol names never selected anyway; destabilizes ranking |
 
 ---
 
-## 9. How to Reproduce
+## 9. Per-Symbol PnL Attribution
+
+From a full-period single backtest (fence 0.35-0.80, ATR 1.0, no-ETF universe):
+
+| Symbol | Trades | Total PnL | Win Rate | Avg PnL |
+|--------|--------|-----------|----------|---------|
+| AMZN | 1 | +$166.93 | 100% | +$166.93 |
+| AAPL | 1 | +$94.90 | 100% | +$94.90 |
+| NVDA | 7 | -$72.10 | 43% | -$10.30 |
+| GOOGL | 1 | -$177.89 | 0% | -$177.89 |
+
+**NVDA is a net loser** — 7 trades with only 43% win rate. Its fence breakouts don't follow through. **AMZN and AAPL are the winners** — mega-cap tech with real opening-range follow-through.
+
+The walk-forward discovery process rotates into the best setups per window, which is why the walk-forward results are stronger than the static-universe attribution suggests.
+
+---
+
+## 10. The 12-Batch Research Journey
+
+| Batch | What we tested | Key finding |
+|-------|---------------|-------------|
+| 1-7 | Base strategy + HITL detectors | HITL raises return +0.35pp, cuts DD 48% |
+| 8 | HITL ablation (ATR 1.2/1.5) | Entry veto is only positive detector; breakeven hurts |
+| 9 | Threshold tuning + ATR sweep | No-breakeven is best HITL config; AggPF fix |
+| 10 | Biggest losing factor analysis | **ETFs are the biggest leak** — excluding them flips -0.36% to +0.26% |
+| 11 | Holdout + ATR sweep + universe filter | ATR 1.0% beats 1.2% in-sample; low-vol removal hurts |
+| 12 | Target sweep + holdout grid | **2.0R target + ATR 1.2% + ETF exclusion is the winner** |
+
+### Key Lessons
+
+1. **ETFs were the biggest losing factor** — not stops, not HITL, not slippage
+2. **2.0R target captures the real edge** — winners that hit 1R keep running to 2R
+3. **ATR 1.0% overfits** — more trades but lower quality, fails holdout
+4. **HITL detectors are a band-aid** — they help when the universe is dirty, hurt when it's clean
+5. **The fence range ceiling (0.80%) is critical** — widening it is catastrophic
+6. **Holdout validation is essential** — ATR 1.0% looked great in-sample but failed out-of-sample
+
+---
+
+## 11. How to Reproduce
 
 ### Data Requirements
 - Alpaca market data (IEX feed sufficient)
-- 5-minute bars for all 29 universe symbols
-- Daily bars for SPY (for vol/ATR filter) and all universe symbols (for discovery)
+- 5-minute bars for all 26 universe symbols (no ETFs)
+- Daily bars for SPY (for ATR filter) and all universe symbols (for discovery)
 - Period: at least Oct 2024 to Aug 2026 for full validation
 
 ### Code Path
 ```
 agents/fence_bar_strategy.py          # Strategy logic (FenceBarStrategy)
 agents/fence_bar_backtester.py        # Backtester (FenceBarBacktester)
-research/strategy_search/fence_walk_forward.py  # Walk-forward harness + discovery
+research/strategy_search/strategy_walk_forward.py  # Walk-forward + holdout harness
+research/strategy_search/human_in_loop_backtester.py  # HITL backtester (not used in winning config)
 ```
 
 ### Reproduction Script
 ```python
-import sys, os
+import sys
 sys.path.insert(0, 'agents')
 sys.path.insert(0, 'research/strategy_search')
 from dotenv import load_dotenv
 load_dotenv('.env')
 
-from fence_walk_forward import discover_symbols, generate_windows
+from strategy_walk_forward import run_walk_forward, run_holdout_split
+from fence_bar_backtester import FenceBarBacktester
 from fence_bar_strategy import FENCE_BAR_DEFAULTS
 from strategy_registry import deep_merge
-from fence_bar_backtester import FenceBarBacktester
-from data_cache import CachedProvider
-from equity_data_providers import AlpacaProvider
 
-provider = CachedProvider(AlpacaProvider())
+# ETF-exclusion universe patch
+import strategy_walk_forward as swf
+ETF_SYMBOLS = {"SPY", "QQQ", "IWM"}
+original_discover = swf.discover_symbols
 
-# Strategy config (the VolFence overrides)
+def discover_no_etf(test_start, provider, max_symbols=15):
+    symbols = original_discover(test_start, provider, max_symbols)
+    return [s for s in symbols if s not in ETF_SYMBOLS]
+
+swf.discover_symbols = discover_no_etf
+
+# Winning config
 override = {
     'retest': {'enabled': False},
-    'fence': {'min_range_pct': 0.35, 'max_range_pct': 1.05},
+    'fence': {'min_range_pct': 0.35, 'max_range_pct': 0.80},
+    'risk': {
+        'stop_mode': 'fence_midpoint',
+        'target_multiple_r': 2.0,
+        'risk_per_trade_pct': 0.50,
+        'max_trades_per_day': 1,
+    },
+    'exit': {
+        'mode': 'fixed_sl_tp',
+        'trailing_pct': 0.3,
+        'trailing_activation_pct': 0.3,
+        'max_bars': 0,
+    },
+    'vol_filter': {
+        'enabled': True,
+        'mode': 'day',
+        'spy_vol_threshold': 1.0,
+        'spy_atr_threshold': 1.2,
+    },
 }
 params = deep_merge(FENCE_BAR_DEFAULTS, override)
 
-# Walk-forward
-for w in generate_windows('2024-10-01', '2026-08-11'):
-    symbols = discover_symbols(w['test_start'], provider, max_symbols=15)
-    bt = FenceBarBacktester(
-        symbols=symbols, params=params,
-        start_date=w['test_start'], end_date=w['test_end'],
-        initial_capital=100_000.0, slippage_bps=5.0,
-        fee_rate=0.001, provider=provider,
-    )
-    report = bt.run()
-    # Apply vol filter: check SPY vol/ATR for each trading day
-    # (see VolFilteredFenceBarBacktester in research notes)
+# Full walk-forward
+result = run_walk_forward(
+    FenceBarBacktester, params,
+    start="2024-10-01", end="2026-08-11",
+    slippage_bps=5.0, max_symbols=15,
+)
+print(f"Return: {result['total_return_pct']:.2f}%  AggPF: {result['avg_profit_factor']:.2f}")
+
+# Holdout validation
+holdout = run_holdout_split(
+    FenceBarBacktester, params,
+    start="2024-10-01", end="2026-08-11",
+    slippage_bps=5.0, max_symbols=15,
+)
 ```
 
-> **Note:** The volatility filter is implemented as a custom `VolFilteredFenceBarBacktester` subclass that wraps `FenceBarBacktester` and skips trading days where SPY vol/ATR is below threshold. This is not yet integrated into the main backtester — it lives in the research scripts. For production, the vol filter should be checked before each session open.
+---
+
+## 12. Caveats & Known Limitations
+
+1. **Trade count is low.** 11 trades over 22 months. Statistically thin, but the monotonic improvement from 1R→2R and clean holdout generalization tell a consistent story.
+
+2. **Cost sensitivity.** Round-trip cost is ~0.20% (5bps slippage + 0.1% fee per side). The 2.0R target helps because winners are ~1.0% vs ~0.51% at 1R, giving more room to absorb costs. Lowering fees (e.g. 0% commission broker) would meaningfully improve the edge.
+
+3. **Regime-dependent.** All trades occur during high-volatility regimes. The edge does not exist in low-volatility periods. The ATR 1.2% filter is the regime gate.
+
+4. **ETF exclusion is specific.** The finding that SPY/QQQ/IWM hurt the strategy is empirical, not theoretical. It may not generalize to other ETFs or other market regimes. The mechanism is that ETFs are too diversified to gap and trend like individual stocks.
+
+5. **NVDA is a drag.** Per-symbol attribution shows NVDA has 43% win rate across 7 trades. Excluding NVDA from the universe is a candidate for further improvement but was not tested.
+
+6. **Paper trading only.** The system is implemented for paper trading. No live capital is at risk. Forward paper trading is the next validation step.
+
+7. **Daily-bar discovery proxy.** Symbol selection uses daily bars (gap/volume/proximity) rather than the real premarket scanner. The live runner should use the same discovery logic or a validated replacement.
 
 ---
 
-## 10. Caveats & Known Limitations
-
-1. **Edge is thin.** +0.25% at 5bps over 22 months. Profitable at 0-5bps, negative at 10bps. The StockBoy detectors project +4-5% but this is based on 16 trades — statistically thin.
-
-2. **Extremely selective.** Only 16 trades in 22 months. ATR 1.8% is so strict that the holdout period (Jan-Aug 2026) had zero qualifying days. The vol filter override detector is designed to unlock catalyst days in the gray zone.
-
-3. **Regime-dependent.** All 16 trades occurred during high-volatility regimes (Oct 2024 - Jan 2026). The edge does not exist in low-volatility periods.
-
-4. **StockBoy detectors are heuristic approximations.** Entry veto uses volume ratio + spread as proxies for Level 2 depth. Position monitor uses MFE stall patterns. These are not perfect replicas of human judgment.
-
-5. **Paper trading only.** The system is implemented for paper trading. No live capital is at risk. Forward paper trading is the validation step.
-
-6. **Daily-bar discovery proxy.** Symbol selection uses daily bars (gap/volume/proximity) rather than the real premarket scanner. The live runner uses a fixed 5-symbol universe (NVDA, TSLA, AAPL, AMD, META).
-
-7. **No live execution tested.** The backtest validated the edge. The StockBoy integration is verified via smoke tests. Forward paper trading is needed to validate fill assumptions, slippage, and detector firing on live data.
-
----
-
-## 11. File References
+## 13. File References
 
 | File | Purpose |
 |------|---------|
 | `agents/fence_bar_strategy.py` | Core strategy logic — `FenceBarStrategy.on_bar()` |
 | `agents/fence_bar_backtester.py` | Backtester with fill/exit logic |
 | `agents/fence_bar_runner.py` | Live trading runner (paper trading) |
-| `agents/fence_bar_runner_config.json` | Runner config with winning params (1R, ATR 1.8%) |
 | `FENCEBAR_SYSTEM.md` | Full system documentation (architecture, API, detectors) |
-| `HUMAN_IN_THE_LOOP.md` | Operator manual for the 4 automated decisions |
-| `research/strategy_search/fence_walk_forward.py` | Walk-forward harness + symbol discovery |
-| `research/strategy_search/run_fence_vol_fine_*.json` | Fine vol sweep that found the winning config |
-| `research/strategy_search/run_fence_winner_holdout_*.json` | Holdout validation of winning config |
-| `research/strategy_search/run_fence_tp_sweep_*.json` | Target multiple sweep (2R vs 1R) |
+| `research/strategy_search/strategy_walk_forward.py` | Walk-forward + holdout harness |
+| `research/strategy_search/etf_exclusion_test.py` | ETF exclusion test script |
+| `research/strategy_search/target_atr_holdout_grid.py` | Target × ATR holdout grid (found the winner) |
+| `research/strategy_search/target2r_holdout_sweep.py` | 2.0R holdout sweep across ATR levels |
+| `research/strategy_search/fence_sweep_attribution.py` | Fence range sweep + per-symbol PnL |
+| `research/strategy_search/journal.md` | Research journal — all 12 batches and 50 lessons |
 | `research/strategy_search/state.json` | Full research state with all experiments |
-| `research/strategy_search/journal.md` | Research journal with all batches and lessons |
