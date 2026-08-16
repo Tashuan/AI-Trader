@@ -559,11 +559,43 @@ Each detector degrades gracefully — if market data is unavailable, it returns 
 - **Observations:** Two baseline losers were vetoed; the remaining trade was managed to a smaller loss. Sample is too thin to validate the projected +4-5%. The ATR 1.8% filter remains extremely selective and the current cached 5m data produced far fewer trades than the original 16-trade run.
 - **Decision:** HITL harness works and shows beneficial directionality, but the result is not statistically meaningful. Use the harness for parameter sweeps with a lower ATR threshold to generate more signal.
 
+### Batch 8 — HITL ablation and vol-filter sweep (2026-08-16)
+
+- **Hypothesis:** Loosening the ATR filter and disabling detectors one at a time reveals which HITL decision adds value.
+- **Candidate:** Fence Bar no-retest, 1R target, fixed SL/TP, day-mode SPY ATR filter
+- **Harness:** `research/strategy_search/hitl_ablation.py` (baseline vs full HITL vs HITL minus each detector)
+- **Symbols:** Dynamic discovery, max 15 per window
+- **Dates:** 2024-10-01 to 2026-08-11 (94 windows)
+- **Interval:** 5m
+- **Costs:** 5 bps slippage, 0.1% fee rate
+- **Key metrics (ATR 1.5%):**
+  | Variant | Return | Trades | Active windows | Max DD |
+  |---|---|---|---|---|
+  | Baseline | -0.56% | 13 | 7 / 94 | 0.55% |
+  | +HITL | -0.10% | 7 | 6 / 94 | 0.25% |
+  | -vol_override | -0.10% | 7 | 6 / 94 | 0.25% |
+  | -entry_veto | -0.78% | 13 | 8 / 94 | 0.55% |
+  | -breakeven | +0.12% | 7 | 6 / 94 | 0.25% |
+  | -early_exit | -0.10% | 7 | 6 / 94 | 0.25% |
+- **Key metrics (ATR 1.2%):**
+  | Variant | Return | Trades | Active windows | Max DD |
+  |---|---|---|---|---|
+  | Baseline | -0.36% | 16 | 9 / 94 | 0.55% |
+  | +HITL | -0.14% | 9 | 7 / 94 | 0.25% |
+  | -vol_override | -0.14% | 9 | 7 / 94 | 0.25% |
+  | -entry_veto | -0.58% | 16 | 10 / 94 | 0.55% |
+  | -breakeven | +0.09% | 9 | 7 / 94 | 0.25% |
+  | -early_exit | -0.14% | 9 | 7 / 94 | 0.25% |
+- **HITL delta (1.2% ATR):** +0.22 percentage points, 44% fewer trades, max DD cut 55%
+- **Observations:** Entry veto is the only positive driver — removing it makes the strategy worse. Breakeven stop consistently *hurts*; the best result comes from HITL without breakeven. Vol override and early exit are neutral because they never triggered (no catalyst days and no MFE stalls large enough to hit the thresholds). The 1.2% ATR sample is the largest and still only 16 baseline trades.
+- **Decision:** Drop the breakeven detector for backtesting, keep entry veto, tune breakeven/early-exit thresholds, and fix the profit-factor average in `run_walk_forward` before drawing conclusions.
+
 ## Next Steps
 
-- [ ] Run HITL ablation: enable/disable each of the 4 detectors independently
-- [ ] Loosen vol filter to ATR 1.2%-1.5% to get a meaningful trade sample
-- [ ] Compare HITL with and without the vol override on a larger sample
+- [ ] Disable breakeven detector and re-run to confirm ATR 1.2% no-breakeven is the best HITL config
+- [ ] Tune breakeven and early-exit MFE thresholds on the 1.2% ATR sample
+- [ ] Fix `avg_profit_factor` averaging in `strategy_walk_forward` (huge bogus values from 1-trade windows)
 - [ ] Start forward paper trading: launch FenceBarRunner + StockBoy and verify detector firing
 
 33. **HITL backtest harness confirms directionality but not magnitude.** The four StockBoy supervisors raised the 22-month Fence Bar return by +0.35 percentage points and cut drawdown 48% in a 4-trade baseline sample, but the sample is too thin to validate the hand-calculated +4-5% projection. The ATR 1.8% threshold is too selective for robust HITL measurement.
+34. **Entry veto is the only HITL detector with clear positive edge.** Ablations at ATR 1.5% and 1.2% show removing the entry veto drops returns below baseline, while removing the breakeven stop *improves* returns. Vol override and early exit are neutral on this sample. The breakeven threshold is too aggressive and gets stopped out on normal retracements.
