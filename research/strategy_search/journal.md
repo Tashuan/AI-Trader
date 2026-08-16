@@ -34,6 +34,13 @@
 30. **Automating human-in-the-loop decisions is worth +6.91% on a 16-trade sample.** A human trader watching these 7 losing trades would have saved +1.88% (veto) + +1.38% (breakeven) + +3.65% (early exit) = +6.91%, converting +0.25% to a projected +4-5%. The StockBoy supervisor automates these four decisions using market data proxies (volume ratio for Level 2 depth, MFE stall for momentum death).
 31. **Graceful degradation is non-negotiable for live trading detectors.** Every StockBoy detector returns "no action" (or "confirm" for entry) when market data is unavailable. The system never blocks the runner on a data outage — a missing Alpaca API key or a failed fetch should never prevent a valid trade from executing.
 32. **Paper trading is the validation step, not the backtest.** The backtest proved the edge exists (+0.25% at 5bps). The StockBoy detectors are heuristic approximations of human judgment based on 16 trades. The real test is forward paper trading: does the system actually fire the right detectors on live data? The backtest cannot answer this — only live observation can.
+33. **ScalpScan has no edge on 1m bars, even at zero cost.** Tested 1m bars with adaptive direction (SPY regime-driven) and small targets (0.3%). Even removing all trading costs, the strategy loses. The "smoke test" with a short period was misleading — longer-term validation killed it. ScalpScan is rejected across all timeframes (30m, 5m, 1m).
+34. **ORB is the only alternative signal with gross edge.** Of 5 signal types tested (gap fade, VWAP reversion, vol spike, ORB, momentum burst), only Opening Range Breakout showed any edge. Gap fade, VWAP reversion, volatility spike, and momentum burst all failed — structural signals have no intraday edge on liquid mega-caps.
+35. **5-minute opening range beats 15-minute.** The original ORB with 15-min range lost -3.74%. Switching to 5-min range produced +7.83%. Shorter ranges catch the move earlier before it's extended. 15-min range enters too late — the move is 50%+ complete.
+36. **ORB edge is regime-dependent.** The strategy works in moderate-trend markets (+7.83% in Jun-Aug, SPY +2.9%) but fails in strong bull markets (-8.95% in Apr-Jun, SPY +13.2%). Short breakouts fail repeatedly when the market rips up. A SPY direction filter (only trade with SPY's opening 5-min direction) improved the full 5-month result from -2.06% to +0.16%.
+37. **The edge is too thin for small equity accounts.** Gross edge is ~0.04% per trade. On $10k with 30% sizing, that's ~$0.50/trade net of 2bps slippage. To make $20-30/trade, you need leverage (options or futures) or a larger account ($100k+). Options are the next step — Alpaca supports options chains.
+38. **0.7%/1.2% stop-target is the sweet spot.** The 1:1.7 risk-reward ratio with 48% win rate produces PF 1.355. Wider stops (0.8%) slightly improve win rate but reduce PF. Narrower targets (0.9%) improve win rate but leave money on the table. The optimal region is a plateau (top 15 configs all pass), reducing overfitting risk.
+39. **Always test out-of-sample date ranges.** The in-sample +7.83% (Jun-Aug) looked great, but the Apr-Jun out-of-sample test revealed -8.95%. The edge is regime-specific, not universal. Without the OOS test, we would have over-promoted a regime-dependent strategy.
 
 ## Current Research Question
 
@@ -804,3 +811,83 @@ This is the strongest config found across all batches. Next steps: holdout valid
 48. **ATR 1.2% + 2.0R + ETF exclusion is the winning config — it generalizes.** Train +0.80%, holdout +0.38%, full-period +1.18% with AggPF 2.78. This is the only ATR × target combination where both train and holdout are positive with meaningful trade counts. ATR 1.5% fails holdout entirely (zero trades in holdout period).
 49. **The fence range ceiling is a critical guardrail.** Widening max_range_pct above 0.80% is catastrophic: 0.35-1.00% loses -1.21% across 40 trades, 0.50-1.50% hemorrhages -4.04% across 89 trades. The 0.80% ceiling filters out low-quality setups. Tighter min (0.20-0.25) cuts trades and flips negative. 0.30-0.80 and 0.35-0.80 tie exactly.
 50. **NVDA is a net loser; AMZN and AAPL are the winners.** Per-symbol attribution: NVDA had 7 trades for -$72.10 total (42.9% win), while AMZN (+$166.93) and AAPL (+$94.90) each had 1 winning trade. NVDA's high frequency is a drag — its fence breakouts don't follow through. The walk-forward discovery process rotates into better setups than a static universe would.
+
+---
+
+## ORB Strategy Research (1m bars)
+
+### Batch ORB-0 — ScalpScan 1m rejection (2026-08-15)
+
+- **Hypothesis:** ScalpScan may have edge on 1m bars with adaptive direction and small targets, even though it failed on 30m and 5m.
+- **Candidate:** ScalpScan 1m adaptive (SPY regime-driven long/short, 0.3% target, 0.5% stop)
+- **Harness:** `research/strategy_search/scalp_1m_adaptive.py`
+- **Symbols:** NVDA, TSLA, AAPL, AMD, META
+- **Dates:** 2026-06-15 to 2026-08-16
+- **Interval:** 1m
+- **Provider/cache:** CachedProvider(AlpacaProvider()) — 1m bars cached
+- **Costs:** 2 bps slippage, 0% fee; also tested at zero cost
+- **Key metrics:** Negative return even at zero cost. No edge on any parameter combination.
+- **Decision:** REJECTED. ScalpScan has no edge on 1m bars. The "smoke test" with a short period was misleading — longer-term validation killed it. ScalpScan is rejected across all timeframes (30m, 5m, 1m).
+- **Next action:** Abandon ScalpScan. Test fundamentally different intraday signal types (gap fade, VWAP reversion, vol spike, ORB, momentum burst).
+
+### Batch ORB-1 — Alternative signal screen (2026-08-15)
+
+- **Hypothesis:** At least one of 5 alternative signal types (gap fade, VWAP reversion, vol spike, ORB, momentum burst) will show intraday edge on 1m bars.
+- **Candidates:** 10 configs across 5 signal types
+- **Harness:** `research/strategy_search/scalp_alt_signals.py`
+- **Symbols:** NVDA, TSLA, AAPL, AMD, META
+- **Dates:** 2026-06-15 to 2026-08-16
+- **Interval:** 1m
+- **Provider/cache:** CachedProvider(AlpacaProvider())
+- **Costs:** 2 bps slippage, 0% fee
+- **Key metrics:**
+  - ORB Wide (5min, 0.6/1.0): +0.20%, PF 1.009, 197 trades — PASS (marginal)
+  - All others: negative return, PF < 1.0 — FAIL
+  - Gap fade: -5.87%, VWAP reversion: -6.39%, vol spike: -4.52%, momentum burst: -1.19%
+- **Decision:** Only ORB passes. Gap fade, VWAP reversion, vol spike, and momentum burst are rejected — structural signals have no intraday edge on liquid mega-caps. Proceed to ORB parameter optimization.
+- **Next action:** Sweep ORB parameters (range period, stop, target, entry cutoff) to find optimal config.
+
+### Batch ORB-2 — ORB parameter sweep (2026-08-15)
+
+- **Hypothesis:** The marginal ORB Wide config (+0.20%) can be improved by optimizing range period, stop distance, target distance, and entry cutoff.
+- **Candidates:** 312 configs (4 range periods × 3 min ranges × 4 stops × 4 targets × 2 entry cutoffs, minus invalid target < stop combos)
+- **Harness:** `research/strategy_search/orb_optimize.py`
+- **Symbols:** NVDA, TSLA, AAPL, AMD, META
+- **Dates:** 2026-06-15 to 2026-08-16
+- **Interval:** 1m
+- **Provider/cache:** CachedProvider(AlpacaProvider())
+- **Costs:** 2 bps slippage, 0% fee
+- **Key metrics:**
+  - Best: 5min range, 0.6% stop, 1.0% target, 11:00 entry → +5.19%, PF 1.251, 200 trades
+  - Top 20 configs all use 5min range — 15min range consistently worse
+  - Top 20 all pass (+4.18% to +5.19%)
+- **Decision:** 5-minute range is clearly optimal. Proceed to fine-grained sweep around 5min range.
+
+### Batch ORB-3 — Fine-grained ORB sweep (2026-08-15)
+
+- **Hypothesis:** Fine-tuning stop/target around the 5min range config will find a better optimum.
+- **Candidates:** 90 configs (5 stops × 6 targets × 3 entry cutoffs, minus invalid)
+- **Harness:** `research/strategy_search/orb_optimize.py` (inline script)
+- **Symbols:** NVDA, TSLA, AAPL, AMD, META
+- **Dates:** 2026-06-15 to 2026-08-16
+- **Interval:** 1m
+- **Costs:** 2 bps slippage, 0% fee
+- **Key metrics:**
+  - **Best: 5min, 0.7% stop, 1.2% target, 10:30 entry → +7.83%, PF 1.355, 190 trades, 1.84% DD, Sharpe 4.574**
+  - Zero cost: +10.31%, PF 1.489
+  - Top 15 configs all pass (+5.26% to +7.83%) — robust plateau, not a spike
+  - All 5 symbols profitable (AAPL +$170, AMD +$174, TSLA +$121, NVDA +$45, META +$9)
+- **Decision:** 0.7%/1.2% is the winning config. The edge is robust (plateau across top 15). Proceed to out-of-sample validation.
+
+### Batch ORB-4 — Out-of-sample validation (2026-08-15)
+
+- **Hypothesis:** The ORB edge generalizes to different date ranges and symbol universes.
+- **Candidates:** Best config (5min, 0.7/1.2, 10:30) tested on 3 OOS scenarios
+- **Harness:** Inline script using `orb_optimize.run_single()`
+- **Key metrics:**
+  - OOS date range (Apr-Jun 2026, strong bull SPY +13.2%): -8.95% — FAIL
+  - OOS expanded universe (10 symbols, Jun-Aug): +3.60% — PASS (diluted but positive)
+  - Train/test split (Jun-Jul train, Aug test): train +5.55%, test +3.59% — PASS
+  - Full 5 months (Apr-Aug): -2.06% unfiltered, +0.16% with SPY regime filter
+- **Decision:** Edge is regime-dependent. Fails in strong bull markets, works in moderate trends. SPY regime filter helps but doesn't fully solve. The edge is real but thin — +0.16% over 5 months with costs, +4.33% at zero cost.
+- **Next action:** The edge is too thin for small equity accounts (~$0.50/trade on $10k). Options provide the leverage needed to amplify this to $20-30/trade. Build options-based ORB backtester using Alpaca options chain data.

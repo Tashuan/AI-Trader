@@ -1,0 +1,971 @@
+{
+  "config": {
+    "symbols": [
+      "NVDA",
+      "TSLA",
+      "AAPL",
+      "AMD",
+      "META"
+    ],
+    "start": "2026-06-15",
+    "end": "2026-08-16",
+    "capital": 10000.0,
+    "slippage_bps": 2.0,
+    "fee_rate": 0.0,
+    "zero_cost": false
+  },
+  "grid_size": 312,
+  "elapsed_seconds": 1004.4,
+  "top_results": [
+    {
+      "return_pct": 5.19,
+      "profit_factor": 1.251,
+      "win_rate": 0.465,
+      "total_trades": 200,
+      "max_drawdown_pct": 1.76,
+      "sharpe_ratio": 3.496,
+      "avg_hold_hours": 0.9,
+      "final_equity": 10518.99,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.6,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 5.19,
+      "profit_factor": 1.251,
+      "win_rate": 0.465,
+      "total_trades": 200,
+      "max_drawdown_pct": 1.76,
+      "sharpe_ratio": 3.496,
+      "avg_hold_hours": 0.9,
+      "final_equity": 10518.99,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.6,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 5.19,
+      "profit_factor": 1.251,
+      "win_rate": 0.465,
+      "total_trades": 200,
+      "max_drawdown_pct": 1.76,
+      "sharpe_ratio": 3.496,
+      "avg_hold_hours": 0.9,
+      "final_equity": 10518.99,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.6,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 5.15,
+      "profit_factor": 1.257,
+      "win_rate": 0.4639,
+      "total_trades": 194,
+      "max_drawdown_pct": 1.76,
+      "sharpe_ratio": 3.561,
+      "avg_hold_hours": 0.9,
+      "final_equity": 10514.63,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.6,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 5.15,
+      "profit_factor": 1.257,
+      "win_rate": 0.4639,
+      "total_trades": 194,
+      "max_drawdown_pct": 1.76,
+      "sharpe_ratio": 3.561,
+      "avg_hold_hours": 0.9,
+      "final_equity": 10514.63,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.6,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 5.15,
+      "profit_factor": 1.257,
+      "win_rate": 0.4639,
+      "total_trades": 194,
+      "max_drawdown_pct": 1.76,
+      "sharpe_ratio": 3.561,
+      "avg_hold_hours": 0.9,
+      "final_equity": 10514.63,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.6,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.69,
+      "profit_factor": 1.273,
+      "win_rate": 0.3756,
+      "total_trades": 205,
+      "max_drawdown_pct": 1.89,
+      "sharpe_ratio": 3.841,
+      "avg_hold_hours": 0.6,
+      "final_equity": 10468.97,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.4,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.69,
+      "profit_factor": 1.273,
+      "win_rate": 0.3756,
+      "total_trades": 205,
+      "max_drawdown_pct": 1.89,
+      "sharpe_ratio": 3.841,
+      "avg_hold_hours": 0.6,
+      "final_equity": 10468.97,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.4,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.69,
+      "profit_factor": 1.273,
+      "win_rate": 0.3756,
+      "total_trades": 205,
+      "max_drawdown_pct": 1.89,
+      "sharpe_ratio": 3.841,
+      "avg_hold_hours": 0.6,
+      "final_equity": 10468.97,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.4,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.6,
+      "profit_factor": 1.272,
+      "win_rate": 0.3731,
+      "total_trades": 201,
+      "max_drawdown_pct": 1.89,
+      "sharpe_ratio": 3.794,
+      "avg_hold_hours": 0.6,
+      "final_equity": 10459.85,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.4,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.6,
+      "profit_factor": 1.272,
+      "win_rate": 0.3731,
+      "total_trades": 201,
+      "max_drawdown_pct": 1.89,
+      "sharpe_ratio": 3.794,
+      "avg_hold_hours": 0.6,
+      "final_equity": 10459.85,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.4,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.6,
+      "profit_factor": 1.272,
+      "win_rate": 0.3731,
+      "total_trades": 201,
+      "max_drawdown_pct": 1.89,
+      "sharpe_ratio": 3.794,
+      "avg_hold_hours": 0.6,
+      "final_equity": 10459.85,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.4,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.39,
+      "profit_factor": 1.233,
+      "win_rate": 0.5126,
+      "total_trades": 199,
+      "max_drawdown_pct": 1.37,
+      "sharpe_ratio": 3.358,
+      "avg_hold_hours": 0.7,
+      "final_equity": 10438.64,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.6,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.39,
+      "profit_factor": 1.233,
+      "win_rate": 0.5126,
+      "total_trades": 199,
+      "max_drawdown_pct": 1.37,
+      "sharpe_ratio": 3.358,
+      "avg_hold_hours": 0.7,
+      "final_equity": 10438.64,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.6,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.39,
+      "profit_factor": 1.233,
+      "win_rate": 0.5126,
+      "total_trades": 199,
+      "max_drawdown_pct": 1.37,
+      "sharpe_ratio": 3.358,
+      "avg_hold_hours": 0.7,
+      "final_equity": 10438.64,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.6,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.29,
+      "profit_factor": 1.222,
+      "win_rate": 0.5123,
+      "total_trades": 203,
+      "max_drawdown_pct": 1.56,
+      "sharpe_ratio": 3.266,
+      "avg_hold_hours": 0.7,
+      "final_equity": 10428.92,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.6,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.29,
+      "profit_factor": 1.222,
+      "win_rate": 0.5123,
+      "total_trades": 203,
+      "max_drawdown_pct": 1.56,
+      "sharpe_ratio": 3.266,
+      "avg_hold_hours": 0.7,
+      "final_equity": 10428.92,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.6,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.29,
+      "profit_factor": 1.222,
+      "win_rate": 0.5123,
+      "total_trades": 203,
+      "max_drawdown_pct": 1.56,
+      "sharpe_ratio": 3.266,
+      "avg_hold_hours": 0.7,
+      "final_equity": 10428.92,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.6,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.18,
+      "profit_factor": 1.181,
+      "win_rate": 0.513,
+      "total_trades": 193,
+      "max_drawdown_pct": 2.07,
+      "sharpe_ratio": 2.584,
+      "avg_hold_hours": 1.2,
+      "final_equity": 10417.6,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.8,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.18,
+      "profit_factor": 1.181,
+      "win_rate": 0.513,
+      "total_trades": 193,
+      "max_drawdown_pct": 2.07,
+      "sharpe_ratio": 2.584,
+      "avg_hold_hours": 1.2,
+      "final_equity": 10417.6,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.8,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.18,
+      "profit_factor": 1.181,
+      "win_rate": 0.513,
+      "total_trades": 193,
+      "max_drawdown_pct": 2.07,
+      "sharpe_ratio": 2.584,
+      "avg_hold_hours": 1.2,
+      "final_equity": 10417.6,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.8,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.01,
+      "profit_factor": 1.252,
+      "win_rate": 0.59,
+      "total_trades": 200,
+      "max_drawdown_pct": 1.41,
+      "sharpe_ratio": 3.555,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10400.52,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.6,
+        "target_pct": 0.6,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.01,
+      "profit_factor": 1.252,
+      "win_rate": 0.59,
+      "total_trades": 200,
+      "max_drawdown_pct": 1.41,
+      "sharpe_ratio": 3.555,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10400.52,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.6,
+        "target_pct": 0.6,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 4.01,
+      "profit_factor": 1.252,
+      "win_rate": 0.59,
+      "total_trades": 200,
+      "max_drawdown_pct": 1.41,
+      "sharpe_ratio": 3.555,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10400.52,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.6,
+        "target_pct": 0.6,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.93,
+      "profit_factor": 1.295,
+      "win_rate": 0.3663,
+      "total_trades": 202,
+      "max_drawdown_pct": 1.68,
+      "sharpe_ratio": 4.249,
+      "avg_hold_hours": 0.3,
+      "final_equity": 10392.76,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.3,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.93,
+      "profit_factor": 1.295,
+      "win_rate": 0.3663,
+      "total_trades": 202,
+      "max_drawdown_pct": 1.68,
+      "sharpe_ratio": 4.249,
+      "avg_hold_hours": 0.3,
+      "final_equity": 10392.76,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.3,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.93,
+      "profit_factor": 1.295,
+      "win_rate": 0.3663,
+      "total_trades": 202,
+      "max_drawdown_pct": 1.68,
+      "sharpe_ratio": 4.249,
+      "avg_hold_hours": 0.3,
+      "final_equity": 10392.76,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.3,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.85,
+      "profit_factor": 1.282,
+      "win_rate": 0.3641,
+      "total_trades": 206,
+      "max_drawdown_pct": 1.78,
+      "sharpe_ratio": 4.142,
+      "avg_hold_hours": 0.3,
+      "final_equity": 10384.59,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.3,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.85,
+      "profit_factor": 1.236,
+      "win_rate": 0.5882,
+      "total_trades": 204,
+      "max_drawdown_pct": 1.41,
+      "sharpe_ratio": 3.396,
+      "avg_hold_hours": 0.5,
+      "final_equity": 10384.75,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.6,
+        "target_pct": 0.6,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.85,
+      "profit_factor": 1.282,
+      "win_rate": 0.3641,
+      "total_trades": 206,
+      "max_drawdown_pct": 1.78,
+      "sharpe_ratio": 4.142,
+      "avg_hold_hours": 0.3,
+      "final_equity": 10384.59,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.3,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.85,
+      "profit_factor": 1.236,
+      "win_rate": 0.5882,
+      "total_trades": 204,
+      "max_drawdown_pct": 1.41,
+      "sharpe_ratio": 3.396,
+      "avg_hold_hours": 0.5,
+      "final_equity": 10384.75,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.6,
+        "target_pct": 0.6,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.85,
+      "profit_factor": 1.282,
+      "win_rate": 0.3641,
+      "total_trades": 206,
+      "max_drawdown_pct": 1.78,
+      "sharpe_ratio": 4.142,
+      "avg_hold_hours": 0.3,
+      "final_equity": 10384.59,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.3,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.85,
+      "profit_factor": 1.236,
+      "win_rate": 0.5882,
+      "total_trades": 204,
+      "max_drawdown_pct": 1.41,
+      "sharpe_ratio": 3.396,
+      "avg_hold_hours": 0.5,
+      "final_equity": 10384.75,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.6,
+        "target_pct": 0.6,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.77,
+      "profit_factor": 1.156,
+      "win_rate": 0.51,
+      "total_trades": 200,
+      "max_drawdown_pct": 2.33,
+      "sharpe_ratio": 2.284,
+      "avg_hold_hours": 1.2,
+      "final_equity": 10377.07,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.8,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.77,
+      "profit_factor": 1.156,
+      "win_rate": 0.51,
+      "total_trades": 200,
+      "max_drawdown_pct": 2.33,
+      "sharpe_ratio": 2.284,
+      "avg_hold_hours": 1.2,
+      "final_equity": 10377.07,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.8,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.77,
+      "profit_factor": 1.156,
+      "win_rate": 0.51,
+      "total_trades": 200,
+      "max_drawdown_pct": 2.33,
+      "sharpe_ratio": 2.284,
+      "avg_hold_hours": 1.2,
+      "final_equity": 10377.07,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.8,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.73,
+      "profit_factor": 1.231,
+      "win_rate": 0.4175,
+      "total_trades": 206,
+      "max_drawdown_pct": 1.82,
+      "sharpe_ratio": 3.473,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10372.79,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.4,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.73,
+      "profit_factor": 1.231,
+      "win_rate": 0.4175,
+      "total_trades": 206,
+      "max_drawdown_pct": 1.82,
+      "sharpe_ratio": 3.473,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10372.79,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.4,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.73,
+      "profit_factor": 1.231,
+      "win_rate": 0.4175,
+      "total_trades": 206,
+      "max_drawdown_pct": 1.82,
+      "sharpe_ratio": 3.473,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10372.79,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.4,
+        "target_pct": 0.8,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.7,
+      "profit_factor": 1.234,
+      "win_rate": 0.4158,
+      "total_trades": 202,
+      "max_drawdown_pct": 1.69,
+      "sharpe_ratio": 3.476,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10369.96,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.4,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.7,
+      "profit_factor": 1.234,
+      "win_rate": 0.4158,
+      "total_trades": 202,
+      "max_drawdown_pct": 1.69,
+      "sharpe_ratio": 3.476,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10369.96,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.4,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.7,
+      "profit_factor": 1.234,
+      "win_rate": 0.4158,
+      "total_trades": 202,
+      "max_drawdown_pct": 1.69,
+      "sharpe_ratio": 3.476,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10369.96,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.4,
+        "target_pct": 0.8,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.68,
+      "profit_factor": 1.254,
+      "win_rate": 0.3103,
+      "total_trades": 203,
+      "max_drawdown_pct": 2.6,
+      "sharpe_ratio": 3.436,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10368.06,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.3,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.68,
+      "profit_factor": 1.254,
+      "win_rate": 0.3103,
+      "total_trades": 203,
+      "max_drawdown_pct": 2.6,
+      "sharpe_ratio": 3.436,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10368.06,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.3,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.68,
+      "profit_factor": 1.254,
+      "win_rate": 0.3103,
+      "total_trades": 203,
+      "max_drawdown_pct": 2.6,
+      "sharpe_ratio": 3.436,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10368.06,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.3,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.66,
+      "profit_factor": 1.247,
+      "win_rate": 0.3092,
+      "total_trades": 207,
+      "max_drawdown_pct": 2.6,
+      "sharpe_ratio": 3.403,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10366.08,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.3,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.66,
+      "profit_factor": 1.247,
+      "win_rate": 0.3092,
+      "total_trades": 207,
+      "max_drawdown_pct": 2.6,
+      "sharpe_ratio": 3.403,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10366.08,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.3,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.66,
+      "profit_factor": 1.247,
+      "win_rate": 0.3092,
+      "total_trades": 207,
+      "max_drawdown_pct": 2.6,
+      "sharpe_ratio": 3.403,
+      "avg_hold_hours": 0.4,
+      "final_equity": 10366.08,
+      "config": {
+        "range_minutes": 5,
+        "min_range_pct": 0.3,
+        "stop_pct": 0.3,
+        "target_pct": 1.0,
+        "latest_entry": "11:00",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.64,
+      "profit_factor": 1.168,
+      "win_rate": 0.5138,
+      "total_trades": 181,
+      "max_drawdown_pct": 2.51,
+      "sharpe_ratio": 2.145,
+      "avg_hold_hours": 1.4,
+      "final_equity": 10364.4,
+      "config": {
+        "range_minutes": 10,
+        "min_range_pct": 0.1,
+        "stop_pct": 0.8,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    },
+    {
+      "return_pct": 3.64,
+      "profit_factor": 1.168,
+      "win_rate": 0.5138,
+      "total_trades": 181,
+      "max_drawdown_pct": 2.51,
+      "sharpe_ratio": 2.145,
+      "avg_hold_hours": 1.4,
+      "final_equity": 10364.4,
+      "config": {
+        "range_minutes": 10,
+        "min_range_pct": 0.2,
+        "stop_pct": 0.8,
+        "target_pct": 1.0,
+        "latest_entry": "10:30",
+        "max_positions": 3,
+        "position_pct": 30.0
+      }
+    }
+  ]
+}
