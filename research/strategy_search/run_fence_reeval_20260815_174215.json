@@ -1,0 +1,42 @@
+[
+  {
+    "cid": "fence_default",
+    "ret": -1.6086,
+    "pass": 0.0319,
+    "passed": 3,
+    "n": 94,
+    "pf": 500.3612,
+    "trades": 22,
+    "wr": 0.0312
+  },
+  {
+    "cid": "fence_no_retest_tight",
+    "ret": -1.6153,
+    "pass": 0.0319,
+    "passed": 3,
+    "n": 94,
+    "pf": 599.5768,
+    "trades": 17,
+    "wr": 0.039
+  },
+  {
+    "cid": "fence_no_retest",
+    "ret": -3.8485,
+    "pass": 0.0426,
+    "passed": 4,
+    "n": 94,
+    "pf": 84.1007,
+    "trades": 70,
+    "wr": 0.0579
+  },
+  {
+    "cid": "fence_no_retest_2r",
+    "ret": -3.8485,
+    "pass": 0.0426,
+    "passed": 4,
+    "n": 94,
+    "pf": 84.1007,
+    "trades": 70,
+    "wr": 0.0579
+  }
+]

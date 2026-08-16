@@ -1,7 +1,0 @@
-{
-  "entry": {
-    "require_volume_contraction": false,
-    "min_inside_bars": 0,
-    "compression_atr_multiple": 0.80
-  }
-}

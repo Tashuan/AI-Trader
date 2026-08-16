@@ -1141,7 +1141,8 @@ def compute_adaptive_exit(
             return {"verdict": "EXIT", "exit_reason": f"phase3_stagnation_{minutes_held}min",
                      "phase": phase, "adjusted_sl": None}
         # Exit if barely positive and momentum dying
-        vol_ratio = ind_data.get("vol_ratio", 1.0)
+        vol_ind = ind_data.get("vol_ratio", {})
+        vol_ratio = float(vol_ind.get("value", 1.0)) if isinstance(vol_ind, dict) else float(vol_ind)
         if vol_ratio < float(exit_cfg.get("momentum_death_vol_ratio", 0.5)) and pnl_pct < 0.5:
             return {"verdict": "EXIT", "exit_reason": f"phase3_momentum_death_{minutes_held}min",
                      "phase": phase, "adjusted_sl": None}
@@ -1186,8 +1187,10 @@ def review_scalp_position(
     ob_rsi = exit_cfg.get("ob_exhaustion_rsi", 78)
 
     pnl_pct = pos.get("pnl_pct", 0)
-    vol_ratio = ind_data.get("vol_ratio", 1.0)
-    rsi = ind_data.get("rsi", 50)
+    vol_ind = ind_data.get("vol_ratio", {})
+    vol_ratio = float(vol_ind.get("value", 1.0)) if isinstance(vol_ind, dict) else float(vol_ind)
+    rsi_ind = ind_data.get("rsi", {})
+    rsi = float(rsi_ind.get("value", 50.0)) if isinstance(rsi_ind, dict) else float(rsi_ind)
 
     # Stagnation: held too long with minimal movement
     if minutes_held >= stagnation_min and abs(pnl_pct) < stagnation_thresh:

@@ -1,0 +1,59 @@
+{
+  "catalyst_summary": {
+    "total_dates": 145,
+    "bullish": 67,
+    "bearish": 19
+  },
+  "results": [
+    {
+      "cid": "catalyst_wide_tp",
+      "ret": -2.6715,
+      "pass": 0.1,
+      "passed": 2,
+      "n": 20,
+      "pf": 0.3199,
+      "trades": 87,
+      "wr": 0.1943
+    },
+    {
+      "cid": "no_catalyst",
+      "ret": -3.4283,
+      "pass": 0.0,
+      "passed": 0,
+      "n": 20,
+      "pf": 0.1921,
+      "trades": 92,
+      "wr": 0.1816
+    },
+    {
+      "cid": "catalyst_default",
+      "ret": -3.4283,
+      "pass": 0.0,
+      "passed": 0,
+      "n": 20,
+      "pf": 0.1921,
+      "trades": 92,
+      "wr": 0.1816
+    },
+    {
+      "cid": "catalyst_block_bearish",
+      "ret": -3.6134,
+      "pass": 0.0,
+      "passed": 0,
+      "n": 20,
+      "pf": 0.1541,
+      "trades": 87,
+      "wr": 0.1705
+    },
+    {
+      "cid": "catalyst_strong_filter",
+      "ret": -3.6134,
+      "pass": 0.0,
+      "passed": 0,
+      "n": 20,
+      "pf": 0.1541,
+      "trades": 87,
+      "wr": 0.1705
+    }
+  ]
+}

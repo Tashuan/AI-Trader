@@ -1,0 +1,62 @@
+[
+  {
+    "cid": "ext_30m_both_on",
+    "interval": "30m",
+    "period": "2024-10-01 to 2026-08-11",
+    "ret": -14.2032,
+    "pass": 0.0213,
+    "passed": 2,
+    "n": 94,
+    "pf": 10.7271,
+    "trades": 260,
+    "wr": 0.0977
+  },
+  {
+    "cid": "ext_30m_baseline",
+    "interval": "30m",
+    "period": "2024-10-01 to 2026-08-11",
+    "ret": -15.0025,
+    "pass": 0.0638,
+    "passed": 6,
+    "n": 94,
+    "pf": 10.7611,
+    "trades": 275,
+    "wr": 0.1243
+  },
+  {
+    "cid": "5m_baseline",
+    "interval": "5m",
+    "period": "2026-03-02 to 2026-08-11",
+    "ret": -17.0986,
+    "pass": 0.0,
+    "passed": 0,
+    "n": 20,
+    "pf": 0.0922,
+    "trades": 451,
+    "wr": 0.2189
+  },
+  {
+    "cid": "5m_both_on",
+    "interval": "5m",
+    "period": "2026-03-02 to 2026-08-11",
+    "ret": -17.5016,
+    "pass": 0.0,
+    "passed": 0,
+    "n": 20,
+    "pf": 0.0459,
+    "trades": 489,
+    "wr": 0.1571
+  },
+  {
+    "cid": "5m_adaptive_exit",
+    "interval": "5m",
+    "period": "2026-03-02 to 2026-08-11",
+    "ret": -18.1611,
+    "pass": 0.0,
+    "passed": 0,
+    "n": 20,
+    "pf": 0.0472,
+    "trades": 494,
+    "wr": 0.1528
+  }
+]

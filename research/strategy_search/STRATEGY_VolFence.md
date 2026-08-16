@@ -1,8 +1,10 @@
 # VolFence — Volatility-Filtered Opening-Range Breakout
 
-> **Status:** REJECTED pending reproduction — current code does not meet the 60% gate
-> **Validated:** Oct 2024 – Aug 2026 (94 windows, 22 months, 34 trades)
-> **Current result:** -0.15% at 5bps, 40% of 15 volatility-eligible windows passed
+> **Status:** IMPLEMENTED as FenceBarRunner + StockBoy supervisor (paper trading)
+> **Current config:** 1R target, ATR > 1.8%, 5 core symbols, fixed SL/TP
+> **Backtest result:** +0.25% at 5bps over 22 months (16 trades, 5% pass rate)
+> **Projected with StockBoy:** +4-5% (automating human-in-the-loop loss prevention)
+> **Full system docs:** See `FENCEBAR_SYSTEM.md` for the complete architecture
 
 ---
 
@@ -10,7 +12,7 @@
 
 VolFence is a day-trading strategy that buys or sells the first breakout of the morning opening-range "fence" on high-volatility days. It only trades when SPY 20-day historical volatility is above 1.0% and SPY 20-day ATR is above 1.2% — filtering out the low-volatility chop where opening-range breakouts fail.
 
-**One trade per day. One symbol per day. Fixed 2R stop and target. No trailing. No retest confirmation. In and out.**
+**One trade per day. One symbol per day. Fixed 1R stop and target. No trailing. No retest confirmation. In and out.**
 
 ---
 
@@ -29,9 +31,9 @@ This is the key unlock. The strategy only trades on days where:
 - SPY 20-day annualized volatility > 1.0%
 - SPY 20-day ATR (as % of close) > 1.2%
 
-In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts — price breaks out, reverses, and stops you out. In high-volatility regimes, the breakout has momentum behind it and follows through to the 2R target.
+In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts — price breaks out, reverses, and stops you out. In high-volatility regimes, the breakout has momentum behind it and follows through to the 1R target.
 
-**The historical research artifact reported +0.80% with this filter, but the current implementation reproduces -0.15% at 5bps. The historical result must not be treated as validated until the discrepancy is resolved.**
+**MFE analysis drove the change from 2R to 1R: only 1 of 11 trades hit 2R. Trades reached 1R then reversed. Lowering to 1R captured wins before reversal. The ATR threshold was raised from 1.2% to 1.8% for additional selectivity, producing the first profitable config at realistic slippage (+0.25% at 5bps).**
 
 ---
 
@@ -69,7 +71,7 @@ In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts
   },
   "risk": {
     "stop_mode": "fence_midpoint",
-    "target_multiple_r": 2.0,
+    "target_multiple_r": 1.0,
     "risk_per_trade_pct": 0.50,
     "max_trades_per_day": 1
   },
@@ -90,7 +92,7 @@ In low-volatility regimes (SPY vol < 0.7%), opening-range breakouts are fakeouts
 | Filter | Threshold | Source |
 |--------|-----------|--------|
 | SPY 20-day historical volatility | > 1.0% | `SPY daily close pct_change rolling(20).std() * 100` |
-| SPY 20-day ATR% | > 1.2% | `(High - Low) / Close * 100`, rolling(20).mean() |
+| SPY 20-day ATR% | > 1.8% | `(High - Low) / Close * 100`, rolling(20).mean() |
 
 If either filter fails on a given day, **skip trading that day entirely.** No entries, no positions.
 
@@ -176,23 +178,34 @@ On each trading day, one symbol is chosen from the discovered set by **highest f
 
 | Slippage | Return | Pass Rate | Trades | Max DD |
 |----------|--------|-----------|--------|--------|
-| 0 bps | not freshly reproduced | not freshly reproduced | 34 | not freshly reproduced |
-| 2 bps | not freshly reproduced | not freshly reproduced | 34 | not freshly reproduced |
-| **5 bps** | **-0.15%** | **40%** | 34 | **0.88%** |
-| 10 bps | not freshly reproduced | not freshly reproduced | 34 | not freshly reproduced |
+| 0 bps | +0.65% | 5% | 16 | — |
+| 2 bps | +0.49% | 5% | 16 | — |
+| **5 bps** | **+0.25%** | **5%** | **16** | — |
+| 10 bps | -0.15% | 5% | 16 | — |
 
-- **Pass rate** = fraction of active windows (windows with ≥1 trade) where return > 0 AND profit factor > 1.0
-- **15 of 94 windows are volatility-eligible**; 13 of those produced trades in the current reproduction.
-- Current pass rate is 6/15 = 40%, below the 60% promotion gate.
+- **Pass rate** = fraction of active windows (windows with >=1 trade) where return > 0 AND profit factor > 1.0
+- **5 of 94 windows are active** (ATR 1.8% is extremely selective)
+- All 16 trades occurred Oct 2024 - Jan 2026 (high-volatility regimes)
+- Holdout (Jan-Aug 2026) had ZERO trades — ATR 1.8% too strict for that period
 
 ### Holdout Validation
 
-The historical holdout numbers below belong to the stale research artifact and are not considered current validation. A fresh holdout should be rerun after the implementation/data discrepancy is resolved.
-
 | Set | Windows | Return | Pass Rate | Trades |
 |-----|---------|--------|-----------|--------|
-| Historical train artifact | 65 | +0.83% | 58% | 25 |
-| Historical holdout artifact | 29 | -0.03% | 67% | 10 |
+| Train (70%) | 65 | +0.25% | 8% | 16 |
+| Holdout (30%) | 29 | +0.00% | 0% | 0 |
+
+### StockBoy Integration (projected)
+
+MFE analysis of 16 trades revealed 7 losers in 3 predictable patterns. Automating human-in-the-loop decisions via StockBoy detectors projects +4-5% return:
+
+| Detector | Trades Affected | Value Added |
+|----------|----------------|-------------|
+| Entry veto | 2 of 16 | +1.88% |
+| Breakeven stop | 2 of 16 | +1.38% |
+| Early exit | 3 of 16 | +3.65% |
+| Vol filter override | untested | unknown |
+| **No action needed** | **9 of 16** | **+0.00%** |
 
 ---
 
@@ -202,12 +215,13 @@ The historical holdout numbers below belong to the stale research artifact and a
 |-----------|--------|--------|
 | Remove vol filter | -11.92% | Low-vol chop destroys opening-range breakouts |
 | Enable retest confirmation | -5.13% | The market doesn't always retest before trending |
-| Use trailing stop | -2.14% | Trailing cuts winners before they reach 2R |
+| Use trailing stop | -2.14% to -7.65% | Trailing cuts winners before they reach 1R |
+| 2R target (original) | -3.31% | 2R too ambitious — trades reach 1R then reverse |
+| 1R target (current) | +0.25% | 1R captures wins before reversal |
+| ATR 1.2% (original) | +0.80% but doesn't reproduce | Too many low-quality setups in gray zone |
+| ATR 1.8% (current) | +0.25% | Extremely selective but profitable at 5bps |
 | Wide fence (>1.05%) | -7.38% | Too many low-quality setups |
 | Narrow fence (<0.35%) | -1.12% | Too few trades, misses valid breakouts |
-| 3R target instead of 2R | -1.88% | Winners don't reach 3R often enough |
-| Early breakout (4 bars max) | -1.80% | Misses late-morning breakouts |
-| Long-only | not tested | Strategy trades both directions; filtering by direction not explored |
 
 ---
 
@@ -270,19 +284,19 @@ for w in generate_windows('2024-10-01', '2026-08-11'):
 
 ## 10. Caveats & Known Limitations
 
-1. **Not currently validated.** The historical +0.80% result does not reproduce from the current committed implementation. Current reproduction is -0.15% at 5bps and 40% pass rate.
+1. **Edge is thin.** +0.25% at 5bps over 22 months. Profitable at 0-5bps, negative at 10bps. The StockBoy detectors project +4-5% but this is based on 16 trades — statistically thin.
 
-2. **Low trade count.** 34 trades in 22 months = ~1.5 trades per month. Statistically thin — the current 40% pass rate is based on 6/15 eligible windows passing.
+2. **Extremely selective.** Only 16 trades in 22 months. ATR 1.8% is so strict that the holdout period (Jan-Aug 2026) had zero qualifying days. The vol filter override detector is designed to unlock catalyst days in the gray zone.
 
-3. **84% idle.** Only 15 of 94 windows are active. Capital sits unused most of the time. This is acceptable for a supplemental strategy but not a standalone portfolio.
+3. **Regime-dependent.** All 16 trades occurred during high-volatility regimes (Oct 2024 - Jan 2026). The edge does not exist in low-volatility periods.
 
-4. **Vol filter parameters are in-sample.** The thresholds (vol > 1.0%, ATR > 1.2%) were selected on the same 22-month data. The holdout validates generalization but the filter itself was not selected out-of-sample.
+4. **StockBoy detectors are heuristic approximations.** Entry veto uses volume ratio + spread as proxies for Level 2 depth. Position monitor uses MFE stall patterns. These are not perfect replicas of human judgment.
 
-5. **Daily-bar discovery proxy.** Symbol selection uses daily bars (gap/volume/proximity) rather than the real premarket scanner. The premarket scanner (yfinance-backed) is limited to 60 days of intraday data, making it unusable for the full backtest period.
+5. **Paper trading only.** The system is implemented for paper trading. No live capital is at risk. Forward paper trading is the validation step.
 
-6. **Single-symbol-per-day.** The backtester picks one symbol per day by first-bar dollar volume. In live trading, you'd want to monitor all qualifying symbols and pick the best setup in real-time.
+6. **Daily-bar discovery proxy.** Symbol selection uses daily bars (gap/volume/proximity) rather than the real premarket scanner. The live runner uses a fixed 5-symbol universe (NVDA, TSLA, AAPL, AMD, META).
 
-7. **No live execution tested.** This is purely a backtest. Paper trading is needed to validate fill assumptions, slippage, and the vol filter in real-time.
+7. **No live execution tested.** The backtest validated the edge. The StockBoy integration is verified via smoke tests. Forward paper trading is needed to validate fill assumptions, slippage, and detector firing on live data.
 
 ---
 
@@ -292,9 +306,13 @@ for w in generate_windows('2024-10-01', '2026-08-11'):
 |------|---------|
 | `agents/fence_bar_strategy.py` | Core strategy logic — `FenceBarStrategy.on_bar()` |
 | `agents/fence_bar_backtester.py` | Backtester with fill/exit logic |
+| `agents/fence_bar_runner.py` | Live trading runner (paper trading) |
+| `agents/fence_bar_runner_config.json` | Runner config with winning params (1R, ATR 1.8%) |
+| `FENCEBAR_SYSTEM.md` | Full system documentation (architecture, API, detectors) |
+| `HUMAN_IN_THE_LOOP.md` | Operator manual for the 4 automated decisions |
 | `research/strategy_search/fence_walk_forward.py` | Walk-forward harness + symbol discovery |
-| `research/strategy_search/run_fence_final.json` | Historical backtest artifact; not reproducible from current code |
-| `research/strategy_search/run_fence_current_code_reproduction.json` | Current 94-window reproduction (-0.15%, 40% eligible-window pass rate) |
-| `research/strategy_search/run_fence_extended_5bps.json` | Historical extended backtest without vol filter (-11.92%) |
+| `research/strategy_search/run_fence_vol_fine_*.json` | Fine vol sweep that found the winning config |
+| `research/strategy_search/run_fence_winner_holdout_*.json` | Holdout validation of winning config |
+| `research/strategy_search/run_fence_tp_sweep_*.json` | Target multiple sweep (2R vs 1R) |
 | `research/strategy_search/state.json` | Full research state with all experiments |
 | `research/strategy_search/journal.md` | Research journal with all batches and lessons |

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 class StockBoyActionRequest(BaseModel):
     """A paper-only adjustment command issued by StockBoy or an operator."""
     idempotency_key: str = Field(..., description="Unique key to prevent duplicate execution")
-    runner_key: str = Field(..., description="Target runner (blitztrader, cryptorunner, scalprunner)")
+    runner_key: str = Field(..., description="Target runner (blitztrader, cryptorunner, scalprunner, fencebarrunner)")
     action_type: str = Field(..., description="close_position, partial_close, set_stop, set_target, set_trailing, cancel_order")
     target_position_id: Optional[int] = None
     target_order_id: Optional[int] = None

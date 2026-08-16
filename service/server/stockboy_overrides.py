@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from database import get_db_connection
 from routes_shared import utc_now_iso_z
-from stockboy_policy import validate_override
+from stockboy_policy import CONTROLLED_RUNNERS, validate_override
 
 
 def _encode(value: Any) -> str:
@@ -88,11 +88,7 @@ def apply_active_overrides(agent_name: str, effective: dict[str, Any]) -> dict[s
     Source defaults remain untouched. Expired overrides are ignored; the
     manager marks them expired during its next cycle.
     """
-    runner_key = next((key for key, name in {
-        "blitztrader": "BlitzRunner",
-        "cryptorunner": "CryptoRunner",
-        "scalprunner": "ScalpRunner",
-    }.items() if name == agent_name), None)
+    runner_key = next((key for key, name in CONTROLLED_RUNNERS.items() if name == agent_name), None)
     if not runner_key:
         return effective
 

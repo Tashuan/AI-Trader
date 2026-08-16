@@ -30,11 +30,12 @@ SUPERVISOR_ROLE = "supervisor"
 STOCKBOY_NAME = "StockBoy"
 STOCKBOY_EMAIL = "stockboy@agent.dev"
 
-# The three deterministic runners StockBoy is allowed to control.
+# The deterministic runners StockBoy is allowed to control.
 CONTROLLED_RUNNERS: dict[str, str] = {
     "blitztrader": "BlitzRunner",
     "cryptorunner": "CryptoRunner",
     "scalprunner": "ScalpRunner",
+    "fencebarrunner": "FenceBarRunner",
 }
 
 # Actions that are strictly forbidden — StockBoy can never create new entries.
@@ -136,7 +137,7 @@ class PolicyViolation(Exception):
 # ============================================================
 
 def is_controlled_runner(runner_key: str) -> bool:
-    """Return True if the runner key is one of the three controlled runners."""
+    """Return True if the runner key is one of the controlled runners."""
     return runner_key in CONTROLLED_RUNNERS
 
 

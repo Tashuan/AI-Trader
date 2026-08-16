@@ -15,8 +15,9 @@ from stockboy_overrides import create_override, reset_overrides
 from stockboy_policy import PolicyViolation, validate_override
 from stockboy_provision import get_supervisor_token
 from stockboy_service import (
-    add_commentary, build_snapshot, execute_action, get_status, set_state,
+    add_commentary, add_observation, build_snapshot, execute_action, get_status, set_state,
 )
+from stockboy_entry_detector import evaluate_entry_quality
 
 
 def _supervisor_agent(authorization: str | None) -> dict:
@@ -112,3 +113,40 @@ def register_stockboy_routes(app: FastAPI, ctx: RouteContext) -> None:
     async def stockboy_override_reset(data: StockBoyOverrideResetRequest, authorization: str = Header(None)):
         _supervisor_agent(authorization)
         return reset_overrides(data.runner_key, data.reason)
+
+    @app.post("/api/stockboy/evaluate-entry")
+    async def stockboy_evaluate_entry(data: dict, authorization: str = Header(None)):
+        """Webhook called by FenceBarRunner when it creates a pending order.
+
+        Evaluates entry quality and cancels the order if vetoed.
+        """
+        _supervisor_agent(authorization)
+        symbol = data.get("symbol", "")
+        side = data.get("side", "long")
+        order_id = data.get("order_id")
+        runner_key = data.get("runner_key", "fencebarrunner")
+        try:
+            result = evaluate_entry_quality(symbol, side, data)
+            add_observation(
+                runner_key=runner_key, severity="warning" if result["decision"] == "veto" else "info",
+                category="entry_quality", message=f"{symbol} {side}: {result['decision']} — {'; '.join(result['reasons'])}",
+                metadata={"symbol": symbol, "side": side, "order_id": order_id, **result["metrics"]},
+            )
+            if result["decision"] == "veto" and order_id is not None:
+                cancel_req = StockBoyActionRequest(
+                    idempotency_key=f"sb-entry-veto-{order_id}",
+                    runner_key=runner_key, action_type="cancel_order",
+                    target_order_id=int(order_id),
+                    rationale=f"Entry vetoed: {'; '.join(result['reasons'])}",
+                    policy_rule="entry_quality",
+                )
+                cancel_resp = execute_action(cancel_req)
+                add_commentary(
+                    f"Entry veto on {symbol} {side}: order {order_id} cancelled ({cancel_resp.message})",
+                    kind="entry_quality", severity="warning",
+                )
+                result["cancel_result"] = cancel_resp.model_dump()
+            return {"decision": result["decision"], "reasons": result["reasons"], "metrics": result["metrics"]}
+        except Exception as exc:
+            add_commentary(f"Entry evaluation failed for {symbol}: {exc}", kind="error", severity="error")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc

@@ -70,6 +70,9 @@ from bot_manager import (
     start_scalp_runner,
     stop_scalp_runner,
     get_scalp_runner_status,
+    start_fence_bar_runner,
+    stop_fence_bar_runner,
+    get_fence_bar_runner_status,
 )
 
 
@@ -521,6 +524,29 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/arena/scalp-runner/status")
     async def arena_scalp_runner_status():
         return get_scalp_runner_status()
+
+    # ── FenceBarRunner endpoints ────────────────────────────────────
+
+    @app.post("/api/arena/fence-bar-runner/start")
+    async def arena_start_fence_bar_runner():
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        agents_dir = os.path.join(project_root, "agents")
+        result = start_fence_bar_runner(agents_dir)
+        if result.get("success"):
+            await asyncio.sleep(0.5)
+            status = get_fence_bar_runner_status()
+            if not status["running"] and status.get("last_error"):
+                return {"success": False, "message": f"FenceBarRunner crashed on startup", "error": status["last_error"]}
+        return result
+
+    @app.post("/api/arena/fence-bar-runner/stop")
+    async def arena_stop_fence_bar_runner():
+        result = stop_fence_bar_runner()
+        return result
+
+    @app.get("/api/arena/fence-bar-runner/status")
+    async def arena_fence_bar_runner_status():
+        return get_fence_bar_runner_status()
 
     # ── StockBoy supervisor endpoints ────────────────────────────────
     @app.post("/api/arena/stockboy/start")

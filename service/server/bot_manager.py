@@ -328,6 +328,60 @@ def get_crypto_runner_status() -> dict:
         return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
 
 
+# ── FenceBarRunner management ──────────────────────────────────────────
+
+_FENCE_BAR_RUNNER_KEY = "fencebarrunner-runner"
+
+
+def start_fence_bar_runner(agents_dir: str, poll_interval: int = 30) -> dict:
+    """Start the deterministic FenceBarRunner opening-range agent in a thread."""
+    with _lock:
+        existing = _bots.get(_FENCE_BAR_RUNNER_KEY)
+        if existing and existing.thread.is_alive():
+            return {"success": False, "message": "FenceBarRunner is already running"}
+
+        try:
+            _ensure_agents_path(agents_dir)
+            from fence_bar_runner import run_loop
+
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=_wrap_target(_FENCE_BAR_RUNNER_KEY, run_loop, (stop_event, poll_interval)),
+                name="ManagedRunner-fencebarrunner",
+                daemon=True,
+            )
+            thread.start()
+            _bots[_FENCE_BAR_RUNNER_KEY] = ManagedBot(
+                agent_key=_FENCE_BAR_RUNNER_KEY,
+                thread=thread,
+                stop_event=stop_event,
+                started_at=time.time(),
+                bot_type="runner",
+            )
+            return {
+                "success": True,
+                "message": "Started FenceBarRunner (deterministic opening-range fence bar agent)",
+                "thread": thread.name,
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed to start FenceBarRunner: {e}"}
+
+
+def stop_fence_bar_runner() -> dict:
+    """Stop the deterministic FenceBarRunner agent."""
+    return stop_bot(_FENCE_BAR_RUNNER_KEY)
+
+
+def get_fence_bar_runner_status() -> dict:
+    """Get the status of the FenceBarRunner agent."""
+    with _lock:
+        bot = _bots.get(_FENCE_BAR_RUNNER_KEY)
+        if not bot or not bot.thread.is_alive():
+            _bots.pop(_FENCE_BAR_RUNNER_KEY, None)
+            return {"running": False, "pid": None, "thread": None, "bot_type": "runner", "last_error": _get_dead_error(_FENCE_BAR_RUNNER_KEY)}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
+
+
 # ── StockBoy supervisor management ─────────────────────────────────────
 
 def start_stockboy() -> dict:

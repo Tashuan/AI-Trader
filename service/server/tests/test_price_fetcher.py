@@ -68,6 +68,8 @@ class UsStockPriceTimezoneTests(unittest.TestCase):
 
     def test_us_stock_market_prefers_alpha_vantage_before_yfinance(self) -> None:
         with patch.object(price_fetcher, "ALPHA_VANTAGE_API_KEY", "test-key"), \
+             patch.object(price_fetcher, "_get_schwab_stock_price", return_value=None), \
+             patch.object(price_fetcher, "_get_alpaca_stock_price", return_value=None), \
              patch.object(price_fetcher, "_get_us_stock_price", return_value=125.79) as mock_alpha, \
              patch.object(price_fetcher, "_get_yfinance_us_stock_price", return_value=124.0) as mock_yfinance:
             price = price_fetcher.get_price_from_market("AAPL", "2025-08-01T14:30:00Z", "us-stock")
@@ -78,6 +80,8 @@ class UsStockPriceTimezoneTests(unittest.TestCase):
 
     def test_us_stock_market_falls_back_to_yfinance_when_alpha_returns_none(self) -> None:
         with patch.object(price_fetcher, "ALPHA_VANTAGE_API_KEY", "test-key"), \
+             patch.object(price_fetcher, "_get_schwab_stock_price", return_value=None), \
+             patch.object(price_fetcher, "_get_alpaca_stock_price", return_value=None), \
              patch.object(price_fetcher, "_get_us_stock_price", return_value=None) as mock_alpha, \
              patch.object(price_fetcher, "_get_yfinance_us_stock_price", return_value=124.0) as mock_yfinance:
             price = price_fetcher.get_price_from_market("AAPL", "2025-08-01T14:30:00Z", "us-stock")
@@ -88,6 +92,8 @@ class UsStockPriceTimezoneTests(unittest.TestCase):
 
     def test_us_stock_market_uses_yfinance_when_alpha_key_missing(self) -> None:
         with patch.object(price_fetcher, "ALPHA_VANTAGE_API_KEY", "demo"), \
+             patch.object(price_fetcher, "_get_schwab_stock_price", return_value=None), \
+             patch.object(price_fetcher, "_get_alpaca_stock_price", return_value=None), \
              patch.object(price_fetcher, "_get_us_stock_price", return_value=125.79) as mock_alpha, \
              patch.object(price_fetcher, "_get_yfinance_us_stock_price", return_value=124.0) as mock_yfinance:
             price = price_fetcher.get_price_from_market("AAPL", "2025-08-01T14:30:00Z", "us-stock")

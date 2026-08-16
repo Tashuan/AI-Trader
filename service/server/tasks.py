@@ -2588,11 +2588,138 @@ async def alpaca_orphan_cleanup_loop():
         await asyncio.sleep(_env_int("ALPACA_ORPHAN_CLEANUP_INTERVAL", 300, minimum=60))
 
 
+async def fence_bar_force_exit_loop():
+    """Background task to force-close FenceBarRunner positions at 15:55 ET.
+
+    The Fence Bar strategy requires all positions to be closed at 15:55 ET
+    regardless of P&L. This loop checks every 30 seconds during market hours
+    and closes any FenceBarRunner-owned positions once the force-exit time
+    is reached. Each day's force-exit runs only once.
+    """
+    from database import get_db_connection, begin_write_transaction
+    from services import _update_position_from_signal, _reserve_signal_id
+    from price_fetcher import get_price_from_market
+    from zoneinfo import ZoneInfo
+
+    ET = ZoneInfo("America/New_York")
+    _FORCE_EXIT_TIME = "15:55"
+    _MARKET_CLOSE = "16:00"
+    _executed_today: Optional[str] = None
+
+    await asyncio.sleep(_env_int("FENCE_BAR_FORCE_EXIT_STARTUP_DELAY", 60, minimum=0))
+
+    while True:
+        try:
+            now_et = datetime.now(ET)
+            current_time = now_et.strftime("%H:%M")
+            today = now_et.date().isoformat()
+
+            # Reset the daily flag at market close
+            if current_time >= _MARKET_CLOSE:
+                _executed_today = None
+
+            # Only act between 15:55 and 16:00, once per day
+            if current_time < _FORCE_EXIT_TIME or current_time >= _MARKET_CLOSE:
+                await asyncio.sleep(30)
+                continue
+            if _executed_today == today:
+                await asyncio.sleep(30)
+                continue
+
+            conn = get_db_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT p.id, p.agent_id, p.symbol, p.market, p.side,
+                           p.quantity, p.entry_price, p.current_price,
+                           a.name as agent_name
+                    FROM positions p
+                    JOIN agents a ON a.id = p.agent_id
+                    WHERE a.name = 'FenceBarRunner'
+                """)
+                positions = cursor.fetchall()
+            finally:
+                conn.close()
+
+            if not positions:
+                _executed_today = today
+                await asyncio.sleep(30)
+                continue
+
+            now_utc = datetime.now(timezone.utc)
+            executed_at_str = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+            closed = 0
+
+            for pos in positions:
+                symbol = pos["symbol"]
+                side = pos["side"]
+                qty = abs(float(pos["quantity"] or 0))
+                if qty <= 0:
+                    continue
+                try:
+                    price = await asyncio.to_thread(
+                        get_price_from_market, symbol, executed_at_str, "us-stock", None, None,
+                    )
+                    if price is None or price <= 0:
+                        price = float(pos["current_price"] or pos["entry_price"] or 0)
+                    if price <= 0:
+                        continue
+                    action = "sell" if side == "long" else "cover"
+                    conn = get_db_connection()
+                    try:
+                        cursor = conn.cursor()
+                        begin_write_transaction(cursor)
+                        _update_position_from_signal(
+                            agent_id=pos["agent_id"], symbol=symbol, market="us-stock",
+                            action=action, quantity=qty, price=price,
+                            executed_at=executed_at_str, cursor=cursor,
+                            token_id=None, outcome=None,
+                        )
+                        from fees import TRADE_FEE_RATE
+                        trade_value = price * qty
+                        fee = trade_value * TRADE_FEE_RATE
+                        cursor.execute(
+                            "UPDATE agents SET cash = cash + ? WHERE id = ?",
+                            (trade_value - fee, pos["agent_id"]),
+                        )
+                        signal_id = _reserve_signal_id(cursor)
+                        cursor.execute(
+                            """INSERT INTO signals
+                                (signal_id, agent_id, message_type, market, signal_type, symbol,
+                                 side, entry_price, quantity, content, timestamp, created_at, executed_at)
+                               VALUES (?, ?, 'operation', ?, 'force_exit', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (signal_id, pos["agent_id"], "us-stock", symbol,
+                             side, price, qty,
+                             f"[FenceBarRunner] Force exit at 15:55 ET: {symbol} {side}",
+                             int(now_utc.timestamp()), now_utc.isoformat(), executed_at_str),
+                        )
+                        conn.commit()
+                        closed += 1
+                        print(f"[FenceBar] Force-exited {symbol} {side} {qty} @ {price}")
+                    except Exception as exc:
+                        conn.rollback()
+                        print(f"[FenceBar] Force-exit failed for {symbol}: {exc}")
+                    finally:
+                        conn.close()
+                except Exception as exc:
+                    print(f"[FenceBar] Force-exit error for {symbol}: {exc}")
+
+            if closed:
+                print(f"[FenceBar] Force-exited {closed} position(s) at 15:55 ET")
+            _executed_today = today
+
+        except Exception as e:
+            print(f"[FenceBar Force Exit Error] {e}")
+
+        await asyncio.sleep(30)
+
+
 BACKGROUND_TASK_REGISTRY = {
     "prices": update_position_prices,
     "auto_close": auto_close_positions_loop,
     "limit_orders": limit_order_processor_loop,
     "pending_orders": pending_order_filler_loop,
+    "fence_bar_force_exit": fence_bar_force_exit_loop,
     "alpaca_websocket_listener": alpaca_websocket_listener,
     "alpaca_fallback_reconcile": alpaca_fallback_reconcile_loop,
     "alpaca_balance_sync": alpaca_balance_sync_loop,

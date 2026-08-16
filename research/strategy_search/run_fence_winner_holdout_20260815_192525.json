@@ -1,0 +1,38 @@
+{
+  "winning_config": {
+    "retest": {
+      "enabled": false
+    },
+    "risk": {
+      "target_multiple_r": 1.0
+    },
+    "vol_filter": {
+      "enabled": true,
+      "mode": "day",
+      "spy_vol_threshold": 1.0,
+      "spy_atr_threshold": 1.8
+    }
+  },
+  "train": {
+    "cid": "train",
+    "label": "Train (70%)",
+    "ret": 0.2509,
+    "pass": 0.0769,
+    "passed": 5,
+    "n": 65,
+    "pf": 500.2419,
+    "trades": 16,
+    "wr": 0.0718
+  },
+  "holdout": {
+    "cid": "holdout",
+    "label": "Holdout (30%)",
+    "ret": 0.0,
+    "pass": 0.0,
+    "passed": 0,
+    "n": 29,
+    "pf": 0,
+    "trades": 0,
+    "wr": 0.0
+  }
+}

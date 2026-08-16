@@ -198,6 +198,12 @@ def _quote_reference_price(price: float, is_buyer: bool,
         return price
     spread = float(quote.get("spread", 0))
     if spread <= 0:
+        # Derive spread from bid/ask when not explicitly provided
+        bid = float(quote.get("bid", 0))
+        ask = float(quote.get("ask", 0))
+        if bid > 0 and ask > 0:
+            spread = ask - bid
+    if spread <= 0:
         return price
     half_spread = spread / 2.0
     return price + half_spread if is_buyer else price - half_spread

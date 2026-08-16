@@ -116,6 +116,11 @@ def _get_strategy_registry() -> dict:
             "strategy_type": "scalp_4step", "watchlist": ["NVDA", "TSLA", "AAPL", "AMD", "META"],
             "risk_tolerance": "moderate", "hold_period": "scalp", "runner": True,
         },
+        "fencebarrunner": {
+            "name": "FenceBarRunner", "tagline": "Deterministic opening-range fence bar runner",
+            "strategy_type": "fence_bar", "watchlist": ["NVDA", "TSLA", "AAPL", "AMD", "META"],
+            "risk_tolerance": "moderate", "hold_period": "intraday", "runner": True,
+        },
     })
     return registry
 
@@ -272,7 +277,7 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         info = registry[req.agent_key]
 
-        if req.agent_key in {"blitzrunner", "cryptorunner", "scalprunner"}:
+        if req.agent_key in {"blitzrunner", "cryptorunner", "scalprunner", "fencebarrunner"}:
             import asyncio
             if req.agent_key == "cryptorunner":
                 from crypto_scan_backtester import CryptoScanBacktester
@@ -314,6 +319,26 @@ def register_backtest_routes(app: FastAPI, ctx: RouteContext) -> None:
                     fill_config=_build_fill_config(req, "us-stock", "5m"),
                     spread_multiplier=req.spread_multiplier,
                     liquidity_mode=req.liquidity_mode,
+                )
+            elif req.agent_key == "fencebarrunner":
+                from fence_bar_backtester import FenceBarBacktester
+                from fence_bar_strategy import FENCE_BAR_DEFAULTS
+                from strategy_lab import deep_merge
+                overrides = {
+                    "retest": {"enabled": False},
+                    "risk": {"target_multiple_r": 1.0},
+                    "vol_filter": {
+                        "enabled": True, "mode": "day",
+                        "spy_vol_threshold": 1.0, "spy_atr_threshold": 1.8,
+                    },
+                }
+                base = deep_merge(FENCE_BAR_DEFAULTS, overrides)
+                params = deep_merge(base, req.params_override or {})
+                bt = FenceBarBacktester(
+                    symbols=req.symbols or info["watchlist"], params=params,
+                    start_date=req.start_date, end_date=req.end_date,
+                    initial_capital=req.initial_capital,
+                    slippage_bps=req.slippage_bps, fee_rate=req.fee_rate,
                 )
             else:
                 from scan_backtester import ScanBacktester

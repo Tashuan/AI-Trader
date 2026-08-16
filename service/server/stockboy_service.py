@@ -61,8 +61,9 @@ def _runner_key(agent_name: str) -> str:
 
 
 def _agent_ids(cursor) -> dict[str, int]:
+    placeholders = ",".join("?" for _ in RUNNER_AGENT_NAMES)
     cursor.execute(
-        "SELECT id, name FROM agents WHERE name IN (?, ?, ?)",
+        f"SELECT id, name FROM agents WHERE name IN ({placeholders})",
         RUNNER_AGENT_NAMES,
     )
     return {row["name"]: int(row["id"]) for row in cursor.fetchall()}
@@ -143,6 +144,7 @@ def _runner_health(cursor, agent_ids: dict[str, int]) -> list[StockBoyRunnerHeal
         "blitztrader": "blitztrader-runner",
         "cryptorunner": "cryptorunner-runner",
         "scalprunner": "scalprunner-runner",
+        "fencebarrunner": "fencebarrunner-runner",
     }
     for runner_key, agent_name in CONTROLLED_RUNNERS.items():
         agent_id = agent_ids.get(agent_name)
@@ -522,4 +524,23 @@ def add_commentary(content: str, kind: str = "status", severity: str = "info", d
 def add_journal(content: str, runner_key: Optional[str] = None, entry_type: str = "observation", title: Optional[str] = None, metadata: Optional[dict] = None) -> None:
     conn = get_db_connection(); cursor = conn.cursor()
     cursor.execute("INSERT INTO stockboy_journal (runner_key, entry_type, title, content, metadata_json) VALUES (?, ?, ?, ?, ?)", (runner_key, entry_type, title, content[:10000], _json(metadata or {})))
+    conn.commit(); conn.close()
+
+
+def add_observation(
+    runner_key: Optional[str] = None,
+    severity: str = "info",
+    category: str = "",
+    message: str = "",
+    metadata: Optional[dict] = None,
+    cycle_id: Optional[int] = None,
+) -> None:
+    """Log a StockBoy observation to the stockboy_observations table."""
+    conn = get_db_connection(); cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO stockboy_observations
+           (cycle_id, runner_key, severity, category, message, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (cycle_id, runner_key, severity, category, message[:2000], _json(metadata or {})),
+    )
     conn.commit(); conn.close()
