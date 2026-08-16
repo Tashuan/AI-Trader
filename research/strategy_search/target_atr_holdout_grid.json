@@ -1,0 +1,151 @@
+{
+  "etf_symbols_excluded": [
+    "IWM",
+    "QQQ",
+    "SPY"
+  ],
+  "atr_levels": [
+    1.2,
+    1.5
+  ],
+  "target_levels": [
+    1.0,
+    1.5,
+    2.0,
+    2.5
+  ],
+  "start": "2024-10-01",
+  "end": "2026-08-11",
+  "slippage_bps": 5.0,
+  "max_symbols": 15,
+  "results": [
+    {
+      "atr": 1.2,
+      "target_r": 1.0,
+      "full": {
+        "return_pct": 0.2637,
+        "total_trades": 11,
+        "agg_pf": 1.3978,
+        "max_dd_pct": 0.1916
+      },
+      "holdout": {
+        "train_return_pct": 0.1687,
+        "holdout_return_pct": 0.0951,
+        "train_trades": 6,
+        "holdout_trades": 5
+      }
+    },
+    {
+      "atr": 1.2,
+      "target_r": 1.5,
+      "full": {
+        "return_pct": 0.9007,
+        "total_trades": 11,
+        "agg_pf": 2.3585,
+        "max_dd_pct": 0.1916
+      },
+      "holdout": {
+        "train_return_pct": 0.5812,
+        "holdout_return_pct": 0.3195,
+        "train_trades": 6,
+        "holdout_trades": 5
+      }
+    },
+    {
+      "atr": 1.2,
+      "target_r": 2.0,
+      "full": {
+        "return_pct": 1.1776,
+        "total_trades": 11,
+        "agg_pf": 2.7762,
+        "max_dd_pct": 0.2329
+      },
+      "holdout": {
+        "train_return_pct": 0.7993,
+        "holdout_return_pct": 0.3783,
+        "train_trades": 6,
+        "holdout_trades": 5
+      }
+    },
+    {
+      "atr": 1.2,
+      "target_r": 2.5,
+      "full": {
+        "return_pct": 0.8517,
+        "total_trades": 11,
+        "agg_pf": 2.202,
+        "max_dd_pct": 0.2417
+      },
+      "holdout": {
+        "train_return_pct": 0.679,
+        "holdout_return_pct": 0.1726,
+        "train_trades": 6,
+        "holdout_trades": 5
+      }
+    },
+    {
+      "atr": 1.5,
+      "target_r": 1.0,
+      "full": {
+        "return_pct": 0.1687,
+        "total_trades": 6,
+        "agg_pf": 1.4741,
+        "max_dd_pct": 0.1779
+      },
+      "holdout": {
+        "train_return_pct": 0.1687,
+        "holdout_return_pct": 0,
+        "train_trades": 6,
+        "holdout_trades": 0
+      }
+    },
+    {
+      "atr": 1.5,
+      "target_r": 1.5,
+      "full": {
+        "return_pct": 0.5812,
+        "total_trades": 6,
+        "agg_pf": 2.6334,
+        "max_dd_pct": 0.1779
+      },
+      "holdout": {
+        "train_return_pct": 0.5812,
+        "holdout_return_pct": 0,
+        "train_trades": 6,
+        "holdout_trades": 0
+      }
+    },
+    {
+      "atr": 1.5,
+      "target_r": 2.0,
+      "full": {
+        "return_pct": 0.7993,
+        "total_trades": 6,
+        "agg_pf": 3.2467,
+        "max_dd_pct": 0.2329
+      },
+      "holdout": {
+        "train_return_pct": 0.7993,
+        "holdout_return_pct": 0,
+        "train_trades": 6,
+        "holdout_trades": 0
+      }
+    },
+    {
+      "atr": 1.5,
+      "target_r": 2.5,
+      "full": {
+        "return_pct": 0.679,
+        "total_trades": 6,
+        "agg_pf": 2.9086,
+        "max_dd_pct": 0.2329
+      },
+      "holdout": {
+        "train_return_pct": 0.679,
+        "holdout_return_pct": 0,
+        "train_trades": 6,
+        "holdout_trades": 0
+      }
+    }
+  ]
+}

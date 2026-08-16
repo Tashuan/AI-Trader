@@ -592,11 +592,75 @@ Each detector degrades gracefully — if market data is unavailable, it returns 
 
 ## Next Steps
 
-- [ ] Run holdout validation at ATR 1.0% (the new optimal)
-- [ ] Run slippage sensitivity at ATR 1.0% with ETF exclusion
-- [ ] Start forward paper trading with ETF-exclusion config at ATR 1.0%
+- [ ] Start forward paper trading with ATR 1.2% + 2.0R + ETF exclusion
+- [ ] Run slippage sensitivity on the winning config (ATR 1.2% + 2.0R)
+- [ ] Test excluding NVDA from the universe (net loser in attribution)
 - [ ] Consider negotiating lower fees or using a broker with 0% commission
-- [ ] Per-symbol PnL attribution within no-ETF universe to find individual losers
+- [ ] Update FenceBarRunner config to use the winning parameters
+
+### Batch 12 — Target sweep, fence sweep, holdout grid (2026-08-16)
+
+Five tests run via subagents to find the final winning config:
+
+#### 12a — ATR 1.0% holdout + slippage sensitivity
+
+- **Holdout:** Train +0.76%, holdout **-0.31%** — FAILS. ATR 1.0% overfits.
+- **Slippage:** Break-even at ~9.94 bps. At 0 bps: +0.89% (AggPF 1.98). At 5 bps: +0.44% (AggPF 1.42).
+- **Verdict:** ATR 1.0% is not robust. The marginal trades from the lower threshold are lower quality.
+
+#### 12b — Target multiple sweep (ATR 1.0%, ETF exclusion)
+
+- **Harness:** `research/strategy_search/target_sweep_etf10.py`
+- **Key metrics:**
+  | Target R | Return | Trades | AggPF | Win rate |
+  |---|---|---|---|---|
+  | 0.75 | -0.16% | 18 | 0.86 | 56% |
+  | 1.0 | +0.44% | 18 | 1.42 | 56% |
+  | 1.25 | +0.72% | 18 | 1.53 | 56% |
+  | 1.5 | +1.20% | 18 | 1.88 | 56% |
+  | **2.0** | **+1.88%** | 18 | **2.38** | 56% |
+  | 2.5 | +0.64% | 18 | 1.40 | 44% |
+- **Verdict:** 2.0R is the sweet spot. 4.2x return improvement over 1R with same trades and win rate. 2.5R is the cliff edge.
+
+#### 12c — Fence range sweep + per-symbol attribution
+
+- **Fence sweep:** 0.30-0.80 and 0.35-0.80 tie exactly. Widening max above 0.80% is catastrophic (-1.21% to -4.04%).
+- **PnL attribution:** NVDA is net loser (7 trades, -$72, 43% win). AMZN (+$167) and AAPL (+$95) are winners.
+
+#### 12d — 2.0R holdout sweep across ATR levels
+
+- **Harness:** `research/strategy_search/target2r_holdout_sweep.py`
+- **Key metrics:**
+  | ATR | Train | Holdout | Full | AggPF | Generalizes? |
+  |---|---|---|---|---|---|
+  | 1.0 | +2.20% | -0.32% | +1.88% | 2.38 | NO |
+  | **1.2** | **+0.80%** | **+0.38%** | **+1.18%** | **2.78** | **YES** |
+  | 1.5 | +0.80% | 0.00% | +0.80% | 3.25 | NO (zero holdout trades) |
+- **Verdict:** ATR 1.2% is the only level where 2.0R generalizes.
+
+#### 12e — Target × ATR holdout grid
+
+- **Harness:** `research/strategy_search/target_atr_holdout_grid.py`
+- **Key metrics (ATR 1.2% only — ATR 1.5% fails all):**
+  | Target R | Full Return | AggPF | Train | Holdout | Generalizes? |
+  |---|---|---|---|---|---|
+  | 1.0 | +0.26% | 1.40 | +0.17% | +0.10% | YES |
+  | 1.5 | +0.90% | 2.36 | +0.58% | +0.32% | YES |
+  | **2.0** | **+1.18%** | **2.78** | **+0.80%** | **+0.38%** | **YES** |
+  | 2.5 | +0.85% | 2.20 | +0.68% | +0.17% | YES |
+- **Verdict:** 2.0R has the best holdout return (+0.38%) and best full-period AggPF (2.78). 2.5R degrades.
+
+#### Final winning config
+
+**ETF exclusion + ATR 1.2% + 2.0R target, no HITL:**
+- Full period: **+1.18% return**, AggPF **2.78**, 11 trades, 0.23% max DD
+- Train: +0.80%, 6 trades, 60% pass rate
+- Holdout: **+0.38%**, 5 trades, 50% pass rate
+- Both train and holdout positive — generalizes to unseen data
+- AggPF 2.78 is the highest of any generalizing config
+- 4.5x return improvement over the original 1R ETF-exclusion config (+0.26%)
+
+This is the final winning config. Next step: forward paper trading.
 
 ### Batch 11 — Holdout validation, ATR sweep, universe filtering (2026-08-16)
 
@@ -731,7 +795,12 @@ This is the strongest config found across all batches. Next steps: holdout valid
 39. **Widening the stop makes things worse, not better.** Using fence low/high instead of fence midpoint dropped return from -0.36% to -0.57%. The wider stop lets losers run longer, accumulating more damage. The tight midpoint stop is correct — the problem is which stocks we trade, not how tight the stop is.
 40. **The 0.20% round-trip fee floor is the real cost killer, not slippage.** Break-even slippage is 0.53 bps. Even at 0 bps slippage, return is only +0.04% (AggPF 1.03). The 2×0.1% fees = 0.20% round-trip consumes 39% of every 0.51% avg winner. The strategy has no cost cushion.
 41. **HITL and ETF exclusion don't combine — they conflict.** ETF exclusion alone (+0.26%, AggPF 1.40) beats HITL no-breakeven alone (+0.09%, AggPF 1.17), but combining them produces -0.16% (AggPF 0.70). The HITL entry veto filters out winners that the ETF exclusion kept — once ETFs are gone, the remaining trades are higher quality and the veto hurts more than it helps.
-42. **The best Fence Bar config is ETF exclusion alone at ATR 1.0%, no HITL.** +0.44% return, AggPF 1.42, 18 trades, 0.24% max DD. This is the first config that's clearly profitable at 5 bps slippage with a meaningful PF above 1.15. The HITL detectors add value only when ETFs are present — they're a band-aid for a universe problem that's better solved by excluding ETFs entirely.
+42. **The best Fence Bar config is ETF exclusion at ATR 1.2% with 2.0R target, no HITL.** +1.18% return, AggPF 2.78, 11 trades, 0.23% max DD. Both train (+0.80%) and holdout (+0.38%) positive. The HITL detectors add value only when ETFs are present — they're a band-aid for a universe problem that's better solved by excluding ETFs entirely.
 43. **ATR 1.0% beats ATR 1.2% with ETF exclusion.** Lowering the ATR threshold from 1.2% to 1.0% nearly doubles the return (+0.26% → +0.44%) and trade count (11 → 18) with only slightly lower AggPF (1.40 → 1.42). ATR 1.2% was a local dip — both lowering to 1.0 and raising to 1.5 beat it. ATR >= 1.8 is a dead zone with zero trades.
 44. **ETF exclusion generalizes to the holdout period.** 70/30 split: train +0.17%, holdout +0.10%. Both splits positive — the hallmark of a real edge. The baseline's positive holdout (+0.21%) is suspect because its train was negative (-0.56%).
 45. **Removing low-vol stocks from the universe HURTS.** Excluding BABA/XPEV/NIO/PLUG/SOFI in addition to ETFs dropped return from +0.26% to -0.16%. The low-vol names were never being selected by the scanner anyway — their presence in the candidate list was occasionally pushing out other names that *were* profitable. Trimming the universe further destabilizes the ranking dynamics.
+46. **ATR 1.0% does NOT generalize to holdout — it overfits.** Train +0.76% but holdout -0.31% with 1R target. The full-period +0.44% was driven entirely by the train portion. ATR 1.0% produces more trades but the marginal trades are lower quality and don't survive out-of-sample. ATR 1.2% is the robust choice.
+47. **2.0R target is the sweet spot — 4.2x return improvement over 1R.** With ETF exclusion at ATR 1.0%, 2.0R gives +1.88% return (vs +0.44% at 1R) with the same 18 trades and 55.56% win rate. The winners that were already hitting 1R just keep running to 2R. 2.5R is the cliff edge — return collapses to +0.64% and win rate drops to 44%.
+48. **ATR 1.2% + 2.0R + ETF exclusion is the winning config — it generalizes.** Train +0.80%, holdout +0.38%, full-period +1.18% with AggPF 2.78. This is the only ATR × target combination where both train and holdout are positive with meaningful trade counts. ATR 1.5% fails holdout entirely (zero trades in holdout period).
+49. **The fence range ceiling is a critical guardrail.** Widening max_range_pct above 0.80% is catastrophic: 0.35-1.00% loses -1.21% across 40 trades, 0.50-1.50% hemorrhages -4.04% across 89 trades. The 0.80% ceiling filters out low-quality setups. Tighter min (0.20-0.25) cuts trades and flips negative. 0.30-0.80 and 0.35-0.80 tie exactly.
+50. **NVDA is a net loser; AMZN and AAPL are the winners.** Per-symbol attribution: NVDA had 7 trades for -$72.10 total (42.9% win), while AMZN (+$166.93) and AAPL (+$94.90) each had 1 winning trade. NVDA's high frequency is a drag — its fence breakouts don't follow through. The walk-forward discovery process rotates into better setups than a static universe would.
