@@ -1,6 +1,6 @@
 ---
 name: trading-systems
-description: How the backtester, realtime scanner, forward walker, and strategy lab fit together — entry points, flows, and where to look
+description: How the backtester, realtime scanner, forward walker, strategy lab, and live runners fit together — entry points, flows, and where to look
 triggers:
   - user
   - model
@@ -12,18 +12,56 @@ allowed-tools:
 
 # AI-Trader Trading Systems — Operational Context
 
-Four systems form the research-to-live pipeline. Here's how they fit together and where to jump in.
+Five systems form the research-to-live pipeline. Here's how they fit together and where to jump in.
 
 ## The Pipeline (top to bottom)
 
 ```
-Strategy Lab  →  Forward Walker  →  Backtester  →  Promotion  →  Live Agent + Scanner
+Strategy Lab  →  Forward Walker  →  Backtester  →  Promotion  →  Live Runners
 (define params)  (validate OOS)     (replay history) (gates)       (trade for real)
 ```
 
-Strategy Lab defines candidate parameter sets. Forward Walker validates them out-of-sample across rolling time windows using the Backtester. If a candidate passes promotion gates, it gets promoted to the live agent config (with explicit human confirmation). The live agent then uses the Realtime Scanner to discover and trade stocks every cycle.
+Strategy Lab defines candidate parameter sets. Forward Walker validates them out-of-sample across rolling time windows using the Backtester. If a candidate passes promotion gates, it gets promoted to the live agent config (with explicit human confirmation). The live runners then discover and trade stocks every cycle.
 
-The shared brain is `agents/scalp_scan_core.py` — pure strategy logic that both the live scanner and backtester call into. This is what keeps backtests honest: they run the same code the live agent runs. `strategy_registry.deep_merge()` layers candidate overrides on top of `SCALP_DEFAULT_PARAMS` everywhere. `execution_simulator.FillConfig` is the shared fill model (slippage, fees, partial fills, tick rounding).
+The shared brain for ScalpRunner is `agents/scalp_scan_core.py` — pure strategy logic that both the live scanner and backtester call into. This is what keeps backtests honest: they run the same code the live agent runs. `strategy_registry.deep_merge()` layers candidate overrides on top of `SCALP_DEFAULT_PARAMS` everywhere. `execution_simulator.FillConfig` is the shared fill model (slippage, fees, partial fills, tick rounding).
+
+**ORBRunner is a separate pipeline** — it has its own BS-priced backtester (`orb_options_bs_backtester.py`), its own validation suite (`orb_options_validation.py`), and its own live runner (`agents/orb_runner.py`). It does not go through the Strategy Lab / Forward Walker / Promotion flow. See the "ORBRunner" section below.
+
+---
+
+## Live Runners — Trade for Real
+
+**What they are:** Deterministic Python runners that execute strategies via broker APIs. Each runner is registered in `bot_manager.py`, exposed via `routes_arena.py`, and controlled from the Arena Agents page UI.
+
+| Runner | File | Market | Execution | Discovery |
+|---|---|---|---|---|
+| BlitzRunner | `agents/blitz_runner.py` | Crypto | Schwab (equities) / Alpaca (crypto) | Fixed universe |
+| ScalpRunner | `agents/scalp_runner.py` | US equities | Schwab stop-limit orders | Dynamic (Schwab movers + scanner) |
+| CryptoRunner | `agents/crypto_runner.py` | Crypto | Alpaca | Fixed universe |
+| FenceBarRunner | `agents/fence_bar_runner.py` | US equities | Schwab | Fixed universe + SPY vol filter |
+| ORBRunner | `agents/orb_runner.py` | US equity options | Alpaca options API | Dynamic (Schwab movers → Alpaca snapshots) |
+
+**Common architecture (all runners):**
+- `PersonalityLogForwarder` — batches JSON events to `/api/arena/personality-log/batch` every 2s for Timeline UI
+- `RunnerNarrative` — structured event emitter (phase/kind/outcome/priority/facts)
+- State persistence to `*_runner_state.json` (consecutive losses, open positions, signals posted)
+- Goal check before trading (max loss halt, goal achieved stand-down)
+- Force exit at 15:55 ET (equity runners)
+- Circuit breaker (consecutive loss halt per symbol)
+
+**ORBRunner specifics:**
+- Trades OTM+1 options via Alpaca paper trading API (not equities)
+- 5-min opening range (09:30–09:35 ET), breakout entry 09:35–10:30 ET
+- Stop/target on underlying price (1.0% / 1.5%), 10-min confirmation period
+- Dynamic symbol discovery enabled by default: Schwab movers → Alpaca snapshots → fallback to `["NVDA", "TSLA", "AAPL", "COIN"]`
+- Config in `ORB_CONFIG` at top of `orb_runner.py` (not in `strategy_registry.py`)
+- API: `POST /api/arena/orb-runner/{start,stop}`, `GET /api/arena/orb-runner/status`
+- Not yet in StockBoy's `CONTROLLED_RUNNERS` (see `stockboy_policy.py`)
+
+**FenceBarRunner specifics:**
+- Fence bar pattern (N-bar consolidation → breakout)
+- SPY ATR vol filter at premarket — skips trading on high-vol days
+- Config in `strategy_registry.py` via `FENCE_DEFAULT_PARAMS`
 
 ---
 
@@ -69,6 +107,8 @@ The shared brain is `agents/scalp_scan_core.py` — pure strategy logic that bot
 - `agents/backtester.py` — generic `BacktestAgent` mock for any agent's `analyze()` method.
 - `agents/crypto_scan_backtester.py` — crypto variant (used by generic walk-forward).
 - `agents/execution_simulator.py` — `FillConfig` + `simulate_entry()` / `simulate_exit()`. Slippage in bps, fees, size impact, vol widening, partial fills, tick rounding.
+- `research/strategy_search/orb_options_bs_backtester.py` — ORB Options backtester (Black-Scholes pricing, no historical option bars needed). Separate from the ScalpRunner pipeline.
+- `research/strategy_search/orb_options_validation.py` — ORB Options validation suite (IV sensitivity, walk-forward, bear market simulation).
 - `service/server/routes_backtest.py` — API: `POST /api/backtest/run` with `BacktestRequest`.
 
 **To run a backtest:** Either call `ScalpScanBacktester(...).run()` directly in a script, or POST to `/api/backtest/run`. You need: symbols, params (or params_override), date range, interval, capital, slippage_bps.
@@ -94,6 +134,8 @@ The shared brain is `agents/scalp_scan_core.py` — pure strategy logic that bot
 
 **This system is NOT used by the backtester.** It's live-only. The backtester trades fixed symbol lists. This is the biggest fidelity gap — real traders scan 32+ symbols; backtests trade the same 5.
 
+**ORBRunner has its own discovery** — `discover_movers()` in `orb_runner.py` calls Schwab movers and Alpaca snapshots directly (same providers, different code path). It does not use the ScalpRunner 4-step pipeline. Discovery runs once per day at ~09:20 ET and caches results in `orb_runner_state.json`.
+
 ---
 
 ## Promotion — Test to Live
@@ -112,9 +154,13 @@ The shared brain is `agents/scalp_scan_core.py` — pure strategy logic that bot
 
 **"Run a quick backtest":** `ScalpScanBacktester(symbols, params, start, end, ...).run()` or POST `/api/backtest/run`.
 
-**"Change what the live scanner discovers":** Edit `params.discovery.*` in the agent's strategy params, or modify `_SCANNER_UNIVERSE` / `_FALLBACK_SHORTLIST` in `agents/workspaces/scalprunner/scan.py`.
+**"Backtest ORB Options":** `python3 research/strategy_search/orb_options_bs_backtester.py --symbols NVDA,TSLA,AAPL,COIN --start 2026-04-01 --end 2026-08-16 --strike-offset 1 --no-iv-fetch` (from `agents/` dir). See `docs/ORB_OPTIONS_STRATEGY.md`.
 
-**"Change strategy logic":** Edit `agents/scalp_scan_core.py` — this is the shared brain. Changes here affect both live trading and backtests.
+**"Start/stop a live runner":** Via Arena UI (Agents page) or API: `POST /api/arena/{runner-key}/{start,stop}`, `GET /api/arena/{runner-key}/status`. Runner keys: `blitztrader`, `scalprunner`, `cryptorunner`, `fencebarrunner`, `orb-runner`.
+
+**"Change what the live scanner discovers":** Edit `params.discovery.*` in the agent's strategy params, or modify `_SCANNER_UNIVERSE` / `_FALLBACK_SHORTLIST` in `agents/workspaces/scalprunner/scan.py`. For ORBRunner, edit `ORB_CONFIG["discovery_*"]` in `orb_runner.py`.
+
+**"Change strategy logic":** Edit `agents/scalp_scan_core.py` — this is the shared brain. Changes here affect both live trading and backtests. For ORB Options, edit `orb_runner.py` and `orb_options_bs_backtester.py` separately (they are not shared).
 
 **"Change fill realism":** Edit `agents/execution_simulator.py` or pass different `FillConfig` params.
 
@@ -127,6 +173,9 @@ The shared brain is `agents/scalp_scan_core.py` — pure strategy logic that bot
 - Backtests use fixed symbols; live scanner is dynamic. Don't assume backtest results transfer to live discovery without validation.
 - `walk_forward.py` (generic) uses `CryptoScanBacktester`. For ScalpRunner, use `walk_forward_harness.py` instead — it has the pre-move cap and SPY regime filters.
 - `scalp_scan_core.py` is shared between live and backtest. Changes affect both. Test accordingly.
+- ORBRunner does NOT share code with the ScalpRunner pipeline. Its backtester and live runner are separate files. Changes to `scalp_scan_core.py` do not affect ORBRunner.
+- ORBRunner config lives in `ORB_CONFIG` at the top of `orb_runner.py`, not in `strategy_registry.py`. It does not use the 3-layer parameter resolution model.
+- ORBRunner is not yet in StockBoy's `CONTROLLED_RUNNERS` — the supervisor cannot monitor or manage it.
 - Promotion always requires human confirmation. Never auto-promote.
 - Default gates are lenient (`min_return_pct: 0.0`). Tighten them if you want stricter validation.
 - Late entry is the dominant loss factor (72% of move done before fill). Bar-based fills are inherently late — this is a structural limitation, not a bug.
