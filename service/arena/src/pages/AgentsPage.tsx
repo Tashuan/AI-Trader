@@ -77,6 +77,7 @@ export function AgentsPage() {
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus | null>(null);
   const [cryptoRunnerStatus, setCryptoRunnerStatus] = useState<RunnerStatus | null>(null);
   const [scalpRunnerStatus, setScalpRunnerStatus] = useState<RunnerStatus | null>(null);
+  const [orbRunnerStatus, setOrbRunnerStatus] = useState<RunnerStatus | null>(null);
   const [toast, setToast] = useState<{ type: 'error' | 'success'; message: string; detail?: string } | null>(null);
 
   const showToast = (type: 'error' | 'success', message: string, detail?: string) => {
@@ -112,6 +113,11 @@ export function AgentsPage() {
     fetch('/api/arena/scalp-runner/status')
       .then(r => r.json())
       .then(data => setScalpRunnerStatus(data))
+      .catch(() => {});
+
+    fetch('/api/arena/orb-runner/status')
+      .then(r => r.json())
+      .then(data => setOrbRunnerStatus(data))
       .catch(() => {});
 
     fetch('/api/arena/full')
@@ -243,6 +249,35 @@ export function AgentsPage() {
       fetchData();
     } catch (e) {
       console.error('Failed to stop scalp runner:', e);
+    }
+    setActionLoading(null);
+  };
+
+  const handleStartOrbRunner = async () => {
+    setActionLoading('start-orb-runner');
+    try {
+      const resp = await fetch('/api/arena/orb-runner/start', { method: 'POST' });
+      const data = await resp.json();
+      if (!data.success) {
+        showToast('error', data.message || 'Failed to start ORBRunner', data.error);
+      }
+      await new Promise(r => setTimeout(r, 500));
+      fetchData();
+    } catch (e) {
+      console.error('Failed to start ORB runner:', e);
+      showToast('error', 'Failed to start ORBRunner', String(e));
+    }
+    setActionLoading(null);
+  };
+
+  const handleStopOrbRunner = async () => {
+    setActionLoading('stop-orb-runner');
+    try {
+      await fetch('/api/arena/orb-runner/stop', { method: 'POST' });
+      await new Promise(r => setTimeout(r, 500));
+      fetchData();
+    } catch (e) {
+      console.error('Failed to stop ORB runner:', e);
     }
     setActionLoading(null);
   };
@@ -531,6 +566,85 @@ export function AgentsPage() {
             <div className="flex-1 min-w-0">
               <div className="text-[10px] font-semibold text-arena-red">Runner crashed</div>
               <pre className="text-[9px] text-arena-text-dim whitespace-pre-wrap max-h-24 overflow-y-auto font-mono mt-0.5">{scalpRunnerStatus.last_error}</pre>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ORBRunner — Deterministic ORB Options Runner */}
+      <div className="card-base p-4 mb-4 border-l-2 border-l-arena-yellow/40">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <div className="w-9 h-9 rounded-full bg-arena-yellow/15 flex items-center justify-center">
+                <Zap size={16} className="text-arena-yellow" />
+              </div>
+              <div
+                className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-arena-card"
+                style={{ background: orbRunnerStatus?.running ? '#34D399' : '#8B92A5' }}
+              />
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-white flex items-center gap-2">
+                ORBRunner
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-arena-yellow/15 text-arena-yellow font-mono">
+                  DETERMINISTIC
+                </span>
+              </div>
+              <div className="text-[10px] text-arena-text-dim">
+                Opening Range Breakout options bot. 5min range → OTM+1 call/put via Alpaca paper. 1.0% stop / 1.5% target on underlying. Validated: +147% backtest, IV-robust, walk-forward PASS.
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {orbRunnerStatus?.running ? (
+              <>
+                <div className="flex items-center gap-2 text-[10px] text-arena-green">
+                  <Circle size={8} className="fill-arena-green text-arena-green animate-pulse" />
+                  <span>Running</span>
+                </div>
+                <Tooltip text="Stop the deterministic ORBRunner" side="left">
+                  <button
+                    onClick={handleStopOrbRunner}
+                    disabled={actionLoading === 'stop-orb-runner'}
+                    className="px-3 py-1.5 bg-arena-red/15 text-arena-red rounded-lg hover:bg-arena-red/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Square size={12} />
+                    <span className="text-[10px] font-semibold">{actionLoading === 'stop-orb-runner' ? 'Stopping...' : 'Stop'}</span>
+                  </button>
+                </Tooltip>
+              </>
+            ) : (
+              <>
+                <div className="text-[10px] text-arena-text-dim">
+                  Not running — launch to start ORB options strategy
+                </div>
+                <Tooltip text="Starts the deterministic ORBRunner — opening range breakout with OTM options via Alpaca paper trading" side="left">
+                  <button
+                    onClick={handleStartOrbRunner}
+                    disabled={actionLoading === 'start-orb-runner'}
+                    className="px-3 py-1.5 bg-arena-green/15 text-arena-green rounded-lg hover:bg-arena-green/25 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Play size={12} />
+                    <span className="text-[10px] font-semibold">{actionLoading === 'start-orb-runner' ? 'Starting...' : 'Launch Runner'}</span>
+                  </button>
+                </Tooltip>
+              </>
+            )}
+          </div>
+        </div>
+        {orbRunnerStatus?.running && (
+          <div className="mt-2 pt-2 border-t border-arena-border/50 text-[9px] text-arena-text-dim">
+            Trades 09:30-10:30 ET. Buys OTM+1 calls/puts on opening range breakouts. Monitors underlying for stop/target, force-closes at 15:55 ET.
+          </div>
+        )}
+        {!orbRunnerStatus?.running && orbRunnerStatus?.last_error && (
+          <div className="mt-2 pt-2 border-t border-arena-red/20 flex items-start gap-2">
+            <AlertCircle size={12} className="text-arena-red shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] font-semibold text-arena-red">Runner crashed</div>
+              <pre className="text-[9px] text-arena-text-dim whitespace-pre-wrap max-h-24 overflow-y-auto font-mono mt-0.5">{orbRunnerStatus.last_error}</pre>
             </div>
           </div>
         )}

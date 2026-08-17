@@ -382,6 +382,60 @@ def get_fence_bar_runner_status() -> dict:
         return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
 
 
+# ── ORBRunner management ───────────────────────────────────────────────
+
+_ORB_RUNNER_KEY = "orbrunner-runner"
+
+
+def start_orb_runner(agents_dir: str, poll_interval: int = 30) -> dict:
+    """Start the deterministic ORBRunner options agent in a thread."""
+    with _lock:
+        existing = _bots.get(_ORB_RUNNER_KEY)
+        if existing and existing.thread.is_alive():
+            return {"success": False, "message": "ORBRunner is already running"}
+
+        try:
+            _ensure_agents_path(agents_dir)
+            from orb_runner import run_loop
+
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=_wrap_target(_ORB_RUNNER_KEY, run_loop, (stop_event, poll_interval)),
+                name="ManagedRunner-orbrunner",
+                daemon=True,
+            )
+            thread.start()
+            _bots[_ORB_RUNNER_KEY] = ManagedBot(
+                agent_key=_ORB_RUNNER_KEY,
+                thread=thread,
+                stop_event=stop_event,
+                started_at=time.time(),
+                bot_type="runner",
+            )
+            return {
+                "success": True,
+                "message": "ORBRunner started",
+                "thread": thread.name,
+            }
+        except Exception as e:
+            return {"success": False, "message": f"Failed to start ORBRunner: {e}"}
+
+
+def stop_orb_runner() -> dict:
+    """Stop the deterministic ORBRunner agent."""
+    return stop_bot(_ORB_RUNNER_KEY)
+
+
+def get_orb_runner_status() -> dict:
+    """Get the status of the ORBRunner agent."""
+    with _lock:
+        bot = _bots.get(_ORB_RUNNER_KEY)
+        if not bot or not bot.thread.is_alive():
+            _bots.pop(_ORB_RUNNER_KEY, None)
+            return {"running": False, "pid": None, "thread": None, "bot_type": "runner", "last_error": _get_dead_error(_ORB_RUNNER_KEY)}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
+
+
 # ── StockBoy supervisor management ─────────────────────────────────────
 
 def start_stockboy() -> dict:

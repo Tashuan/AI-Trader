@@ -639,7 +639,7 @@ The JSON backup will automatically include the new field on the next config save
 
 ## 5. ORB Options Parameter Reference
 
-The ORB Options strategy is a standalone research backtester (not yet integrated into the live platform's 3-layer config model). Parameters are passed directly to the backtester via CLI flags or Python dicts. See `docs/ORB_OPTIONS_STRATEGY.md` for full strategy documentation.
+The ORB Options strategy is deployed as `agents/orb_runner.py` (ORBRunner) and paper trades via Alpaca's options API. The backtester (`orb_options_bs_backtester.py`) uses Black-Scholes pricing for historical validation. Parameters are defined in `ORB_CONFIG` at the top of `orb_runner.py`. See `docs/ORB_OPTIONS_STRATEGY.md` for full strategy documentation.
 
 ### Winning Configuration (`orb_bs_otm1`)
 
@@ -661,6 +661,20 @@ Validated via IV sensitivity (PASS), walk-forward (PASS), and bear market simula
 | `circuit_breaker` | 3 | Consecutive losses before halting a symbol |
 | `risk_free_rate` | 0.05 | 5% risk-free rate for BS pricing |
 | `min_entry_time` | "09:30" | Skip entries before this time |
+| `discovery_mode` | "dynamic" | Symbol discovery: "dynamic" (movers) or "fixed" (DEFAULT_SYMBOLS) |
+| `discovery_max_symbols` | 8 | Max symbols to trade after dynamic discovery |
+| `discovery_min_change_pct` | 1.0 | Min abs daily change % to qualify for ORB trading |
+| `discovery_universe` | 34 symbols | Broad universe for Alpaca snapshot scanning |
+
+### Symbol Discovery
+
+By default, ORBRunner uses **dynamic discovery** to select each day's trading universe:
+
+1. **Schwab movers** (primary) — live up/down movers from $COMPX, $DJI, $SPX via `schwab_provider.movers_all()`
+2. **Alpaca snapshots** (fallback) — batch snapshots of a 34-symbol universe, ranked by abs daily change % via `alpaca_realtime_provider.screen_movers()`
+3. **DEFAULT_SYMBOLS** (final fallback) — `["NVDA", "TSLA", "AAPL", "COIN"]` if neither provider is available
+
+Discovery runs once per day at ~09:20 ET and caches results in `orb_runner_state.json`. Set `discovery_mode: "fixed"` to use the static 4-symbol universe (matches the backtest).
 
 ### Backtest Results
 
@@ -671,7 +685,7 @@ Validated via IV sensitivity (PASS), walk-forward (PASS), and bear market simula
 | Win rate | 45% |
 | Max drawdown | 34.3% |
 | Total trades | 354 |
-| Symbols | NVDA, TSLA, AAPL, COIN |
+| Symbols | NVDA, TSLA, AAPL, COIN (backtest universe) |
 
 ### Validation Summary
 
@@ -701,3 +715,20 @@ python3 ../research/strategy_search/orb_options_bs_backtester.py \
 ```bash
 python3 ../research/strategy_search/orb_options_validation.py --test all
 ```
+
+### Running the Live Paper Runner
+
+ORBRunner is managed by the Arena platform's bot_manager and can be started/stopped from the Agents page UI, or via API:
+
+```bash
+# Start
+curl -X POST http://localhost:8000/api/arena/orb-runner/start
+
+# Stop
+curl -X POST http://localhost:8000/api/arena/orb-runner/stop
+
+# Status
+curl http://localhost:8000/api/arena/orb-runner/status
+```
+
+Requires `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` environment variables for Alpaca options execution.

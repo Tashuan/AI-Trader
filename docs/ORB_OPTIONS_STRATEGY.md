@@ -221,18 +221,6 @@ python3 ../research/strategy_search/orb_options_backtester.py \
   --strike-offset 1
 ```
 
-## Key Source Files
-
-| File | Role |
-|---|---|
-| `research/strategy_search/orb_options_bs_backtester.py` | BS-priced ORB options backtester (primary) |
-| `research/strategy_search/orb_options_backtester.py` | Historical-bar ORB options backtester (legacy) |
-| `research/strategy_search/orb_options_validation.py` | Validation suite (IV sensitivity, walk-forward, bear market) |
-| `agents/schwab_options_provider.py` | Schwab options chain + bar data provider |
-| `research/strategy_search/scalp_alt_signals.py` | Shared data fetching (`fetch_1m_data`, `fetch_prev_closes`) |
-| `research/strategy_search/data_cache.py` | Cached data provider wrapper |
-| `research/strategy_search/equity_data_providers.py` | Alpaca equity data provider |
-
 ## Assumptions & Limitations
 
 1. **Constant IV** — IV is held constant during the holding period (~2.8h avg). Real IV varies with price moves (volatility smile, term structure). The IV sensitivity test confirms this doesn't affect the edge, but absolute returns would shift with real per-symbol IV.
@@ -246,13 +234,84 @@ python3 ../research/strategy_search/orb_options_backtester.py \
 
 - Strategy logic implemented and backtested across 4.5 months
 - Validated via IV sensitivity (PASS), walk-forward (PASS), and bear market (MIXED)
-- Not yet integrated into the live trading platform
-- Not yet forward-tested on Alpaca paper
+- **ORBRunner built and integrated into the Arena platform** — paper trades options via Alpaca
+- Dynamic symbol discovery enabled by default (Schwab movers → Alpaca snapshots → fallback to fixed universe)
+- Full platform logging via PersonalityLogForwarder — events visible in Timeline UI
+- Start/stop/control via Arena Agents page (yellow runner card)
+
+## Paper Trading (ORBRunner)
+
+The strategy is deployed as `agents/orb_runner.py` — a deterministic runner that mirrors the FenceBarRunner architecture and trades real option contracts on Alpaca's paper trading API.
+
+### Runner Lifecycle
+
+| Time (ET) | Action |
+|---|---|
+| 09:20–09:29 | **Discovery** — calls Schwab movers / Alpaca snapshots, selects top movers ranked by daily change % |
+| 09:30–09:35 | **Range build** — fetches 1m bars, marks opening range high/low per symbol |
+| 09:35–10:30 | **ORB window** — watches for breakout closes, buys OTM+1 options on signal |
+| 10:30–15:55 | **Monitoring** — checks open positions for stop/target on underlying, no new entries |
+| 15:55 | **Force exit** — closes all remaining option positions |
+
+### Symbol Discovery
+
+By default, the runner uses **dynamic discovery** (`discovery_mode: "dynamic"`):
+
+1. **Schwab movers** (primary) — live up/down movers from $COMPX, $DJI, $SPX
+2. **Alpaca snapshots** (fallback) — batch snapshots of a 34-symbol universe, ranked by abs daily change %
+3. **DEFAULT_SYMBOLS** (final fallback) — `["NVDA", "TSLA", "AAPL", "COIN"]` if neither provider is available
+
+Discovery runs once per day before the ORB window and caches the result in `orb_runner_state.json`. Symbols are filtered by `discovery_min_change_pct` (default 1.0%) and capped at `discovery_max_symbols` (default 8).
+
+Set `discovery_mode: "fixed"` in `ORB_CONFIG` to use the static 4-symbol universe (matches the backtest).
+
+### Option Execution
+
+- **Contract selection** — OTM+1 strike from ATM, nearest expiration in 2–14 DTE range
+- **Order type** — Market buy (paper) via Alpaca `POST /v2/orders`
+- **Position sizing** — 10% of equity per trade, estimated at ~$3/contract for qty calculation
+- **Exit** — Market sell when underlying hits stop (1.0%), target (1.5%), or EOD (15:55)
+- **Confirmation period** — 10 minutes after entry before stops are checked
+
+### Platform Integration
+
+| Component | Status |
+|---|---|
+| Arena Agents page | Start/stop/status card (yellow accent) |
+| Timeline UI | Personality-log events (entry, exit, scan, discovery, cycle) |
+| bot_manager | `start_orb_runner` / `stop_orb_runner` / `get_orb_runner_status` |
+| API endpoints | `POST /api/arena/orb-runner/{start,stop}`, `GET /api/arena/orb-runner/status` |
+| Frontend types | `RunnerKey` includes `'orbrunner'`, `RUNNER_METADATA` has ORBRunner entry |
+| StockBoy supervisor | **Not yet integrated** — ORBRunner not in `CONTROLLED_RUNNERS` (see Next Steps) |
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `APCA_API_KEY_ID` | Yes | Alpaca API key (same as backtest data provider) |
+| `APCA_API_SECRET_KEY` | Yes | Alpaca API secret |
+| `ORB_RUNNER_PASSWORD` | No | Platform login password (defaults to "orbrunner") |
+| `ORB_RUNNER_INITIAL_CASH` | No | Initial paper balance (defaults to $10,000) |
+
+## Key Source Files
+
+| File | Role |
+|---|---|
+| `agents/orb_runner.py` | ORBRunner — live paper trading runner with Alpaca options execution |
+| `agents/alpaca_options_provider.py` | Alpaca options contract lookup, OCC symbol building, bar fetching |
+| `agents/alpaca_realtime_provider.py` | Alpaca snapshots for dynamic symbol discovery (`screen_movers`) |
+| `agents/schwab_provider.py` | Schwab movers for dynamic symbol discovery (`movers_all`) |
+| `research/strategy_search/orb_options_bs_backtester.py` | BS-priced ORB options backtester (primary) |
+| `research/strategy_search/orb_options_backtester.py` | Historical-bar ORB options backtester (legacy) |
+| `research/strategy_search/orb_options_validation.py` | Validation suite (IV sensitivity, walk-forward, bear market) |
+| `research/strategy_search/scalp_alt_signals.py` | Shared data fetching (`fetch_1m_data`, `fetch_prev_closes`) |
+| `research/strategy_search/data_cache.py` | Cached data provider wrapper |
+| `research/strategy_search/equity_data_providers.py` | Alpaca equity data provider |
 
 ## Next Steps
 
-1. **Forward paper test** — Run the strategy on Alpaca paper to validate real fill behavior, slippage, and option execution
-2. **Live IV integration** — Re-run backtests with live Schwab IV per symbol (refresh OAuth token first)
-3. **Greeks-based exits** — Consider delta-based stop (e.g., exit when option delta drops below 0.2) instead of underlying-price-based stop
-4. **Symbol expansion** — Test on a wider universe (AMD, META, AMZN, MSFT, GOOGL) to confirm the edge isn't limited to these 4 symbols
-5. **Live platform runner** — If forward paper test confirms the edge, build a live ORB options runner integrated with the Arena
+1. **StockBoy integration** — Add `orbrunner` to `CONTROLLED_RUNNERS` in `stockboy_policy.py` and `bot_keys` in `stockboy_service.py` so the supervisor can monitor ORBRunner's health and positions
+2. **Alpaca position sync** — Sync Alpaca option positions to the platform's position table so StockBoy can see them
+3. **Live IV integration** — Re-run backtests with live Schwab IV per symbol (refresh OAuth token first)
+4. **Greeks-based exits** — Consider delta-based stop (e.g., exit when option delta drops below 0.2) instead of underlying-price-based stop
+5. **Forward paper validation** — Compare live paper results against the backtest's +147% baseline over 1–2 months

@@ -122,6 +122,7 @@ function runnerLabelForEvent(e: PersonalityLogEvent): string {
     scalprunner: 'ScalpRunner',
     blitzrunner: 'BlitzRunner',
     cryptorunner: 'CryptoRunner',
+    orbrunner: 'ORBRunner',
   };
   return map[runner] || runner.charAt(0).toUpperCase() + runner.slice(1) || 'Unknown';
 }

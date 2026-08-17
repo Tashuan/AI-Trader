@@ -131,6 +131,8 @@ The scan core modules (`scan_core.py`, `crypto_scan_core.py`) are **side-effect-
 
 **Validation suite**: `research/strategy_search/orb_options_validation.py` — runs IV sensitivity, walk-forward, and bear market tests.
 
+**Live runner**: `agents/orb_runner.py` — ORBRunner paper trades the strategy via Alpaca options API. Dynamic symbol discovery (Schwab movers → Alpaca snapshots), 09:30–10:30 ET trading window, force exit at 15:55. Integrated into the Arena UI with start/stop/status controls.
+
 ### Legacy Backtester (AI Agents)
 
 **File**: `agents/backtester.py` (not covered in depth here)
@@ -319,6 +321,8 @@ The following are guaranteed to be identical between backtest and live execution
 | `research/strategy_search/orb_options_bs_backtester.py` | ORB options backtester (Black-Scholes pricing) |
 | `research/strategy_search/orb_options_backtester.py` | ORB options backtester (historical option bars) |
 | `research/strategy_search/orb_options_validation.py` | ORB options validation suite (IV, walk-forward, bear) |
+| `agents/orb_runner.py` | ORBRunner — live paper trading runner (Alpaca options execution) |
+| `agents/alpaca_options_provider.py` | Alpaca options contract lookup and bar fetching |
 | `agents/strategy_registry.py` | Default params, risk controls, position sizing |
 | `agents/market_data.py` | Market data provider abstraction |
 | `research/strategy_search/walk_forward_harness.py` | Walk-forward validation harness |

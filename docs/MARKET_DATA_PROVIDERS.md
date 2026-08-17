@@ -213,6 +213,8 @@ The Arena router is a small boundary that centralizes every market-data decision
 | `agents/scan_backtester.py` | Active | BlitzTrader backtest uses Arena router |
 | `agents/scalp_scan_backtester.py` | Active | ScalpRunner backtest uses Arena router |
 | `agents/crypto_scan_backtester.py` | Active | CryptoRunner backtest uses Arena router |
+| `agents/orb_runner.py` | Active | ORBRunner uses Arena router for 1m equity bars + Alpaca for options execution |
+| `agents/fence_bar_runner.py` | Active | FenceBarRunner uses Arena router for 5m equity bars |
 
 ## Environment variables
 

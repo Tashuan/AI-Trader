@@ -294,7 +294,7 @@ export interface TimelineEvent {
 // Personality Log Types (runner-aware structured events)
 // ============================================================
 
-export type RunnerKey = 'scalprunner' | 'blitzrunner' | 'cryptorunner' | string;
+export type RunnerKey = 'scalprunner' | 'blitzrunner' | 'cryptorunner' | 'orbrunner' | string;
 
 export type PersonalityPriority = 'info' | 'action' | 'trade' | 'critical' | 'error';
 
@@ -352,6 +352,7 @@ export const RUNNER_METADATA: RunnerMeta[] = [
   { key: 'scalprunner', label: 'ScalpRunner', color: 'arena-green' },
   { key: 'blitzrunner', label: 'BlitzRunner', color: 'arena-orange' },
   { key: 'cryptorunner', label: 'CryptoRunner', color: 'arena-blue' },
+  { key: 'orbrunner', label: 'ORBRunner', color: 'arena-yellow' },
 ];
 
 export function runnerLabel(key: string): string {

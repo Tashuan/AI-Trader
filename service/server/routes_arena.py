@@ -73,6 +73,9 @@ from bot_manager import (
     start_fence_bar_runner,
     stop_fence_bar_runner,
     get_fence_bar_runner_status,
+    start_orb_runner,
+    stop_orb_runner,
+    get_orb_runner_status,
 )
 
 
@@ -547,6 +550,29 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/arena/fence-bar-runner/status")
     async def arena_fence_bar_runner_status():
         return get_fence_bar_runner_status()
+
+    # ── ORBRunner endpoints ──────────────────────────────────────────
+
+    @app.post("/api/arena/orb-runner/start")
+    async def arena_start_orb_runner():
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        agents_dir = os.path.join(project_root, "agents")
+        result = start_orb_runner(agents_dir)
+        if result.get("success"):
+            await asyncio.sleep(0.5)
+            status = get_orb_runner_status()
+            if not status["running"] and status.get("last_error"):
+                return {"success": False, "message": "ORBRunner crashed on startup", "error": status["last_error"]}
+        return result
+
+    @app.post("/api/arena/orb-runner/stop")
+    async def arena_stop_orb_runner():
+        result = stop_orb_runner()
+        return result
+
+    @app.get("/api/arena/orb-runner/status")
+    async def arena_orb_runner_status():
+        return get_orb_runner_status()
 
     # ── StockBoy supervisor endpoints ────────────────────────────────
     @app.post("/api/arena/stockboy/start")
