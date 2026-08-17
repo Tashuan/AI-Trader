@@ -231,14 +231,26 @@ def run_bs_options_backtest(
     risk_free_rate: float = 0.05,
     spy_frames: dict[str, pd.DataFrame] = None,
     use_spy_filter: bool = False,
+    confirmation_minutes: int = 0,
+    circuit_breaker: int = 0,
+    min_entry_time: str = "09:30",
 ) -> dict:
     """Run options ORB backtest using Black-Scholes theoretical pricing.
 
     No historical option bars needed — options are priced via BS using
     current IV from Schwab as a constant.
+
+    Risk management additions:
+    - confirmation_minutes: Don't check stops for first N minutes after entry
+      (filters whipsaws where breakout immediately reverses)
+    - circuit_breaker: Stop trading after N consecutive losses in a day
+      (prevents cascading drawdowns from losing streaks)
+    - min_entry_time: Skip entries before this time (first 15 min are noisy)
     """
     max_positions = config.get("max_positions", 3)
     position_pct = config.get("position_pct", 30.0)
+    min_entry_h, min_entry_m = map(int, min_entry_time.split(":"))
+    min_entry_time_dt = dt_time(min_entry_h, min_entry_m)
 
     # Pre-build index lookups
     ts_to_idx: dict[str, dict] = {}
@@ -274,7 +286,14 @@ def run_bs_options_backtest(
                 else:
                     spy_direction[d] = "flat"
 
+    # Circuit breaker state: track consecutive losses per symbol per day
+    current_trade_day = None
+    day_loss_streaks: dict[str, int] = {}  # symbol -> consecutive losses
+
     for date in all_dates:
+        if date != current_trade_day:
+            current_trade_day = date
+            day_loss_streaks = {}  # reset per day
         for sym in frames:
             if sym not in strategies:
                 strategies[sym] = ORBSignalGenerator(sym, config)
@@ -326,18 +345,22 @@ def run_bs_options_backtest(
                 pos.bars_held += 1
 
                 exit_reason = None
+                # Confirmation period: don't check stops for first N minutes
+                in_confirmation = pos.bars_held < confirmation_minutes
+
                 if pos.option_type == "call":
                     # Long call = long underlying
-                    if lo <= pos.stop_price:
-                        exit_reason = "stop_loss"
-                    elif hi >= pos.target_price:
+                    # Take profit always honored, stop only after confirmation
+                    if hi >= pos.target_price:
                         exit_reason = "take_profit"
+                    elif not in_confirmation and lo <= pos.stop_price:
+                        exit_reason = "stop_loss"
                 else:
                     # Long put = short underlying
-                    if hi >= pos.stop_price:
-                        exit_reason = "stop_loss"
-                    elif lo <= pos.target_price:
+                    if lo <= pos.target_price:
                         exit_reason = "take_profit"
+                    elif not in_confirmation and hi >= pos.stop_price:
+                        exit_reason = "stop_loss"
 
                 if exit_reason is None and ts.time() >= dt_time(15, 55):
                     exit_reason = "eod_close"
@@ -366,6 +389,11 @@ def run_bs_options_backtest(
                         reason=exit_reason,
                     ))
                     diagnostics[exit_reason] += 1
+                    # Track circuit breaker per symbol
+                    if pnl <= 0:
+                        day_loss_streaks[sym] = day_loss_streaks.get(sym, 0) + 1
+                    else:
+                        day_loss_streaks[sym] = 0
                     del positions[sym]
 
             # ── Equity calc (mark-to-market via BS) ───────────────
@@ -388,11 +416,30 @@ def run_bs_options_backtest(
             if ts.time() >= dt_time(15, 50):
                 continue
 
+            # Skip entries before minimum entry time (first 15 min are noisy)
+            if ts.time() < min_entry_time_dt:
+                continue
+
+            # Circuit breaker: stop trading a symbol after N consecutive losses
+            if circuit_breaker > 0:
+                # Check if ALL symbols are blocked
+                all_blocked = all(
+                    day_loss_streaks.get(s, 0) >= circuit_breaker
+                    for s in symbols if s not in positions
+                )
+                if all_blocked:
+                    diagnostics["circuit_breaker"] += 1
+                    continue
+
             for sym in symbols:
                 if sym in positions or sym not in bars:
                     continue
                 strat = strategies.get(sym)
                 if strat is None or strat.session_date != date:
+                    continue
+                # Per-symbol circuit breaker
+                if circuit_breaker > 0 and day_loss_streaks.get(sym, 0) >= circuit_breaker:
+                    diagnostics["cb_blocked_" + sym] += 1
                     continue
                 day_df = day_bars_map.get(sym)
                 if day_df is None or day_df.empty:
@@ -549,6 +596,18 @@ def main():
                         help="Skip Schwab IV fetch, use default 50%")
     parser.add_argument("--spy-filter", action="store_true",
                         help="Enable SPY opening direction regime filter")
+    parser.add_argument("--confirmation-min", type=int, default=0,
+                        help="Don't check stops for first N minutes after entry")
+    parser.add_argument("--circuit-breaker", type=int, default=0,
+                        help="Stop trading after N consecutive losses in a day")
+    parser.add_argument("--min-entry-time", type=str, default="09:30",
+                        help="Skip entries before this time (HH:MM)")
+    parser.add_argument("--position-pct", type=float, default=0,
+                        help="Override position size (0 = use config default 30%)")
+    parser.add_argument("--stop-pct", type=float, default=0,
+                        help="Override stop percentage (0 = use config default 0.7%)")
+    parser.add_argument("--target-pct", type=float, default=0,
+                        help="Override target percentage (0 = use config default 1.2%)")
     args = parser.parse_args()
 
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
@@ -593,6 +652,15 @@ def main():
         spy_frames = fetch_1m_data(["SPY"], args.start, args.end, provider)
     print()
 
+    # Build config with overrides
+    config = dict(ORB_CONFIG)
+    if args.position_pct > 0:
+        config["position_pct"] = args.position_pct
+    if args.stop_pct > 0:
+        config["stop_pct"] = args.stop_pct
+    if args.target_pct > 0:
+        config["target_pct"] = args.target_pct
+
     # Run backtest
     print("  Running BS options ORB backtest...")
     t0 = time_mod.time()
@@ -600,11 +668,14 @@ def main():
         symbols=symbols, frames=frames, prev_closes=prev_closes,
         iv_cache=iv_cache, capital=args.capital,
         slippage_bps=SLIPPAGE_BPS, option_slippage_bps=opt_slippage,
-        fee_rate=fee_rate, config=ORB_CONFIG,
+        fee_rate=fee_rate, config=config,
         start_date=args.start, end_date=args.end,
         strike_offset=args.strike_offset, dte_min=args.dte_min,
         dte_max=args.dte_max, risk_free_rate=args.risk_free_rate,
         spy_frames=spy_frames, use_spy_filter=args.spy_filter,
+        confirmation_minutes=args.confirmation_min,
+        circuit_breaker=args.circuit_breaker,
+        min_entry_time=args.min_entry_time,
     )
     elapsed = time_mod.time() - t0
 
