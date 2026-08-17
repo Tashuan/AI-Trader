@@ -891,3 +891,69 @@ This is the strongest config found across all batches. Next steps: holdout valid
   - Full 5 months (Apr-Aug): -2.06% unfiltered, +0.16% with SPY regime filter
 - **Decision:** Edge is regime-dependent. Fails in strong bull markets, works in moderate trends. SPY regime filter helps but doesn't fully solve. The edge is real but thin — +0.16% over 5 months with costs, +4.33% at zero cost.
 - **Next action:** The edge is too thin for small equity accounts (~$0.50/trade on $10k). Options provide the leverage needed to amplify this to $20-30/trade. Build options-based ORB backtester using Alpaca options chain data.
+
+### Batch ORB-OPT-1 — Alpaca options exploration (2026-08-16)
+
+- **Hypothesis:** Alpaca's options API can provide historical option bars for backtesting.
+- **Result:** Alpaca MCP tools worked (paid Algo Trader Plus key), but direct REST API failed with "403 Forbidden / OPRA agreement not signed." Free tier limited to 15 min of historical data.
+- **Decision:** Alpaca options API is not viable for historical backtesting on the free tier. Need an alternative data source.
+
+### Batch ORB-OPT-2 — Schwab options API integration (2026-08-16)
+
+- **Hypothesis:** Schwab's Market Data API (free with brokerage account) can provide historical option bars without paid OPRA.
+- **Steps:**
+  1. Completed Schwab OAuth flow — got refresh token
+  2. Verified `/expirationchain` and `/chains` endpoints work (real-time bid/ask, greeks, IV, open interest)
+  3. Verified `/pricehistory` provides 1m option candles (daily and intraday)
+  4. Built `agents/schwab_options_provider.py` — handles 10-day chunking for minute data, OCC symbol construction
+  5. Fixed symbol format: `NVDA  260817C00222500` (two spaces between ticker and OCC symbol)
+  6. Fixed `periodType`/`frequencyType` combinations for 1m bars
+- **Result:** Schwab provides all necessary options data for free. 1m bars for full trading sessions, 5-day ranges, and daily bars all work.
+- **Decision:** Schwab is the data provider for options backtesting.
+
+### Batch ORB-OPT-3 — Options ORB backtester (2026-08-16)
+
+- **Hypothesis:** Buying ATM options instead of stock amplifies the thin ORB edge by 5-10x.
+- **Harness:** `research/strategy_search/orb_options_backtester.py` (uses Schwab provider)
+- **Symbols:** NVDA, TSLA, AAPL, AMD, META
+- **Dates:** 2026-06-15 to 2026-08-16
+- **Config:** 5min range, 0.7% stop, 1.2% target, 10:30 entry, 30% position size, ATM options, DTE 2-14
+- **Key metrics:**
+  - **+57.42% return** (vs +7.83% equity) — 7.3x amplification
+  - PF 3.739 (vs 1.355) — 2.8x improvement
+  - 50% win rate, 20 trades, 14.96% max DD, Sharpe 4.193
+  - Winners: +21-33% per trade; losers: -3-14% per trade
+  - 187 signals skipped (expired contracts / no data)
+- **Critical bug fixed:** Timezone mismatch — equity bars are tz-naive ET, Schwab bars are tz-aware UTC. Was looking up option prices 4 hours off. Fix: convert ET timestamps to UTC before comparison.
+- **Decision:** Options amplify the edge as predicted. Proceed to parameter sweep.
+
+### Batch ORB-OPT-4 — Options parameter sweep (2026-08-16)
+
+- **Hypothesis:** Strike offset, DTE range, and position sizing can be optimized.
+- **Sweep 1 — Strike offset:**
+  - ITM (-1): +63.40%, 65% WR, PF 3.955, 13.49% DD — best win rate
+  - ATM (0): +57.42%, 50% WR, PF 3.739, 14.96% DD — baseline
+  - **OTM (+1): +72.06%, 50% WR, PF 4.499, 16.72% DD — best return and PF**
+  - Lesson: OTM options are cheaper → more contracts → amplified wins. ITM has higher delta → more reliable but smaller % gains.
+- **Sweep 2 — DTE range:**
+  - Short (2-7d): +29.79%, 41% WR — worse (theta decay eats gains)
+  - Medium (2-14d): +57.42%, 50% WR — baseline
+  - Long (7-30d): +57.42%, 50% WR — identical to medium (same contracts selected)
+  - Lesson: Avoid short DTE. Theta decay during 2.8h avg hold is material.
+- **Sweep 3 — Position sizing:**
+  - 15%: +20.67%, 7.39% DD, risk-adj 2.80
+  - 30%: +57.42%, 14.96% DD, risk-adj 3.84
+  - 50%: +101.20%, 22.70% DD, risk-adj 4.46
+  - Lesson: Returns scale super-linearly (compounding). 50% has best risk-adjusted return but 23% DD is hard to stomach live. 30% is the recommended default.
+- **Sweep 4 — Zero-cost vs realistic:**
+  - Zero-cost: +58.73%, PF 3.882
+  - Realistic (10bps): +57.42%, PF 3.739
+  - Cost drag: only 1.31% over 2 months — minimal. Options edge is large enough that slippage is barely noticeable.
+- **Decision:** Best config is OTM +1, DTE 2-14, 30% position size. Proceed to out-of-sample and combined config testing.
+
+### Batch ORB-OPT-5 — Infrastructure improvements (2026-08-16)
+
+- **Disk caching:** Added parquet-based disk cache for option bars. Cold run: 11.7s (14 API calls). Warm run: 0.88s (0 API calls). 14x speedup on repeat runs. Cache stored in `research/strategy_search/option_bars_cache/` (gitignored).
+- **Schwab OAuth fix:** Token refresh was using JSON body (rejected by Schwab with "invalid_client"). Fixed to use HTTP Basic auth + form-encoded body. This was the root cause of all subagent failures during the parallel sweep.
+- **Per-symbol stats fix:** Trade symbols include option type/strike (e.g. "NVDA P222"), not just underlying. Updated filter to match `startswith(sym + " ")`.
+- **Lesson:** Don't run parallel Schwab API calls — Akamai WAF will IP-block you for ~10 minutes. Run sweeps sequentially.

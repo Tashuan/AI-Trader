@@ -5,7 +5,8 @@
 > **Backtest result (in-sample):** +7.83% at 2bps over 2 months (190 trades, PF 1.355, 1.84% max DD, Sharpe 4.57)
 > **Backtest result (5 months, regime-filtered):** +0.16% at 2bps, +4.33% at zero cost (340 trades)
 > **Holdout:** Aug split — +3.59% (train +5.55%, both positive — generalizes within regime)
-> **Next step:** Options-based implementation to amplify thin edge via leverage
+> **Options result (in-sample):** +57.42% with ATM calls/puts, 10bps option slippage (20 trades, PF 3.74, 14.96% max DD, Sharpe 4.19)
+> **Next step:** Out-of-sample options validation, OTM optimization, live paper trading
 
 ---
 
@@ -353,7 +354,170 @@ print(f"Win Rate: {result['win_rate']:.0%}  Trades: {result['total_trades']}")
 |------|---------|
 | `research/strategy_search/scalp_alt_signals.py` | Multi-strategy 1m backtester (ORB + 4 others) |
 | `research/strategy_search/orb_optimize.py` | ORB parameter sweep (312 + 90 configs) |
+| `research/strategy_search/orb_options_backtester.py` | Options-based ORB backtester (Schwab data) |
+| `research/strategy_search/fetch_option_bars.py` | Pre-fetch option bars cache utility |
+| `agents/schwab_options_provider.py` | Schwab options data provider (1m bars + chains) |
+| `agents/alpaca_options_provider.py` | Alpaca options data provider (needs OPRA) |
 | `research/strategy_search/scalp_alt_results.json` | Initial 10-strategy screen results |
 | `research/strategy_search/orb_sweep_results.json` | ORB sweep results (top 50 configs) |
 | `research/strategy_search/RESEARCH_FINDINGS.md` | Summary of all intraday strategy research |
 | `research/strategy_search/STRATEGY_ORB.md` | This document |
+
+---
+
+## 15. Options Implementation — Leverage Amplification
+
+### The Problem
+
+The equity ORB edge is genuine but too thin for small accounts. On $10k with 30% position sizing, the net profit is ~$783 over 2 months — about $4/trade. The goal is $20-30/trade. Options provide the leverage to bridge this gap.
+
+### Approach
+
+Same ORB signal on the underlying stock, but instead of buying shares, buy ATM options:
+- **Long signal** → buy ATM call
+- **Short signal** → buy ATM put
+- Stop/target still tracked on the **underlying** price (0.7% stop, 1.2% target)
+- Option exited at the same bar the underlying hits stop/target
+- EOD force-close at 15:55
+
+### Data Source
+
+Schwab Market Data API (free with brokerage account):
+- Historical 1m option bars via `/pricehistory` endpoint
+- Real-time option chains with greeks/IV via `/chains` endpoint
+- No paid OPRA subscription needed (unlike Alpaca)
+- Option symbol format: `NVDA  260817C00222500` (two spaces)
+
+### Baseline Results (Jun 15 – Aug 16 2026, 5 symbols, ATM, 30% position size)
+
+| Metric | Equity ORB | Options ORB | Amplification |
+|--------|-----------|-------------|---------------|
+| **Return** | +7.83% | **+57.42%** | **7.3x** |
+| Profit Factor | 1.355 | 3.739 | 2.8x |
+| Win Rate | 48% | 50% | +2pp |
+| Max Drawdown | 1.84% | 14.96% | 8.1x |
+| Sharpe | 4.574 | 4.193 | -0.4 |
+| Trades | 190 | 20 | — |
+| Final Equity | $10,783 | $15,742 | — |
+
+**Key difference:** 190 equity trades vs 20 option trades. The options backtester skips signals when no option bar data is available (187 skipped, mostly expired contracts or illiquid strikes). The 20 trades that executed are a subset, but they show the same 50% win rate and much higher per-trade P&L.
+
+### Per-Symbol (options, realistic costs)
+
+| Symbol | Trades | Win Rate | PnL | Avg PnL |
+|--------|--------|----------|-----|---------|
+| TSLA | 6 | 50% | +$2,389 | +8.85% |
+| META | 5 | 40% | +$1,520 | +9.65% |
+| NVDA | 5 | 60% | +$1,218 | +9.46% |
+| AAPL | 4 | 50% | +$614 | +5.81% |
+| AMD | 0 | — | $0 | — |
+
+AMD had no trades — all AMD option contracts were skipped (no data for the constructed strikes). NVDA has the best win rate (60%).
+
+### Sample Trades
+
+| Symbol | Side | PnL | PnL% | Hold | Exit |
+|--------|------|-----|------|------|------|
+| META C600 | long | +$945 | +33.16% | 0.1h | take_profit |
+| AAPL P308 | long | +$815 | +27.15% | 4.8h | take_profit |
+| NVDA P222 | long | +$699 | +26.30% | 1.1h | take_profit |
+| NVDA P220 | long | +$564 | +21.64% | 3.6h | take_profit |
+| TSLA C325 | long | -$318 | -14.04% | 0.6h | stop_loss |
+| TSLA P330 | long | -$245 | -9.43% | 0.2h | stop_loss |
+| META P598 | long | -$138 | -8.92% | 0.6h | stop_loss |
+
+Winners gain +21-33% per trade; losers lose 3-14%. The asymmetry (1.7:1 risk-reward on the underlying) translates to ~3:1 average win/loss on options.
+
+### Zero-Cost vs Realistic (10bps option slippage)
+
+| Metric | Zero Cost | Realistic (10bps) | Cost Drag |
+|--------|-----------|-------------------|-----------|
+| Return | +58.73% | +57.42% | 1.31% |
+| Profit Factor | 3.882 | 3.739 | 0.143 |
+| Max DD | 14.88% | 14.96% | 0.08% |
+
+**The cost drag is minimal** — only 1.31% over 2 months. Unlike the equity ORB (where 2bps slippage consumed 2.48pp of the 10.31% gross edge), the options edge is large enough that 10bps slippage is barely noticeable. This is because the option's percentage move (20-33% on winners) dwarfs the 0.1% slippage.
+
+### Parameter Sweep: Strike Offset
+
+| Strike | Return | Win Rate | PF | Max DD | Sharpe | Trades |
+|--------|--------|----------|------|--------|--------|--------|
+| ITM (-1) | +63.40% | **65%** | 3.955 | 13.49% | 4.510 | 20 |
+| ATM (0) | +57.42% | 50% | 3.739 | 14.96% | 4.193 | 20 |
+| **OTM (+1)** | **+72.06%** | 50% | **4.499** | 16.72% | **4.833** | 20 |
+
+**OTM is the best strike offset** — highest return (+72%), PF (4.50), and Sharpe (4.83). OTM options are cheaper, so we buy more contracts with the same capital, amplifying gains on winners. ITM has the best win rate (65%) because higher delta means the option moves more reliably with the underlying, but per-trade gains are smaller.
+
+### Parameter Sweep: DTE Range
+
+| DTE | Return | Win Rate | PF | Max DD | Sharpe | Trades |
+|-----|--------|----------|------|--------|--------|--------|
+| Short (2-7d) | +29.79% | 41% | 2.614 | 10.69% | 3.009 | 17 |
+| Medium (2-14d) | +57.42% | 50% | 3.739 | 14.96% | 4.193 | 20 |
+| Long (7-30d) | +57.42% | 50% | 3.739 | 14.96% | 4.193 | 20 |
+
+**Medium and Long DTE are identical** — the nearest Friday is always within both ranges. Short DTE is worse: fewer trades (17 vs 20), lower win rate (41% vs 50%), and lower return (+29.79% vs +57.42%). Short-DTE options suffer from theta decay during the holding period (avg 2.8h), which eats into gains.
+
+### Parameter Sweep: Position Sizing
+
+| Position | Return | Max DD | Risk-Adj (Ret/DD) | Sharpe |
+|----------|--------|--------|-------------------|--------|
+| Conservative (15%) | +20.67% | 7.39% | 2.80 | 3.513 |
+| **Moderate (30%)** | **+57.42%** | **14.96%** | **3.84** | 4.193 |
+| Aggressive (50%) | +101.20% | 22.70% | 4.46 | 4.080 |
+
+Returns scale super-linearly with position size due to compounding. The aggressive (50%) config has the best risk-adjusted return (4.46) but a 22.7% max drawdown — psychologically difficult in live trading. The moderate (30%) config is the recommended default: 3.84 risk-adjusted return with a manageable 15% drawdown.
+
+### Options Configuration (Recommended)
+
+```json
+{
+  "range_minutes": 5,
+  "stop_pct": 0.7,
+  "target_pct": 1.2,
+  "latest_entry": "10:30",
+  "max_positions": 3,
+  "position_pct": 30.0,
+  "strike_offset": 1,        // OTM +1 strike
+  "dte_min": 2,
+  "dte_max": 14,
+  "option_slippage_bps": 10  // wider than equity (2bps)
+}
+```
+
+### How to Reproduce (Options)
+
+```python
+import sys
+sys.path.insert(0, 'agents')
+sys.path.insert(0, 'research/strategy_search')
+from dotenv import load_dotenv
+load_dotenv('.env')
+
+# Requires Schwab OAuth — run agents/schwab_oauth_flow.py once first
+# Option bars are cached to disk after first run (14x speedup on repeats)
+```
+
+```bash
+cd agents
+python3 ../research/strategy_search/orb_options_backtester.py \
+  --symbols NVDA,TSLA,AAPL,AMD,META \
+  --start 2026-06-15 --end 2026-08-16 \
+  --strike-offset 1   # OTM
+```
+
+### Options Caveats
+
+1. **Small sample (20 trades).** The options backtest has far fewer trades than equity (20 vs 190) because many option contracts had no historical data (expired contracts, illiquid strikes). The results are directionally correct but need more trades for statistical significance.
+
+2. **Sparse option bars.** Schwab's 1m option bars are trade-based — minutes with no trades have no bar. The backtester uses the nearest bar before the exit timestamp, which may be minutes stale. This can overstate or understate the actual fill price.
+
+3. **No bid-ask spread modeling.** The 10bps slippage is a rough proxy. Real option spreads can be 5-50bps depending on liquidity. ATM options on NVDA/TSLA are tight (~5bps); OTM and less liquid names may be wider.
+
+4. **No IV/greeks tracking.** The backtester doesn't model theta decay, vega exposure, or delta changes during the holding period. It uses raw option bar prices only. A more realistic model would track greeks and adjust for IV changes.
+
+5. **Single expiration per trade.** The backtester picks the nearest Friday expiration. In practice, there may be better expirations (weekly vs monthly, higher open interest).
+
+6. **187 signals skipped.** The main limitation is data availability. Expired contracts have no historical bars on Schwab. A paid OPRA data feed (Alpaca Algo Trader Plus) would provide complete historical data.
+
+7. **Same regime dependency as equity.** The options strategy inherits the equity ORB's regime sensitivity. It will lose money in strong bull markets (short puts get stopped out). The SPY regime filter is still needed.
