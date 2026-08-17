@@ -634,3 +634,70 @@ If you need to add a new strategy parameter that doesn't exist yet:
 4. **Test** — verify `effective_params()` returns the new field and the UI schema includes it.
 
 The JSON backup will automatically include the new field on the next config save.
+
+---
+
+## 5. ORB Options Parameter Reference
+
+The ORB Options strategy is a standalone research backtester (not yet integrated into the live platform's 3-layer config model). Parameters are passed directly to the backtester via CLI flags or Python dicts. See `docs/ORB_OPTIONS_STRATEGY.md` for full strategy documentation.
+
+### Winning Configuration (`orb_bs_otm1`)
+
+Validated via IV sensitivity (PASS), walk-forward (PASS), and bear market simulation (MIXED). Backtest period: 2026-04-01 → 2026-08-16.
+
+| Parameter | Value | Description |
+|---|---|---|
+| `range_minutes` | 5 | Opening range window (9:30–9:35 ET) |
+| `stop_pct` | 1.0% | Stop loss distance on underlying |
+| `target_pct` | 1.5% | Profit target distance on underlying |
+| `latest_entry` | "10:30" | No new entries after this time |
+| `max_positions` | 3 | Maximum concurrent positions |
+| `position_pct` | 10.0% | % of equity per trade (option premium) |
+| `strike_offset` | +1 | OTM strike offset from ATM |
+| `dte_min` | 2 | Minimum days to expiration |
+| `dte_max` | 14 | Maximum days to expiration |
+| `option_slippage_bps` | 10 | Option slippage in bps (0.1%) |
+| `confirmation_minutes` | 10 | Minutes before stops are checked |
+| `circuit_breaker` | 3 | Consecutive losses before halting a symbol |
+| `risk_free_rate` | 0.05 | 5% risk-free rate for BS pricing |
+| `min_entry_time` | "09:30" | Skip entries before this time |
+
+### Backtest Results
+
+| Metric | Value |
+|---|---|
+| Total return | +147.37% |
+| Profit factor | 1.259 |
+| Win rate | 45% |
+| Max drawdown | 34.3% |
+| Total trades | 354 |
+| Symbols | NVDA, TSLA, AAPL, COIN |
+
+### Validation Summary
+
+| Test | Result | Key Finding |
+|---|---|---|
+| IV sensitivity | PASS | Profitable across 25%–75% IV (0.5x–1.5x) |
+| Walk-forward | PASS | 3/3 OOS windows positive, +68.50% compounded |
+| Bear market | MIXED | Profitable in both regimes, not regime-specific |
+
+### Running the Backtest
+
+```bash
+cd agents
+source ../.venv/bin/activate
+
+python3 ../research/strategy_search/orb_options_bs_backtester.py \
+  --symbols NVDA,TSLA,AAPL,COIN \
+  --start 2026-04-01 --end 2026-08-16 \
+  --strike-offset 1 --position-pct 10 \
+  --stop-pct 1.0 --target-pct 1.5 \
+  --confirmation-min 10 --circuit-breaker 3 \
+  --no-iv-fetch
+```
+
+### Running the Validation Suite
+
+```bash
+python3 ../research/strategy_search/orb_options_validation.py --test all
+```

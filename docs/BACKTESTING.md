@@ -104,6 +104,33 @@ The scan core modules (`scan_core.py`, `crypto_scan_core.py`) are **side-effect-
 - Fee modeling (0.1% per entry/exit)
 - Per-symbol statistics
 
+### ORB Options Backtester (Black-Scholes)
+
+**File**: `research/strategy_search/orb_options_bs_backtester.py`
+
+|| Setting | Default |
+|---|---|
+| Symbols | NVDA, TSLA, AAPL, COIN |
+| Interval | 1m (equity bars) |
+| Initial capital | $10,000 |
+| Option slippage | 10 bps |
+| Pricing model | Black-Scholes (constant IV) |
+
+**Features**:
+- Opening range breakout signal on 1m equity bars (5-min range, breakout entry)
+- Options priced via Black-Scholes (no historical option bars needed)
+- OTM call/put selection with configurable strike offset
+- DTE range filter (2–14 days default)
+- Confirmation period (no stop checks for first N minutes after entry)
+- Per-symbol circuit breaker (halt after N consecutive losses in a day)
+- SPY regime filter (optional — block shorts in bull market, longs in bear)
+- Mark-to-market equity curve via BS pricing at each bar
+- EOD force-close at 15:55 ET
+
+**Validation**: Passed IV sensitivity (robust across 25%–75% IV), walk-forward (3/3 OOS windows positive, +68% compounded), and bear market simulation (profitable in both regimes). See `docs/ORB_OPTIONS_STRATEGY.md` for full details.
+
+**Validation suite**: `research/strategy_search/orb_options_validation.py` — runs IV sensitivity, walk-forward, and bear market tests.
+
 ### Legacy Backtester (AI Agents)
 
 **File**: `agents/backtester.py` (not covered in depth here)
@@ -289,6 +316,9 @@ The following are guaranteed to be identical between backtest and live execution
 | `agents/scan_core.py` | Shared equity indicator math + exit review |
 | `agents/scalp_scan_core.py` | ScalpRunner indicator math, tape reading, adaptive exit, scoring |
 | `agents/crypto_scan_core.py` | Shared crypto indicator math + exit review |
+| `research/strategy_search/orb_options_bs_backtester.py` | ORB options backtester (Black-Scholes pricing) |
+| `research/strategy_search/orb_options_backtester.py` | ORB options backtester (historical option bars) |
+| `research/strategy_search/orb_options_validation.py` | ORB options validation suite (IV, walk-forward, bear) |
 | `agents/strategy_registry.py` | Default params, risk controls, position sizing |
 | `agents/market_data.py` | Market data provider abstraction |
 | `research/strategy_search/walk_forward_harness.py` | Walk-forward validation harness |
