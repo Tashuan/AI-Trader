@@ -51,12 +51,11 @@ The shared brain for ScalpRunner is `agents/scalp_scan_core.py` — pure strateg
 
 **ORBRunner specifics:**
 - Trades OTM+1 options via Alpaca paper trading API (not equities)
-- 5-min opening range (09:30–09:35 ET), breakout entry 09:35–10:30 ET
-- Stop/target on underlying price (1.0% / 1.5%), 10-min confirmation period
+- Separate pipeline — own backtester, own config, does not share code with ScalpRunner
 - Dynamic symbol discovery enabled by default: Schwab movers → Alpaca snapshots → fallback to `["NVDA", "TSLA", "AAPL", "COIN"]`
 - Config in `ORB_CONFIG` at top of `orb_runner.py` (not in `strategy_registry.py`)
-- API: `POST /api/arena/orb-runner/{start,stop}`, `GET /api/arena/orb-runner/status`
 - Not yet in StockBoy's `CONTROLLED_RUNNERS` (see `stockboy_policy.py`)
+- **See the `orb-runner` skill for full operational detail** — config reference, discovery flow, state, logging, backtest vs live comparison, and common tasks
 
 **FenceBarRunner specifics:**
 - Fence bar pattern (N-bar consolidation → breakout)
