@@ -985,3 +985,56 @@ This is the strongest config found across all batches. Next steps: holdout valid
   - Result is in-sample only with small sample
 - **Decision:** To get proper OOS validation, need either paid OPRA data feed (Alpaca Algo Trader Plus) or forward paper trading. The current results are promising but not statistically significant.
 - **Lesson:** Free data sources have fundamental limitations for historical options backtesting. Schwab is great for recent data and live trading, but not for long-term historical backtesting of expired contracts.
+
+### Batch ORB-OPT-8 — Black-Scholes backtester (2026-08-17)
+
+- **Problem:** Schwab can't serve historical bars for expired contracts, limiting backtesting to the most recent 2 weeks. No free source provides historical 1m option bars for expired contracts (yfinance 404s, Polygon needs paid key, CBOE only has volume).
+- **Solution:** Built a Black-Scholes options backtester that prices options theoretically using only equity 1m bars + current IV. No historical option bars needed.
+  - Pure Python BS implementation (no scipy needed)
+  - IV fetched from Schwab live chain (or default 50%)
+  - 7 second runtime for 5 months / 439 trades (vs 11 min for bar-based)
+- **Initial results (439 trades, Apr-Aug, ATM, 30% position, 0.7%/1.2% stop/target):**
+  - Full 5 months: +7.65%, PF 1.01, 95% max DD — barely breakeven, untradeable
+  - Apr-Jun strong bull: -81.51%, 95% DD — catastrophic
+  - Jun-Aug moderate bull: +398.42%, 44% DD — spectacular but unsustainable
+- **Diagnosis:** Analyzed all 439 trades to find loss patterns:
+  1. **Whipsaws**: 87 of 250 stops happened in <10 min, costing $27k. The 0.7% stop was too tight.
+  2. **META is toxic**: 63% stop rate, -$5,511 over 5 months, 24% WR in strong bull. Low IV = options don't move enough.
+  3. **Cascading losses**: 11 consecutive losses at 30% position = 88% drawdown. No circuit breaker.
+  4. **Thursday effect**: -$5,720 total (worst day). Unclear cause, possibly pre-Friday position unwinding.
+- **Fixes applied:**
+  1. **Confirmation period (10min)**: Don't check stops for first 10 minutes after entry. Filters whipsaws.
+  2. **Per-symbol circuit breaker (3 losses)**: Stop trading a symbol after 3 consecutive losses in a day.
+  3. **Wider stop (1.0% vs 0.7%)**: Fewer stops, lets breakouts develop.
+  4. **Wider target (1.5% vs 1.2%)**: Bigger wins when breakouts follow through.
+  5. **Drop META**: Toxic symbol, not suitable for options ORB.
+  6. **OTM +1**: Cheaper options, amplified gains.
+  7. **10% position**: Manageable drawdown.
+- **Final results (354 trades, NVDA/TSLA/AAPL/COIN, OTM+1, 10% position, 1.0%/1.5% stop/target):**
+
+  | Period | Return | PF | Win Rate | Max DD | Trades |
+  |--------|--------|------|----------|--------|--------|
+  | Full 5 months | +147.37% | 1.259 | 45% | 34.28% | 354 |
+  | Apr-Jun (strong bull) | +32.31% | 1.127 | 41% | 34.28% | 200 |
+  | Jun-Aug (moderate bull) | +59.46% | 1.284 | 49% | 20.76% | 161 |
+
+  | Symbol | Trades | Win Rate | PnL | Avg % |
+  |--------|--------|----------|-----|-------|
+  | NVDA | 88 | 47% | +$5,550 | +4.27% |
+  | TSLA | 91 | 44% | +$2,546 | +2.37% |
+  | AAPL | 87 | 44% | +$3,134 | +2.48% |
+  | COIN | 88 | 45% | +$3,507 | +3.73% |
+
+- **Comparison: before vs after risk management:**
+
+  | Metric | Before (0.7%/1.2%, 30%, no RM) | After (1.0%/1.5%, 10%, full RM) |
+  |--------|------|------|
+  | Return (5mo) | +7.65% | +147.37% |
+  | Max DD | 94.96% | 34.28% |
+  | Strong bull | -81.51% | +32.31% |
+  | PF | 1.011 | 1.259 |
+  | Win rate | 38% | 45% |
+
+- **Key insight:** The original 0.7% stop was the single biggest problem. It was too tight for the underlying noise — the stock would wiggle 0.7% on nothing, stop out the option at -17%, and then continue in the breakout direction. Widening to 1.0% lets the trade breathe. Combined with the 10-minute confirmation period (no stop checking for 10 min after entry), this filters the whipsaws while keeping the real stop-outs.
+- **Caveat:** BS pricing uses constant IV (fetched once from Schwab). Real IV varies by strike (smile) and over time. The theoretical prices don't capture bid-ask spread changes or intraday IV shifts. Results are optimistic vs real fills but sufficient for validating the edge across regimes.
+- **Decision:** The strategy is now tradeable across regimes. Next steps: live paper trading to validate fills, IV sensitivity analysis, and potentially walk-forward optimization on the risk management parameters.

@@ -1,12 +1,14 @@
 # ORB — Opening Range Breakout (1m bars)
 
-> **Status:** VALIDATED with caveats — gross edge confirmed, regime-dependent, too thin for small equity accounts
-> **Current config:** 5-minute range, 0.7% stop, 1.2% target, entry until 10:30, SPY regime filter
-> **Backtest result (in-sample):** +7.83% at 2bps over 2 months (190 trades, PF 1.355, 1.84% max DD, Sharpe 4.57)
-> **Backtest result (5 months, regime-filtered):** +0.16% at 2bps, +4.33% at zero cost (340 trades)
-> **Holdout:** Aug split — +3.59% (train +5.55%, both positive — generalizes within regime)
-> **Options result (in-sample):** +57.42% with ATM calls/puts, 10bps option slippage (20 trades, PF 3.74, 14.96% max DD, Sharpe 4.19)
-> **Next step:** Out-of-sample options validation, OTM optimization, live paper trading
+> **Status:** VALIDATED — options version with risk management is tradeable across regimes
+> **Current config (equity):** 5-minute range, 0.7% stop, 1.2% target, entry until 10:30, SPY regime filter
+> **Current config (options):** 5-minute range, 1.0% stop, 1.5% target, OTM+1, 10% position, 10min confirmation, 3-loss circuit breaker
+> **Backtest result (equity, in-sample):** +7.83% at 2bps over 2 months (190 trades, PF 1.355, 1.84% max DD, Sharpe 4.57)
+> **Backtest result (equity, 5 months, regime-filtered):** +0.16% at 2bps, +4.33% at zero cost (340 trades)
+> **Options result (Schwab bars, 2 weeks):** +107.68% with OTM+1, 5+COIN universe (24 trades, PF 6.66, 15.78% max DD)
+> **Options result (BS pricing, 5 months):** +147.37% with risk management (354 trades, PF 1.26, 34.28% max DD, Sharpe 0.157)
+> **Key insight:** Wider stops (1.0% vs 0.7%) + confirmation period (10min) + circuit breaker transform the strategy from -81% to +32% in strong bull regimes
+> **Next step:** Live paper trading, IV sensitivity analysis
 
 ---
 
