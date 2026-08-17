@@ -61,7 +61,7 @@ ORB_CONFIG = {
     "target_pct": 1.2,
     "latest_entry": "10:30",
     "max_positions": 3,
-    "position_pct": 15.0,  # % of equity per trade (equity equivalent)
+    "position_pct": 30.0,  # % of equity per trade (equity equivalent)
 }
 
 # Strike steps per symbol (common US equity option strike increments)

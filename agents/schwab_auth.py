@@ -17,6 +17,7 @@ import time
 import logging
 import urllib.request
 import urllib.error
+import urllib.parse
 from pathlib import Path
 from typing import Optional
 
@@ -80,16 +81,21 @@ class SchwabOAuth:
             logger.error("Cannot refresh — no refresh token configured")
             return None
 
-        body = json.dumps({
+        import base64
+        body = urllib.parse.urlencode({
             "grant_type": "refresh_token",
             "refresh_token": self._refresh_token,
-            "client_id": self._client_id,
-            "client_secret": self._client_secret,
         }).encode()
 
+        creds = base64.b64encode(
+            f"{self._client_id}:{self._client_secret}".encode()
+        ).decode()
         req = urllib.request.Request(
             _TOKEN_URL, data=body, method="POST",
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {creds}",
+            },
         )
 
         try:
