@@ -4,8 +4,13 @@
 
 Tested 5 alternative intraday signal types on 1m bars to find a strategy
 with repeatable edge. **ORB (Opening Range Breakout) is the only signal
-with genuine gross edge**, but the edge is regime-dependent and too thin
-to survive trading costs on a $10k equity account.
+with genuine gross edge.** The equity version is too thin for small accounts
+(~$4/trade), but the **options version with risk management is a winning
+strategy**: +147% over 5 months, profitable in all regimes tested, 354 trades.
+
+**Winning strategy:** ORB Options (OTM+1, 1.0%/1.5% stop/target, 10% position,
+10-min confirmation, 3-loss circuit breaker, NVDA/TSLA/AAPL/COIN universe)
+→ See `STRATEGY_ORB.md` for full documentation.
 
 ## Strategies Tested
 
@@ -100,15 +105,38 @@ to turn small price moves into meaningful dollar profits.
 
 ## Next Steps: Options-Based ORB
 
-Alpaca supports options contracts and chains. The ORB signal on the
-underlying stock can be traded via options for 5-10x leverage amplification.
-A +7.83% stock move over 2 months could become +40-80% on options, even
-after accounting for wider bid-ask spreads and time decay.
+**COMPLETED.** The options-based ORB is a winning strategy. See `STRATEGY_ORB.md`
+for full documentation.
 
-See `orb_options_backtester.py` for the options-based implementation.
+### Options ORB Results (Black-Scholes pricing, 5 months, 354 trades)
+
+| Period | Return | PF | Win Rate | Max DD | Trades |
+|--------|--------|------|----------|--------|--------|
+| Full 5 months | +147.37% | 1.259 | 45% | 34.28% | 354 |
+| Apr-Jun (strong bull) | +32.31% | 1.127 | 41% | 34.28% | 200 |
+| Jun-Aug (moderate bull) | +59.46% | 1.284 | 49% | 20.76% | 161 |
+
+### Risk Management (the key unlock)
+
+Without risk management: +7.65% return, 95% max DD, -81% in strong bull.
+With risk management: +147% return, 34% max DD, +32% in strong bull.
+
+Three fixes:
+1. **10-min confirmation period** — no stop checking for 10 min after entry (filters whipsaws)
+2. **Wider stop (1.0% vs 0.7%)** — lets breakouts breathe through noise
+3. **Per-symbol circuit breaker (3 losses)** — prevents cascading drawdowns
+
+### Remaining next steps
+- Live paper trading to validate real fills vs BS theoretical prices
+- IV sensitivity analysis (test with IV ±20%)
+- Walk-forward validation on risk management parameters
+- Bear market testing (only bull regimes tested so far)
 
 ## Files
 
+- `STRATEGY_ORB.md` — **Winning strategy documentation (ORB Options)**
+- `orb_options_bs_backtester.py` — **BS options backtester (winning config)**
+- `orb_options_backtester.py` — Schwab bar-based options backtester
 - `scalp_alt_signals.py` — Multi-strategy 1m backtester (5 signal types, 10 configs)
 - `orb_optimize.py` — ORB parameter sweep (312 + 90 configs)
 - `scalp_1m_adaptive.py` — ScalpScan 1m adaptive backtest (failed)
@@ -116,3 +144,4 @@ See `orb_options_backtester.py` for the options-based implementation.
 - `orb_sweep_results.json` — ORB sweep results (top 50)
 - `scalp_1m_adaptive_results.json` — ScalpScan 1m results
 - `scalp_1m_zerocost.json` — ScalpScan zero-cost results
+- `journal.md` — Full research journal (all batches and findings)
