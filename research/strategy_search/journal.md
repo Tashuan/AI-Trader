@@ -957,3 +957,31 @@ This is the strongest config found across all batches. Next steps: holdout valid
 - **Schwab OAuth fix:** Token refresh was using JSON body (rejected by Schwab with "invalid_client"). Fixed to use HTTP Basic auth + form-encoded body. This was the root cause of all subagent failures during the parallel sweep.
 - **Per-symbol stats fix:** Trade symbols include option type/strike (e.g. "NVDA P222"), not just underlying. Updated filter to match `startswith(sym + " ")`.
 - **Lesson:** Don't run parallel Schwab API calls — Akamai WAF will IP-block you for ~10 minutes. Run sweeps sequentially.
+
+### Batch ORB-OPT-6 — Universe optimization (2026-08-16)
+
+- **Hypothesis:** The equity-optimized 5-symbol universe may not be optimal for options. Different symbols have different IV, liquidity, and strike availability.
+- **Test 1 — 10 symbols:** Added AMZN, MSFT, GOOGL, NFLX, COIN to the original 5.
+  - Result: +45.23% (down from +57.42%) — dilution from toxic names
+  - **MSFT is toxic**: 4 trades, 25% WR, -$1,625, -11.33% avg. Low IV = options don't move enough.
+  - **AMZN is a net loser**: -$413 ATM, -$793 OTM. Breakouts don't follow through on options.
+  - **AMD and GOOGL**: 0 trades (no option bar data for constructed strikes)
+  - **COIN is a winner**: 5 trades, 60% WR ATM, 80% WR OTM, +$1,909 OTM. High IV crypto name.
+  - **NFLX**: marginal (+$438, 33% WR)
+- **Test 2 — Curated 6 (drop MSFT/AMD/GOOGL, add AMZN/COIN):** +45.79% ATM, +63.56% OTM — AMZN still drags.
+- **Test 3 — 5+COIN (drop AMD, add COIN):** +74.27% ATM, **+107.68% OTM** — the winner.
+- **Decision:** Optimal options universe is NVDA, TSLA, AAPL, META, COIN. Drop AMD (no data), add COIN (high IV).
+- **Key insight:** Options universe optimization is driven by IV, not equity edge. COIN has mediocre equity ORB performance but excellent options performance because its high IV amplifies option moves. MSFT has decent equity edge but toxic options performance because low IV means options don't move enough on 1.2% underlying moves.
+
+### Batch ORB-OPT-7 — OOS validation attempt (2026-08-16)
+
+- **Hypothesis:** Test the best config (5+COIN, OTM+1, 30%) on the Apr-Jun strong bull regime that killed the equity ORB.
+- **Result:** 0 trades. All 257 signals skipped — Schwab doesn't serve historical bars for expired option contracts.
+- **Train/test split (Jun-Jul train, Aug test):** Also failed. Jun-Jul produced 0 trades (expired contracts). All 24 trades occurred in Aug 1-16.
+- **Critical limitation discovered:** Schwab only serves bars for contracts that haven't expired yet. The further back in time, the fewer contracts have data. This means:
+  - The +107.68% result is 24 trades over ~2 weeks, not 2 months
+  - Cannot test strong bull regime (Apr-Jun)
+  - Cannot do train/test splits
+  - Result is in-sample only with small sample
+- **Decision:** To get proper OOS validation, need either paid OPRA data feed (Alpaca Algo Trader Plus) or forward paper trading. The current results are promising but not statistically significant.
+- **Lesson:** Free data sources have fundamental limitations for historical options backtesting. Schwab is great for recent data and live trading, but not for long-term historical backtesting of expired contracts.

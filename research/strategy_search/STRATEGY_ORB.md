@@ -485,6 +485,48 @@ Returns scale super-linearly with position size due to compounding. The aggressi
 }
 ```
 
+### Universe Selection (Options-Optimized)
+
+The optimal options universe is **different** from the equity universe. Testing 10 symbols revealed:
+
+| Symbol | Trades | Win Rate | PnL | Avg % | Verdict |
+|--------|--------|----------|-----|-------|---------|
+| TSLA | 6 | 50% | +$2,975 | +8.36% | **Keep** — high IV, tight spreads |
+| META | 4 | 75% | +$3,934 | +26.79% | **Keep** — best avg % with OTM |
+| COIN | 5 | 80% | +$1,909 | +12.09% | **Keep** — high IV crypto name |
+| NVDA | 5 | 40% | +$940 | +6.87% | **Keep** — best liquidity |
+| AAPL | 4 | 50% | +$1,009 | +9.93% | **Keep** — steady |
+| AMD | 0 | — | $0 | — | **Drop** — no option bar data |
+| AMZN | 4 | 50% | -$793 | -4.65% | **Drop** — net loser |
+| MSFT | 4 | 25% | -$1,625 | -11.33% | **Drop** — toxic, low IV |
+| GOOGL | 0 | — | $0 | — | **Drop** — no option bar data |
+
+**Optimal universe: NVDA, TSLA, AAPL, META, COIN** (drop AMD, add COIN)
+
+COIN is the key addition — high IV means options move 12-21% on 1.2% underlying moves. With OTM +1, COIN has 80% win rate. MSFT is toxic because low IV means options don't move enough on 1.2% underlying moves to overcome theta and slippage.
+
+### Best Combined Config Results
+
+| Universe | Strike | Return | PF | Win Rate | Max DD | Sharpe | Trades |
+|----------|--------|--------|------|----------|--------|--------|--------|
+| Original 5 | ATM | +57.42% | 3.739 | 50% | 14.96% | 4.193 | 20 |
+| Original 5 | OTM+1 | +72.06% | 4.499 | 50% | 16.72% | 4.833 | 20 |
+| **5+COIN** | **OTM+1** | **+107.68%** | **6.657** | **58%** | **15.78%** | **6.046** | **24** |
+
+### Critical Data Limitation
+
+**Schwab does not serve historical bars for expired option contracts.** All 24 trades in the backtest occurred in August 2026 (the most recent 2 weeks) because those are the only contracts that still have historical data. Earlier periods (Jun-Jul, Apr-Jun) produced 0 trades — not because the strategy chose not to trade, but because the option contracts from those periods have expired and Schwab purged their bar data.
+
+This means:
+- The +107.68% result is based on 24 trades over ~2 weeks, not 2 months
+- We cannot test the strong bull regime (Apr-Jun) that killed the equity ORB (-8.95%)
+- Train/test splits are impossible — all trades cluster in the most recent period
+- The result is in-sample only with a small sample size
+
+**To get proper OOS validation:**
+1. **Paid OPRA data feed** (Alpaca Algo Trader Plus, ~$50/mo) — provides complete historical data for expired contracts
+2. **Forward paper trading** — accumulate live trades over weeks/months to build statistical significance
+
 ### How to Reproduce (Options)
 
 ```python
