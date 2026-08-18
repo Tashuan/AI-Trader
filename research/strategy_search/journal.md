@@ -1062,3 +1062,17 @@ This is the strongest config found across all batches. Next steps: holdout valid
 - **Risk controls added:** Explicit paper-only gate, 10% daily loss pause, 30% rolling drawdown pause, persistent risk state, and structured discovery/execution observability.
 - **Decision:** **Promising and ready for shadow mode; not approved for live capital.** The corrected strategy remains positive across IV assumptions and holdout data, but full-period drawdown is too high for promotion and live execution behavior is not yet observed.
 - **Required next evidence:** At least 10 clean shadow sessions recording discovered symbols, rejected signals, option quotes/fills, spread and slippage, risk state, and realized drawdown. See `STRATEGY_ORB_OPTIONS_WINNER.md` for the canonical configuration and promotion gates.
+
+### Batch FUTURES-ORB-1 — Futures research foundation (2026-08-17)
+
+- **Hypothesis:** The corrected ORB signal structure can be evaluated on futures, but options-specific assumptions must be replaced with contract-aware tick execution and dollar-risk sizing before any FuturesRunner is built.
+- **Research file:** `research/strategy_search/orb_futures_backtester.py`
+- **Canonical signal path:** `agents/orb_strategy.py` (`OpeningRangeBuilder` + `BreakoutChecker`), with exclusive RTH range, skipped first post-range bar, two-bar confirmation, 10:00 ET cutoff, and conservative stop-first behavior.
+- **Initial universe:** `MES=F`, `MNQ=F`, `M2K=F`, `MYM=F`; micro contracts are the research default for a $10,000 account.
+- **Execution model:** Tick-size and tick-value metadata, one-tick adverse slippage, $2.50 commission per contract per side, range-width stops, R-multiple targets, and dollar-risk position sizing.
+- **Data:** yfinance 5-minute bars filtered to 09:30–15:55 ET RTH; approximately 60–70 days available. This is a smoke-test source, not sufficient for final walk-forward validation or promotion.
+- **Smoke configuration:** 1.0% risk, 0.5x opening-range stop, 2R target, one maximum concurrent position.
+- **Smoke result:** +3.02%, PF 1.230, 9.16% max drawdown, 40.6% win rate, 64 trades. This is `promising_not_validated`; the sample is too short for a winner claim.
+- **Comparison:** A 0.05% extension filter reduced return to +1.22% but reduced drawdown to 3.57% and increased PF to 1.268 over only 20 trades. A 1.0x range stop lost -14.23% with PF 0.431. These are hypotheses, not promotions.
+- **Tests:** Full suite passed: 255 passed, 89 skipped. Focused ORB/futures tests passed: 45 passed.
+- **Decision:** **Research foundation complete; no FuturesRunner.** Acquire longer futures history, validate rolls and data quality, run parameter/cost/outlier/walk-forward tests, and only then consider shadow mode and runner construction. See `docs/FUTURES_ORB_STRATEGY.md`.

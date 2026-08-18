@@ -23,11 +23,12 @@ beyond the range edge, which was the only thing that turned the equity
 version positive.
 
 Usage:
-  cd agents
-  python3 ../research/strategy_search/orb_futures_backtester.py
-  python3 ../research/strategy_search/orb_futures_backtester.py --symbols ES=F,NQ=F,CL=F,GC=F
-  python3 ../research/strategy_search/orb_futures_backtester.py --stop-pct 0.3 --target-pct 0.5
-  python3 ../research/strategy_search/orb_futures_backtester.py --extension-filter 0.1
+  python3 research/strategy_search/orb_futures_backtester.py
+  python3 research/strategy_search/orb_futures_backtester.py \
+    --symbols MES=F,MNQ=F,M2K=F,MYM=F \
+    --risk-pct 1.0 --stop-range-multiplier 0.5 --target-r 2.0
+  python3 research/strategy_search/orb_futures_backtester.py \
+    --extension-filter 0.05
 """
 
 from __future__ import annotations
@@ -45,6 +46,14 @@ sys.path.insert(0, str(_PROJECT_ROOT / "agents"))
 
 import pandas as pd
 
+from orb_strategy import (
+    BreakoutChecker,
+    IntrabarPolicy,
+    OpeningRangeBuilder,
+    ORBStrategyConfig,
+    RangeEndPolicy,
+)
+
 # ── Contract specifications ─────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -57,6 +66,11 @@ class FuturesContract:
 
 
 CONTRACTS: dict[str, FuturesContract] = {
+    # Micro contracts are the research default for a $10,000 account.
+    "MES=F": FuturesContract("MES=F", "Micro E-mini S&P 500", 5.0, 0.25, 1.25),
+    "MNQ=F": FuturesContract("MNQ=F", "Micro E-mini Nasdaq 100", 2.0, 0.25, 0.50),
+    "M2K=F": FuturesContract("M2K=F", "Micro E-mini Russell 2000", 5.0, 0.10, 0.50),
+    "MYM=F": FuturesContract("MYM=F", "Micro E-mini Dow", 0.50, 1.0, 0.50),
     "ES=F": FuturesContract("ES=F", "E-mini S&P 500", 50.0, 0.25, 12.50),
     "NQ=F": FuturesContract("NQ=F", "E-mini Nasdaq 100", 20.0, 0.25, 5.00),
     "CL=F": FuturesContract("CL=F", "Crude Oil WTI", 1000.0, 0.01, 10.00),
@@ -68,20 +82,30 @@ CONTRACTS: dict[str, FuturesContract] = {
 # ── Default config ──────────────────────────────────────────────────────
 
 FUTURES_ORB_CONFIG = {
-    "range_minutes": 5,          # opening range length (one 5m bar)
-    "stop_pct": 0.3,             # stop loss as % of entry price
-    "target_pct": 0.5,           # profit target as % of entry price
-    "latest_entry": "10:30",     # no new entries after this ET time
-    "max_positions": 3,          # max concurrent positions
-    "contracts_per_position": 1, # fixed contract count per position
-    "confirmation_minutes": 10,  # no stops for first N minutes after entry
-    "circuit_breaker": 3,        # consecutive losses before halting a symbol
-    "extension_filter_pct": 0.0, # reject breakouts >X% beyond range edge (0=off)
-    "min_range_width_pct": 0.0,  # skip if opening range <X% of price (0=off)
-    "force_exit_time": "15:55",  # force close all positions
-    "market_open": "09:30",      # RTH open
-    "slippage_ticks": 1,         # slippage in ticks per fill
-    "commission_per_side": 2.50, # commission per contract per side
+    "config_version": "futures-orb-baseline-v0.1",
+    "range_minutes": 5,
+    "range_end_policy": "exclusive",
+    "confirmation_bars": 2,
+    "skip_first_post_range_bar": True,
+    "latest_entry": "10:00",
+    "min_entry_time": "09:30",
+    "max_positions": 1,
+    "risk_per_trade_pct": 0.5,
+    "max_contracts": 4,
+    "stop_model": "range_width",
+    "stop_range_multiplier": 1.0,
+    "target_r_multiple": 2.0,
+    # Optional legacy percentage model for comparison only.
+    "stop_pct": 0.2,
+    "target_pct": 0.4,
+    "confirmation_minutes": 10,
+    "circuit_breaker": 3,
+    "extension_filter_pct": 0.0,
+    "min_range_width_pct": 0.0,
+    "force_exit_time": "15:55",
+    "market_open": "09:30",
+    "slippage_ticks": 1,
+    "commission_per_side": 2.50,
 }
 
 # ── Data fetching ───────────────────────────────────────────────────────
@@ -138,59 +162,49 @@ class FuturesPosition:
 
 # ── Signal generation ───────────────────────────────────────────────────
 
-@dataclass
-class FuturesORBSignal:
-    symbol: str
-    side: str
-    entry_price: float     # close at breakout
-    stop_price: float
-    target_price: float
-    range_high: float
-    range_low: float
-    ts: datetime
-    extension_pct: float   # how far beyond range edge (0 = at edge)
+class CanonicalFuturesSignalAdapter:
+    """Adapt canonical ORB signals to futures bars without I/O."""
 
+    def __init__(self, symbol: str, config: dict):
+        self.symbol = symbol
+        self.config = config
+        self.strategy = ORBStrategyConfig(
+            range_minutes=config.get("range_minutes", 5),
+            range_end_policy=RangeEndPolicy(
+                config.get("range_end_policy", "exclusive")
+            ),
+            latest_entry=config.get("latest_entry", "10:00"),
+            min_entry_time=config.get("min_entry_time", "09:30"),
+            confirmation_bars=config.get("confirmation_bars", 2),
+            skip_first_post_range_bar=config.get(
+                "skip_first_post_range_bar", True
+            ),
+            confirmation_minutes=config.get("confirmation_minutes", 10),
+            max_signal_age_seconds=10**9,
+            intrabar_policy=IntrabarPolicy.CONSERVATIVE,
+        )
+        self.builder = OpeningRangeBuilder(self.strategy)
+        self.checker = BreakoutChecker(self.strategy)
+        self.orb_range = None
 
-def generate_signal(
-    symbol: str,
-    range_high: float,
-    range_low: float,
-    bar_close: float,
-    bar_ts: datetime,
-    config: dict,
-) -> Optional[FuturesORBSignal]:
-    """Check if a bar close is a valid ORB breakout."""
-    stop_pct = config.get("stop_pct", 0.3)
-    target_pct = config.get("target_pct", 0.5)
-    ext_filter = config.get("extension_filter_pct", 0.0)
+    def reset(self) -> None:
+        self.checker.reset()
+        self.orb_range = None
 
-    if bar_close > range_high:
-        side = "long"
-        extension = (bar_close - range_high) / range_high * 100
-    elif bar_close < range_low:
-        side = "short"
-        extension = (range_low - bar_close) / range_low * 100
-    else:
-        return None
-
-    # Extension filter: reject breakouts already stretched too far
-    if ext_filter > 0 and extension > ext_filter:
-        return None
-
-    stop_dist = bar_close * stop_pct / 100
-    target_dist = bar_close * target_pct / 100
-
-    return FuturesORBSignal(
-        symbol=symbol,
-        side=side,
-        entry_price=bar_close,
-        stop_price=bar_close - stop_dist if side == "long" else bar_close + stop_dist,
-        target_price=bar_close + target_dist if side == "long" else bar_close - target_dist,
-        range_high=range_high,
-        range_low=range_low,
-        ts=bar_ts,
-        extension_pct=extension,
-    )
+    def on_bar(self, ts: datetime, bar: dict, day_bars: pd.DataFrame):
+        if self.orb_range is None:
+            records = day_bars[
+                ["Timestamp", "Open", "High", "Low", "Close"]
+            ].to_dict("records")
+            candidate = self.builder.build(self.symbol, records)
+            if candidate and ts.time() > candidate.range_end_ts.time():
+                self.orb_range = candidate
+        if self.orb_range is None:
+            return None
+        return self.checker.check(
+            self.symbol, {**bar, "Timestamp": ts}, self.orb_range,
+            current_ts=ts,
+        )
 
 
 # ── Exit checking ───────────────────────────────────────────────────────
@@ -293,7 +307,8 @@ def run_futures_orb_backtest(
     """Run the futures ORB backtest."""
     config = {**FUTURES_ORB_CONFIG, **(config or {})}
     max_positions = config["max_positions"]
-    contracts_per_pos = config["contracts_per_position"]
+    max_contracts = config["max_contracts"]
+    risk_per_trade_pct = config["risk_per_trade_pct"]
     slippage_ticks = config["slippage_ticks"]
     commission = config["commission_per_side"]
     confirm_mins = config["confirmation_minutes"]
@@ -321,6 +336,16 @@ def run_futures_orb_backtest(
     consecutive_losses: dict[str, int] = {s: 0 for s in symbols}
     halted: dict[str, set] = {}  # date -> set of halted symbols
     daily_pnl: dict[str, float] = {}
+    diagnostics = {
+        "days": len(all_dates),
+        "signals": 0,
+        "extension_rejections": 0,
+        "sizing_rejections": 0,
+        "missing_ranges": 0,
+    }
+    strategies = {
+        sym: CanonicalFuturesSignalAdapter(sym, config) for sym in symbols
+    }
 
     for date in all_dates:
         date_str = str(date)
@@ -366,6 +391,9 @@ def run_futures_orb_backtest(
                 if width_pct < min_range_width:
                     continue
             opening_ranges[sym] = (rh, rl)
+
+        for strategy in strategies.values():
+            strategy.reset()
 
         # Process bars chronologically
         for ts, sym, bar in day_bars:
@@ -429,9 +457,18 @@ def run_futures_orb_backtest(
             if ts.time() > latest_entry_t:
                 continue
 
-            rh, rl = opening_ranges[sym]
-            signal = generate_signal(sym, rh, rl, bar["Close"], ts, config)
+            signal = strategies[sym].on_bar(ts, bar, day_groups[sym][date])
             if signal is None:
+                continue
+            diagnostics["signals"] += 1
+            rh, rl = signal.range_high, signal.range_low
+            extension = (
+                (signal.entry_price - rh) / rh * 100
+                if signal.side == "long"
+                else (rl - signal.entry_price) / rl * 100
+            )
+            if extension > config["extension_filter_pct"] > 0:
+                diagnostics["extension_rejections"] += 1
                 continue
 
             contract = CONTRACTS.get(sym)
@@ -443,24 +480,49 @@ def run_futures_orb_backtest(
                 contract=contract, slippage_ticks=slippage_ticks,
             )
             entry_price = round_to_tick(entry_price, contract)
-            entry_commission = commission * contracts_per_pos
+            range_width = rh - rl
+            stop_dist = range_width * config["stop_range_multiplier"]
+            if config["stop_model"] == "percentage":
+                stop_dist = signal.entry_price * config.get("stop_pct", 0.2) / 100
+            target_dist = stop_dist * config["target_r_multiple"]
+            stop_price = (
+                signal.entry_price - stop_dist
+                if signal.side == "long" else signal.entry_price + stop_dist
+            )
+            target_price = (
+                signal.entry_price + target_dist
+                if signal.side == "long" else signal.entry_price - target_dist
+            )
+            stop_price = round_to_tick(stop_price, contract)
+            target_price = round_to_tick(target_price, contract)
+            stop_ticks = max(1, round(abs(entry_price - stop_price) / contract.tick_size))
+            risk_per_contract = (
+                stop_ticks * contract.tick_value
+                + 2 * commission
+                + 2 * slippage_ticks * contract.tick_value
+            )
+            risk_budget = equity * risk_per_trade_pct / 100
+            qty = min(max_contracts, int(risk_budget / risk_per_contract))
+            if qty < 1:
+                diagnostics["sizing_rejections"] += 1
+                continue
+            entry_commission = commission * qty
 
             pos = FuturesPosition(
                 symbol=sym, side=signal.side, entry_ts=ts,
                 entry_price=entry_price, raw_entry=signal.entry_price,
-                stop_price=signal.stop_price, target_price=signal.target_price,
-                qty=contracts_per_pos, bars_held=0, entry_cost=entry_commission,
+                stop_price=stop_price, target_price=target_price,
+                qty=qty, bars_held=0, entry_cost=entry_commission,
             )
-            # Deduct entry commission from equity immediately
             equity -= entry_commission
             positions.append(pos)
 
         # Force-exit any remaining positions at end of day
         for pos in positions[:]:
             # Find the last bar for this symbol on this date
-            if sym not in day_groups or date not in day_groups[sym]:
+            if pos.symbol not in day_groups or date not in day_groups[pos.symbol]:
                 continue
-            df = day_groups[sym][date]
+            df = day_groups[pos.symbol][date]
             last_bar = df.iloc[-1]
             last_ts = df.index[-1]
             if hasattr(last_ts, "to_pydatetime"):
@@ -548,6 +610,7 @@ def run_futures_orb_backtest(
         "exit_reasons": exit_reasons,
         "daily_pnl": daily_pnl,
         "trades": trades,
+        "diagnostics": diagnostics,
         "config": config,
     }
 
@@ -561,10 +624,15 @@ def print_report(result: dict, label: str = ""):
         print(f"  {label}")
         print(f"{'='*70}")
     cfg = result["config"]
-    print(f"  Stop={cfg['stop_pct']}%  Target={cfg['target_pct']}%  "
+    stop_desc = (
+        f"{cfg['stop_range_multiplier']}x range"
+        if cfg.get("stop_model") == "range_width"
+        else f"{cfg.get('stop_pct', 0)}%"
+    )
+    print(f"  Stop={stop_desc}  Target={cfg['target_r_multiple']}R  "
           f"ExtFilter={cfg['extension_filter_pct']}%  "
-          f"Confirm={cfg['confirmation_minutes']}m  "
-          f"CB={cfg['circuit_breaker']}")
+          f"Risk={cfg['risk_per_trade_pct']}%  "
+          f"Confirm={cfg['confirmation_minutes']}m")
     print(f"  Slippage={cfg['slippage_ticks']}t  Commission=${cfg['commission_per_side']}/side")
     print(f"{'─'*70}")
     print(f"  Total Return:   {result['total_return_pct']:+.2f}%  "
@@ -577,6 +645,10 @@ def print_report(result: dict, label: str = ""):
     print(f"  Avg Win:        ${result['avg_win']:+,.2f}")
     print(f"  Avg Loss:       ${result['avg_loss']:+,.2f}")
     print(f"  Total Trades:   {result['total_trades']}")
+    diag = result.get("diagnostics", {})
+    print(f"  Signals:        {diag.get('signals', 0)}  "
+          f"Size rejects: {diag.get('sizing_rejections', 0)}  "
+          f"Ext rejects: {diag.get('extension_rejections', 0)}")
     print(f"{'─'*70}")
     print(f"  Per-Symbol:")
     for sym, stats in result["per_symbol"].items():
@@ -601,13 +673,19 @@ def print_report(result: dict, label: str = ""):
 
 def main():
     parser = argparse.ArgumentParser(description="Futures ORB backtester")
-    parser.add_argument("--symbols", default="ES=F,NQ=F,CL=F,GC=F",
+    parser.add_argument("--symbols", default="MES=F,MNQ=F,M2K=F,MYM=F",
                         help="Comma-separated yfinance futures symbols")
     parser.add_argument("--period", default="60d",
                         help="yfinance history period (5m max is ~60d)")
     parser.add_argument("--capital", type=float, default=10000.0)
-    parser.add_argument("--stop-pct", type=float, default=None)
-    parser.add_argument("--target-pct", type=float, default=None)
+    parser.add_argument("--risk-pct", type=float, default=None)
+    parser.add_argument("--stop-range-multiplier", type=float, default=None)
+    parser.add_argument("--target-r", type=float, default=None)
+    parser.add_argument("--max-contracts", type=int, default=None)
+    parser.add_argument("--stop-pct", type=float, default=None,
+                        help="Legacy percentage stop; enables percentage stop model")
+    parser.add_argument("--target-pct", type=float, default=None,
+                        help="Legacy percentage target")
     parser.add_argument("--extension-filter", type=float, default=None)
     parser.add_argument("--confirmation-minutes", type=int, default=None)
     parser.add_argument("--circuit-breaker", type=int, default=None)
@@ -628,7 +706,16 @@ def main():
 
     # Build config from CLI overrides
     config = {**FUTURES_ORB_CONFIG}
+    if args.risk_pct is not None:
+        config["risk_per_trade_pct"] = args.risk_pct
+    if args.stop_range_multiplier is not None:
+        config["stop_range_multiplier"] = args.stop_range_multiplier
+    if args.target_r is not None:
+        config["target_r_multiple"] = args.target_r
+    if args.max_contracts is not None:
+        config["max_contracts"] = args.max_contracts
     if args.stop_pct is not None:
+        config["stop_model"] = "percentage"
         config["stop_pct"] = args.stop_pct
     if args.target_pct is not None:
         config["target_pct"] = args.target_pct

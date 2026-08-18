@@ -133,6 +133,27 @@ The scan core modules (`scan_core.py`, `crypto_scan_core.py`) are **side-effect-
 
 **Live runner**: `agents/orb_runner.py` — ORBRunner paper trades the strategy via Alpaca options API. Dynamic symbol discovery (Schwab movers → Alpaca snapshots), 09:30–10:30 ET trading window, force exit at 15:55. Integrated into the Arena UI with start/stop/status controls.
 
+### Futures ORB Backtester (Research Preparation)
+
+**File**: `research/strategy_search/orb_futures_backtester.py`
+
+This is a research-only futures adaptation of the corrected ORB signal structure. It is not connected to a FuturesRunner or broker execution.
+
+| Setting | Current baseline |
+|---|---|
+| Universe | MES=F, MNQ=F, M2K=F, MYM=F |
+| Session | US RTH, 09:30–15:55 ET |
+| Interval | 5m yfinance bars |
+| Opening range | Exclusive 09:30–09:34 |
+| Confirmation | Skip first post-range bar; two closes |
+| Entry cutoff | 10:00 ET |
+| Sizing | Dollar-risk sizing using contract tick values |
+| Stop/target | Range-width stop and R-multiple target |
+| Costs | Tick slippage and per-contract commission |
+| Status | Smoke-tested; not validated or promoted |
+
+The backtester consumes `OpeningRangeBuilder` and `BreakoutChecker` from `agents/orb_strategy.py` so the futures research signal path follows the canonical ORB behavior. Micro contracts are the default research vehicle for a $10,000 account. The current yfinance intraday history is too short for final walk-forward promotion; see [`docs/FUTURES_ORB_STRATEGY.md`](FUTURES_ORB_STRATEGY.md).
+
 ### Legacy Backtester (AI Agents)
 
 **File**: `agents/backtester.py` (not covered in depth here)
