@@ -1,0 +1,33 @@
+{
+  "consecutive_losses": 0,
+  "day_loss_streaks": {},
+  "signals_posted": {},
+  "last_cycle_time": "2026-08-17T15:11:39.923638+00:00",
+  "cycles_run": 122,
+  "last_force_exit_date": null,
+  "open_positions": {},
+  "discovered_symbols": {
+    "2026-08-17": [
+      "AMD",
+      "COIN",
+      "ZM",
+      "F",
+      "PINS",
+      "SPOT",
+      "DKNG",
+      "SHOP"
+    ]
+  },
+  "discovery_meta": {
+    "2026-08-17": {
+      "timestamp": "2026-08-17T13:22:17.359754+00:00",
+      "et_time": "09:22",
+      "late": false,
+      "count": 8
+    }
+  },
+  "order_history": {},
+  "last_reconcile_date": "2026-08-17",
+  "config_version": "2.1-corrected-paper",
+  "shadow_signals": {}
+}

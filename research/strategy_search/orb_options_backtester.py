@@ -53,6 +53,12 @@ from scalp_alt_signals import (
     fetch_1m_data, fetch_prev_closes, SLIPPAGE_BPS,
     DEFAULT_SYMBOLS, DEFAULT_START, DEFAULT_END,
 )
+# Phase 5: import canonical strategy core
+from orb_strategy import (
+    check_exit as canonical_check_exit,
+    select_strike as canonical_select_strike,
+    IntrabarPolicy, ORBStrategyConfig, StrategyMode,
+)
 
 # ── Config ─────────────────────────────────────────────────────────────
 ORB_CONFIG = {
@@ -98,7 +104,14 @@ class OptionPosition:
 
 # ── ORB Signal (simplified, from equity backtest) ──────────────────────
 class ORBSignalGenerator:
-    """Generates ORB signals on the underlying stock."""
+    """Generates ORB signals on the underlying stock.
+
+    Extended parameters (all backward-compatible defaults):
+    - confirmation_bars: N consecutive closes outside range in same direction (default 1)
+    - min_range_width_pct: skip symbol if range width < X% of range_low (default 0.0 = no filter)
+    - skip_first_post_range_bar: never fire signal on the first bar after range end (default False)
+    - range_end_policy: "inclusive" (legacy, 09:35 bar is part of range) or "exclusive" (09:35 is first breakout bar)
+    """
 
     def __init__(self, symbol: str, config: dict):
         self.symbol = symbol
@@ -109,17 +122,38 @@ class ORBSignalGenerator:
         self.entered = False
         self.range_end = dt_time(9, 30 + config.get("range_minutes", 5))
         self.latest_entry = dt_time(*map(int, config.get("latest_entry", "10:30").split(":")))
+        # Extended params
+        self.confirmation_bars = max(1, config.get("confirmation_bars", 1))
+        self.min_range_width_pct = config.get("min_range_width_pct", 0.0)
+        self.skip_first_post_range_bar = config.get("skip_first_post_range_bar", False)
+        self.range_end_policy = config.get("range_end_policy", "inclusive")
+        # State for multi-bar confirmation
+        self._consecutive_count = 0
+        self._consecutive_side = None
+        self._range_built = False
+        self._first_post_range_bar_seen = False
+        self._range_invalid = False
 
     def reset(self, date):
         self.session_date = date
         self.range_high = None
         self.range_low = None
         self.entered = False
+        self._consecutive_count = 0
+        self._consecutive_side = None
+        self._range_built = False
+        self._first_post_range_bar_seen = False
+        self._range_invalid = False
 
     def on_bar(self, ts, bar, idx, day_bars) -> dict | None:
         if ts.time() < dt_time(9, 30):
             return None
-        if ts.time() <= self.range_end:
+        # Range building: inclusive policy includes the range_end bar, exclusive stops before it
+        if self.range_end_policy == "exclusive":
+            in_range = ts.time() < self.range_end
+        else:
+            in_range = ts.time() <= self.range_end
+        if in_range:
             high = float(bar["High"])
             low = float(bar["Low"])
             if self.range_high is None:
@@ -134,13 +168,54 @@ class ORBSignalGenerator:
             return None
         if self.range_high is None:
             return None
+        # Validate range width once (on first post-range bar)
+        if not self._range_built:
+            self._range_built = True
+            if self.min_range_width_pct > 0 and self.range_low > 0:
+                width_pct = (self.range_high - self.range_low) / self.range_low * 100
+                if width_pct < self.min_range_width_pct:
+                    self._range_invalid = True
+                    return None
+        if self._range_invalid:
+            return None
+        # Skip first post-range bar if configured
+        if self.skip_first_post_range_bar and not self._first_post_range_bar_seen:
+            self._first_post_range_bar_seen = True
+            # Still track breakout direction for confirmation counting
+            close = float(bar["Close"])
+            if close > self.range_high:
+                self._consecutive_side = "long"
+                self._consecutive_count = 1
+            elif close < self.range_low:
+                self._consecutive_side = "short"
+                self._consecutive_count = 1
+            else:
+                self._consecutive_count = 0
+                self._consecutive_side = None
+            return None
+        self._first_post_range_bar_seen = True
+
         close = float(bar["Close"])
         if close > self.range_high:
             side = "long"
         elif close < self.range_low:
             side = "short"
         else:
+            # Inside range — reset consecutive count
+            self._consecutive_count = 0
+            self._consecutive_side = None
             return None
+
+        # Multi-bar confirmation logic
+        if self.confirmation_bars > 1:
+            if side == self._consecutive_side:
+                self._consecutive_count += 1
+            else:
+                self._consecutive_side = side
+                self._consecutive_count = 1
+            if self._consecutive_count < self.confirmation_bars:
+                return None
+
         self.entered = True
         stop_dist = close * self.config.get("stop_pct", 0.7) / 100
         target_dist = close * self.config.get("target_pct", 1.2) / 100
@@ -150,6 +225,8 @@ class ORBSignalGenerator:
             "entry_price": close,
             "stop_price": close - stop_dist if side == "long" else close + stop_dist,
             "target_price": close + target_dist if side == "long" else close - target_dist,
+            "range_high": self.range_high,
+            "range_low": self.range_low,
             "ts": str(ts),
         }
 
@@ -369,18 +446,16 @@ def run_options_backtest(
                 lo = lows[sym]
                 pos.bars_held += 1
 
-                # Check stop/target on the UNDERLYING
-                exit_reason = None
-                if pos.side == "long":
-                    if lo <= pos.stop_price:
-                        exit_reason = "stop_loss"
-                    elif hi >= pos.target_price:
-                        exit_reason = "take_profit"
-                else:
-                    if hi >= pos.stop_price:
-                        exit_reason = "stop_loss"
-                    elif lo <= pos.target_price:
-                        exit_reason = "take_profit"
+                # Check stop/target on the UNDERLYING using canonical check_exit
+                exit_reason = canonical_check_exit(
+                    side=pos.side,
+                    current_high=hi,
+                    current_low=lo,
+                    stop_price=pos.stop_price,
+                    target_price=pos.target_price,
+                    in_confirmation=False,  # no confirmation in this backtester
+                    intrabar_policy=IntrabarPolicy.LEGACY,  # match legacy behavior
+                )
 
                 # EOD force close
                 if exit_reason is None and ts.time() >= dt_time(15, 55):

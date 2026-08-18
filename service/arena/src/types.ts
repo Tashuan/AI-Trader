@@ -125,6 +125,7 @@ export interface StockBoyRunnerHealth {
   active_overrides: number;
   heartbeat_age_seconds?: number | null;
   last_cycle_at?: string | null;
+  latest_assessment?: string | null;
 }
 
 export interface StockBoyPosition {

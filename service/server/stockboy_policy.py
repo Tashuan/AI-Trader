@@ -38,6 +38,13 @@ CONTROLLED_RUNNERS: dict[str, str] = {
     "fencebarrunner": "FenceBarRunner",
 }
 
+# Phase 7: Runners StockBoy can observe but NOT control (observe-only).
+# StockBoy can log observations and commentary about these runners,
+# but cannot close positions, cancel orders, or override config.
+OBSERVED_RUNNERS: dict[str, str] = {
+    "orbrunner": "ORBRunner",
+}
+
 # Actions that are strictly forbidden — StockBoy can never create new entries.
 FORBIDDEN_ACTIONS = frozenset({"buy", "short", "enter", "open_position"})
 
@@ -141,6 +148,16 @@ def is_controlled_runner(runner_key: str) -> bool:
     return runner_key in CONTROLLED_RUNNERS
 
 
+def is_observed_runner(runner_key: str) -> bool:
+    """Phase 7: Return True if the runner is observe-only."""
+    return runner_key in OBSERVED_RUNNERS
+
+
+def is_actionable_runner(runner_key: str) -> bool:
+    """Phase 7: Return True if StockBoy can perform actions on this runner."""
+    return runner_key in CONTROLLED_RUNNERS and runner_key not in OBSERVED_RUNNERS
+
+
 def is_forbidden_action(action_type: str) -> bool:
     """Return True if the action type is a forbidden entry action."""
     return action_type.lower() in FORBIDDEN_ACTIONS
@@ -176,6 +193,13 @@ def validate_action(
     Raises PolicyViolation if the action is rejected.
     """
     cfg = config or PolicyConfig.from_env()
+
+    # Phase 7: Observe-only guard — reject actions on observed runners
+    if is_observed_runner(request.runner_key):
+        raise PolicyViolation(
+            f"Runner '{request.runner_key}' is observe-only — StockBoy cannot perform actions on observed runners",
+            "observe_only",
+        )
 
     if kill_switch:
         raise PolicyViolation("Kill switch is engaged — all StockBoy actions are blocked", "kill_switch")
@@ -321,6 +345,13 @@ def validate_override(
     config: Optional[PolicyConfig] = None,
 ) -> None:
     """Validate a proposed runner configuration override. Raises PolicyViolation on rejection."""
+    # Phase 7: Observe-only guard
+    if is_observed_runner(runner_key):
+        raise PolicyViolation(
+            f"Runner '{runner_key}' is observe-only — overrides not allowed",
+            "observe_only",
+        )
+
     if not is_controlled_runner(runner_key):
         raise PolicyViolation(f"Runner '{runner_key}' is not controlled", "unauthorized_target")
 

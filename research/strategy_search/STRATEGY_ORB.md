@@ -1,7 +1,9 @@
-# ORB Options — Opening Range Breakout with Options Leverage
+# ORB Options — Historical Research Archive
 
-> **Status:** WINNING STRATEGY — validated across 5 months and 3 market regimes
-> **Return:** +147% over 5 months (354 trades, PF 1.26, 34% max DD)
+> **Status:** SUPERSEDED — historical optimistic configuration; do not use for promotion or live sizing
+> **Canonical strategy:** [`STRATEGY_ORB_OPTIONS_WINNER.md`](STRATEGY_ORB_OPTIONS_WINNER.md)
+> **Reason:** The original results predated corrected discovery timing, symmetric put strikes, spread/slippage/fee modeling, minimum premium filtering, and canonical signal integration.
+> **Historical result:** +147% over 5 months (354 trades, PF 1.26, 34% max DD)
 > **Profitable in:** strong bull (+32%), moderate bull (+59%), all regimes combined (+147%)
 > **Universe:** NVDA, TSLA, AAPL, COIN (4 symbols)
 > **Pricing:** Black-Scholes theoretical (constant IV from Schwab chain)

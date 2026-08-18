@@ -1,0 +1,53 @@
+{
+  "manifest_version": "1.0",
+  "created_at": "2025-01-20T00:00:00Z",
+  "description": "Frozen legacy baseline for ORBRunner. Do not modify. All new runs use agents/orb_strategy.py with ORBStrategyConfig.",
+  "legacy_files": {
+    "live_agent": "agents/orb_runner.py",
+    "historical_backtester": "research/strategy_search/orb_options_backtester.py",
+    "bs_backtester": "research/strategy_search/orb_options_bs_backtester.py",
+    "options_provider": "agents/alpaca_options_provider.py",
+    "state_file": "agents/orb_runner_state.json"
+  },
+  "legacy_config": {
+    "range_minutes": 5,
+    "stop_pct": 1.0,
+    "target_pct": 1.5,
+    "max_positions": 3,
+    "position_pct": 10.0,
+    "confirmation_minutes": 10,
+    "circuit_breaker": 3,
+    "dte_min": 1,
+    "dte_max": 14,
+    "strike_offset": 1,
+    "default_symbols": ["NVDA", "TSLA", "AAPL", "COIN"],
+    "latest_entry": "10:30",
+    "force_exit_time": "15:55",
+    "option_slippage": 0.02,
+    "entry_latency_bars": 0
+  },
+  "legacy_behaviors": {
+    "range_end_policy": "inclusive",
+    "intrabar_policy": "legacy",
+    "strike_selection": "legacy_plus_strike",
+    "discovery_mode": "fixed",
+    "one_trade_per_symbol": "implicit_via_state_check",
+    "signal_freshness": "not_enforced",
+    "duplicate_bar_guard": "not_present",
+    "stop_target_on_underlying": true,
+    "confirmation_blocks_stops": true
+  },
+  "known_defects": [
+    "Signal freshness not enforced — stale bars can trigger entries",
+    "Duplicate bar timestamps not filtered — can double-fire signals",
+    "Intrabar conflict resolves target-first (optimistic) — should be stop-first (conservative)",
+    "Strike selection is asymmetric: puts use ATM+offset instead of ATM−offset",
+    "Opening range end boundary is ambiguous — 09:35 bar can be both range and breakout",
+    "No explicit one-trade-per-symbol policy — relies on state dict key collision",
+    "Entry latency not modeled — fill assumed at signal bar close",
+    "Circuit breaker conflates daily loss streak with per-symbol trade count"
+  ],
+  "canonical_replacement": "agents/orb_strategy.py",
+  "canonical_config_class": "ORBStrategyConfig",
+  "canonical_config_version": "2.0"
+}

@@ -1,5 +1,9 @@
 # ORB Options Strategy (Black-Scholes)
 
+> **Current status:** PROMISING — paper/shadow validation only; not approved for live capital.
+> **Canonical configuration:** [`research/strategy_search/STRATEGY_ORB_OPTIONS_WINNER.md`](../research/strategy_search/STRATEGY_ORB_OPTIONS_WINNER.md)
+> **Important:** The historical results below include the earlier optimistic research pass. Use the canonical document for the corrected execution assumptions and current promotion decision.
+
 ## Overview
 
 An options-amplified **Opening Range Breakout** strategy that generates signals on the underlying stock using 1-minute bars, then buys OTM options (calls for longs, puts for shorts) priced via Black-Scholes theoretical pricing. This avoids the need for historical option bar data and allows backtesting across any date range — including expired contracts — using only equity 1m bars plus a constant IV assumption.
@@ -34,8 +38,9 @@ Options are priced using **Black-Scholes** with the following assumptions:
 | IV | 50% (default) or fetched from Schwab chain | Held constant during holding period (~2.8h avg) |
 | Risk-free rate | 5% | Configurable |
 | Dividends | None | Close enough for short-term options on growth stocks |
-| Bid-ask spread | Modeled as 10 bps slippage on theoretical price | Options have wider spreads than equities |
-| Strike selection | OTM +1 strike step from ATM | Strike steps vary by symbol (NVDA $2.50, AAPL $2.50, etc.) |
+| Bid-ask spread | 100 bps full spread plus 50 bps adverse slippage in research | Live paper orders use actual Alpaca quotes/fills |
+| Contract fee | $0.65 per contract in research | Live paper execution reports actual broker fills/fees |
+| Strike selection | Symmetric OTM +1 strike step from ATM | Calls use the next higher strike; puts use the next lower strike |
 | DTE range | 2–14 days | Short-dated options for gamma exposure |
 | Position sizing | 10% of equity per trade | Premium-based, not delta-based |
 
@@ -52,10 +57,10 @@ Options are priced using **Black-Scholes** with the following assumptions:
 |---|---|---|
 | `range_minutes` | 5 | Opening range window (9:30–9:35 ET) |
 | `stop_pct` | 1.0% | Stop loss distance from entry (on underlying) |
-| `target_pct` | 1.5% | Profit target distance from entry (on underlying) |
-| `latest_entry` | 10:30 | No new entries after this time |
-| `max_positions` | 3 | Maximum concurrent positions |
-| `position_pct` | 10.0% | % of equity allocated per trade (option premium) |
+| `target_pct` | 2.0% | Profit target distance from entry (on underlying) |
+| `latest_entry` | 10:00 | No new entries after this time |
+| `max_positions` | 4 | Maximum concurrent positions |
+| `position_pct` | 3.0% | % of equity allocated per trade (option premium) |
 | `strike_offset` | +1 | OTM strike offset from ATM |
 | `dte_min` | 2 | Minimum days to expiration |
 | `dte_max` | 14 | Maximum days to expiration |
@@ -235,7 +240,7 @@ python3 ../research/strategy_search/orb_options_backtester.py \
 - Strategy logic implemented and backtested across 4.5 months
 - Validated via IV sensitivity (PASS), walk-forward (PASS), and bear market (MIXED)
 - **ORBRunner built and integrated into the Arena platform** — paper trades options via Alpaca
-- Dynamic symbol discovery enabled by default (Schwab movers → Alpaca snapshots → fallback to fixed universe)
+- Fixed four-symbol universe enabled by default to match the validated strategy; dynamic discovery remains an explicit separate paper experiment
 - Full platform logging via PersonalityLogForwarder — events visible in Timeline UI
 - Start/stop/control via Arena Agents page (yellow runner card)
 
@@ -255,7 +260,7 @@ The strategy is deployed as `agents/orb_runner.py` — a deterministic runner th
 
 ### Symbol Discovery
 
-By default, the runner uses **dynamic discovery** (`discovery_mode: "dynamic"`):
+By default, the runner uses the **fixed validated universe** (`discovery_mode: "fixed"`) so paper signals reproduce the backtest universe. Dynamic discovery is available only as a separate experiment:
 
 1. **Schwab movers** (primary) — live up/down movers from $COMPX, $DJI, $SPX
 2. **Alpaca snapshots** (fallback) — batch snapshots of a 34-symbol universe, ranked by abs daily change %

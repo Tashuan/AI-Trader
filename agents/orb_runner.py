@@ -2,25 +2,15 @@
 """
 ORBRunner — Opening Range Breakout Options Agent
 
-Executes the ORB Options strategy with zero LLM judgment:
-  1. 09:30-09:35 ET: fetch 1m bars, build opening range for each symbol
-  2. 09:35-10:30 ET: watch for breakout closes, enter options on signal
+Executes the corrected ORB Options strategy with zero LLM judgment:
+  1. 09:30-09:35 ET: fetch 1m bars and build the exclusive opening range
+  2. 09:35-10:00 ET: require two confirmed breakout closes before entry
   3. Throughout the day: monitor underlying for stop/target, exit options
   4. 15:55 ET: force-close any remaining option positions
 
-Uses the winning parameters from the validated ORB Options backtest:
-  - 5min opening range, 1.0% stop / 1.5% target on underlying
-  - OTM+1 strike call (long) / put (short) via Alpaca options API
-  - 10% position sizing (option premium), max 3 concurrent positions
-  - 10min confirmation period (no stop checks right after entry)
-  - 3-loss circuit breaker per symbol per day
-  - DTE 2-14 days, 10 bps option slippage
-
-Backtest results (2026-04-01 → 2026-08-16):
-  - +147% return, PF 1.259, 45% win rate, 354 trades
-  - IV sensitivity: PASS (profitable 25%-75% IV)
-  - Walk-forward: PASS (3/3 OOS windows, +68% compounded)
-  - Bear market: MIXED (profitable both regimes, not regime-specific)
+The canonical paper configuration is maintained in ORB_CONFIG below and mirrors
+STRATEGY_ORB_OPTIONS_WINNER.md. It remains shadow/paper-only because the
+corrected backtest has not yet passed the live-capital drawdown gate.
 
 See docs/ORB_OPTIONS_STRATEGY.md for full documentation.
 """
@@ -33,6 +23,15 @@ import logging
 import argparse
 import threading
 import urllib.request
+
+# Load .env from project root so Alpaca API keys are available
+from pathlib import Path as _Path
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _env_path = _Path(__file__).resolve().parent.parent / ".env"
+    _load_dotenv(_env_path)
+except ImportError:
+    pass
 import urllib.error
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
@@ -46,6 +45,14 @@ if _AGENTS_DIR not in sys.path:
 
 from runner_narrative import RunnerNarrative
 from personality_log_forwarder import PersonalityLogForwarder
+
+# Phase 2: import canonical strategy core and centralized execution
+from orb_strategy import (
+    ORBStrategyConfig, StrategyMode, ExecutionMode, IntrabarPolicy, RangeEndPolicy,
+    select_strike as canonical_select_strike,
+    check_exit as canonical_check_exit,
+    OpeningRangeBuilder, BreakoutChecker,
+)
 
 # ── Logging ─────────────────────────────────────────────────────────────
 logger = logging.getLogger("ORBRunner")
@@ -85,25 +92,42 @@ STRIKE_STEPS = {
 }
 
 ORB_CONFIG = {
+    # Canonical corrected strategy configuration.
+    "config_version": "2.1-corrected-paper",
     "range_minutes": 5,
+    "range_end_policy": "exclusive",
+    "confirmation_bars": 2,
+    "skip_first_post_range_bar": True,
     "stop_pct": 1.0,
-    "target_pct": 1.5,
-    "latest_entry": "10:30",
-    "max_positions": 3,
-    "position_pct": 10.0,
+    "target_pct": 2.0,
+    "latest_entry": "10:00",
+    "max_positions": 4,
+    "position_pct": 3.0,
     "strike_offset": 1,
+    "strategy_mode": "symmetric_otm",
     "dte_min": 2,
     "dte_max": 14,
-    "option_slippage_bps": 10.0,
+    "option_slippage_bps": 50.0,
+    "option_spread_bps": 100.0,
+    "contract_fee": 0.65,
     "confirmation_minutes": 10,
     "circuit_breaker": 3,
     "risk_free_rate": 0.05,
     "min_entry_time": "09:30",
-    # Discovery config — set discovery_mode to "dynamic" to use movers
-    "discovery_mode": "dynamic",     # "fixed" or "dynamic"
-    "discovery_max_symbols": 8,       # max symbols to trade after discovery
-    "discovery_min_change_pct": 1.0,  # min abs daily change % to qualify
+    # Fixed universe matches the validated backtest. Dynamic discovery is a
+    # separate paper experiment and does not reproduce the winning sample.
+    "discovery_mode": "fixed",
+    "discovery_max_symbols": 4,
+    "discovery_min_change_pct": 1.0,
     "discovery_universe": SCANNER_UNIVERSE,
+    "max_signal_age_seconds": 300,
+    "intrabar_policy": "conservative",
+    # Shadow mode remains enabled until the shadow gate is explicitly cleared.
+    "shadow_mode": True,
+    "paper_only": True,
+    "min_option_entry_price": 0.20,
+    "daily_loss_limit_pct": 10.0,
+    "max_drawdown_limit_pct": 30.0,
 }
 
 
@@ -120,6 +144,12 @@ _DEFAULT_STATE = {
     "last_force_exit_date": None,
     "open_positions": {},          # symbol -> position metadata
     "discovered_symbols": {},      # date -> list[str] of movers for that day
+    "discovery_meta": {},          # date -> {timestamp, et_time, late, count}
+    "order_history": {},           # symbol -> {client_order_id, alpaca_order_id, status, ts}
+    "last_reconcile_date": None,  # YYYY-MM-DD of last Alpaca reconciliation
+    "config_version": "2.1-corrected-paper",  # tracked config version
+    "shadow_signals": {},          # Phase 10: date -> list of shadow signals (would-have-traded)
+    "risk_state": {},              # daily equity baseline, peak, and halt reason
 }
 
 
@@ -146,6 +176,94 @@ def save_state(state: dict) -> None:
         os.replace(temp_file, STATE_FILE)
     except Exception as e:
         logger.warning(f"Could not save state file: {e}")
+
+
+# ============================================================
+# State Reconciliation & Order Lifecycle (Phase 3)
+# ============================================================
+
+def reconcile_state_with_alpaca(state: dict) -> dict:
+    """Reconcile internal state against Alpaca paper positions.
+
+    On startup or once per day, check if Alpaca has positions that
+    we don't know about (or vice versa).  This handles:
+    - Positions opened by a previous run that crashed before saving state
+    - Positions closed by Alpaca SL/TP that we haven't recorded
+    - Stale state entries for positions that no longer exist
+
+    Returns updated state.
+    """
+    today = et_date_str()
+    if state.get("last_reconcile_date") == today:
+        return state  # already reconciled today
+
+    logger.info("Reconciling state with Alpaca paper positions...")
+    alpaca_positions = get_alpaca_positions()
+    if alpaca_positions is None:
+        alpaca_positions = []
+
+    # Build set of Alpaca option position symbols (OCC symbols)
+    alpaca_symbols = {p.get("symbol", "") for p in alpaca_positions}
+
+    # Check for positions in state but not on Alpaca (already closed)
+    internal_positions = state.get("open_positions", {})
+    stale = []
+    for symbol, pos in list(internal_positions.items()):
+        occ = pos.get("occ_symbol", "")
+        if occ and occ not in alpaca_symbols:
+            stale.append(symbol)
+            logger.info(f"Reconcile: {symbol} ({occ}) not on Alpaca — marking closed")
+            # Record in order history as closed
+            order_hist = state.get("order_history", {})
+            order_hist[symbol] = {
+                "client_order_id": f"orb:reconcile:{symbol}:{today}",
+                "status": "closed_externally",
+                "closed_ts": datetime.now(timezone.utc).isoformat(),
+            }
+            state["order_history"] = order_hist
+            del internal_positions[symbol]
+
+    if stale:
+        post_activity(None, f"Reconciled {len(stale)} stale position(s): {', '.join(stale)}")
+
+    # Check for positions on Alpaca but not in state (orphaned)
+    internal_occs = {p.get("occ_symbol", "") for p in internal_positions.values()}
+    orphaned = []
+    for ap in alpaca_positions:
+        occ = ap.get("symbol", "")
+        if occ and occ not in internal_occs:
+            # This is an orphaned position — log it but don't auto-adopt
+            # (we don't know the stop/target/entry context)
+            orphaned.append(occ)
+            logger.warning(f"Reconcile: orphaned Alpaca position {occ} (qty={ap.get('qty', '?')}) — not auto-adopting")
+
+    if orphaned:
+        post_activity(None, f"WARNING: {len(orphaned)} orphaned Alpaca position(s): {', '.join(orphaned)}")
+
+    state["last_reconcile_date"] = today
+    logger.info(f"Reconcile complete: {len(stale)} stale, {len(orphaned)} orphaned")
+    return state
+
+
+def record_order_lifecycle(
+    state: dict,
+    symbol: str,
+    client_order_id: str,
+    alpaca_order_id: str | None,
+    status: str,
+) -> None:
+    """Record an order lifecycle event in state.
+
+    This provides an audit trail of entries and exits.
+    """
+    order_hist = state.get("order_history", {})
+    order_hist[symbol] = {
+        "client_order_id": client_order_id,
+        "alpaca_order_id": alpaca_order_id,
+        "status": status,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    state["order_history"] = order_hist
 
 
 # ============================================================
@@ -248,6 +366,20 @@ def fetch_config(token: str) -> dict:
         return {"watchlist": [], "poll_interval": DEFAULT_POLL_INTERVAL, "_unavailable": True}
 
 
+def apply_platform_runtime_config(live_config: dict, symbols: list[str]) -> list[str]:
+    """Apply only non-strategy platform settings to the runner.
+
+    The canonical strategy universe is source-controlled; legacy watchlists
+    are logged and ignored so database state cannot alter the experiment.
+    """
+    if live_config.get("watchlist"):
+        logger.warning(
+            "Ignoring platform watchlist for canonical ORB strategy: %s",
+            live_config["watchlist"],
+        )
+    return symbols
+
+
 def fetch_goal_status(token: str) -> dict:
     try:
         return _api_get(token, "/claw/agents/me/goal")
@@ -290,9 +422,9 @@ def et_date_str() -> str:
 
 
 def is_orb_window(config: dict) -> bool:
-    """Check if current ET time is within the ORB signal window (09:30-10:30)."""
+    """Check if current ET time is within the ORB signal window (09:30-10:00)."""
     min_entry = config.get("min_entry_time", "09:30")
-    latest = config.get("latest_entry", "10:30")
+    latest = config.get("latest_entry", "10:00")
     current = et_time_str()
     return min_entry <= current <= latest
 
@@ -318,11 +450,27 @@ def discover_movers(config: dict) -> list[str]:
     returns top N symbols ranked by abs(change_pct).
 
     If neither provider is available, falls back to DEFAULT_SYMBOLS.
+
+    Phase 6: Lookahead guard — discovery data must represent pre-market
+    movement only.  If discovery runs after 09:30 ET, the change_pct
+    may include opening range movement, which would bias selection
+    toward symbols that already broke out.  We cap the change_pct
+    and log a warning when discovery is late.
     """
     max_symbols = config.get("discovery_max_symbols", 8)
     min_change = config.get("discovery_min_change_pct", 1.0)
     universe = config.get("discovery_universe", SCANNER_UNIVERSE)
     candidates: dict[str, dict] = {}
+
+    # Phase 6: Lookahead guard — check if discovery is running late
+    current_time = et_time_str()
+    is_late_discovery = current_time >= "09:30"
+    if is_late_discovery:
+        logger.warning(
+            f"Discovery running at {current_time} — post-open data may "
+            f"include opening range movement (lookahead risk). "
+            f"Results will be flagged in state."
+        )
 
     # 1. Try Schwab movers (live up/down from $COMPX, $DJI, $SPX)
     try:
@@ -410,7 +558,7 @@ def fetch_1m_bars(symbol: str) -> Optional[list[dict]]:
         from arena_market_data import get_arena_market_data
         import pandas as pd
         provider = get_arena_market_data()
-        frame = provider.history(symbol, period="5d", interval="1m")
+        frame = provider.history(symbol, period="1d", interval="1m")
         if frame is None or frame.empty:
             return None
         frame = frame.copy().reset_index()
@@ -437,59 +585,107 @@ def fetch_1m_bars(symbol: str) -> Optional[list[dict]]:
 
 
 def build_opening_range(symbol: str, bars: list[dict], config: dict) -> Optional[ORBRange]:
-    """Build the opening range from the first N minutes of bars."""
-    range_minutes = config.get("range_minutes", 5)
-    range_end = f"09:{30 + range_minutes}"
-    range_bars = [b for b in bars if str(b["Timestamp"].time())[:5] <= range_end]
-    if not range_bars:
+    """Build the opening range from the first N minutes of bars.
+
+    Phase 4: Now uses canonical OpeningRangeBuilder from orb_strategy.py
+    for deterministic range construction with proper boundary handling.
+    """
+    range_end_policy = config.get("range_end_policy", "inclusive")
+    if range_end_policy == "exclusive":
+        cfg = ORBStrategyConfig(range_end_policy=RangeEndPolicy.EXCLUSIVE,
+                                range_minutes=config.get("range_minutes", 5))
+    else:
+        cfg = ORBStrategyConfig(range_end_policy=RangeEndPolicy.INCLUSIVE,
+                                range_minutes=config.get("range_minutes", 5))
+    builder = OpeningRangeBuilder(cfg)
+    canonical_range = builder.build(symbol, bars)
+    if canonical_range is None:
         return None
-    highs = [float(b["High"]) for b in range_bars]
-    lows = [float(b["Low"]) for b in range_bars]
+    # Convert to legacy ORBRange format for backward compatibility
+    range_minutes = config.get("range_minutes", 5)
+    if range_end_policy == "exclusive":
+        range_end = f"09:{30 + range_minutes - 1:02d}"
+    else:
+        range_end = f"09:{30 + range_minutes:02d}"
     return ORBRange(
         symbol=symbol,
-        range_high=max(highs),
-        range_low=min(lows),
+        range_high=canonical_range.range_high,
+        range_low=canonical_range.range_low,
         range_end_time=range_end,
     )
 
 
 def check_breakout(symbol: str, bars: list[dict], orb_range: ORBRange,
                    config: dict) -> Optional[ORBSignal]:
-    """Check if any bar after the range has a close outside the range."""
-    range_end = orb_range.range_end_time
+    """Check if any bar after the range has a close outside the range.
+
+    Phase 4: Now uses canonical BreakoutChecker from orb_strategy.py
+    with signal freshness enforcement, duplicate bar guard, and
+    one-signal-per-symbol-per-session policy.
+    """
     stop_pct = config.get("stop_pct", 1.0)
     target_pct = config.get("target_pct", 1.5)
+    latest_entry = config.get("latest_entry", "10:00")
+    max_signal_age = config.get("max_signal_age_seconds", 120)
+    confirmation_bars = config.get("confirmation_bars", 1)
 
-    for bar in bars:
-        bar_time = str(bar["Timestamp"].time())[:5]
-        if bar_time <= range_end:
-            continue
-        if bar_time > config.get("latest_entry", "10:30"):
-            break
-        close = float(bar["Close"])
-        if close > orb_range.range_high:
-            side = "long"
-            option_type = "call"
-            stop_price = close * (1 - stop_pct / 100)
-            target_price = close * (1 + target_pct / 100)
-            return ORBSignal(
-                symbol=symbol, side=side, entry_price=close,
-                stop_price=stop_price, target_price=target_price,
-                timestamp=str(bar["Timestamp"]),
-                option_type=option_type,
-            )
-        elif close < orb_range.range_low:
-            side = "short"
-            option_type = "put"
-            stop_price = close * (1 + stop_pct / 100)
-            target_price = close * (1 - target_pct / 100)
-            return ORBSignal(
-                symbol=symbol, side=side, entry_price=close,
-                stop_price=stop_price, target_price=target_price,
-                timestamp=str(bar["Timestamp"]),
-                option_type=option_type,
-            )
-    return None
+    # Build canonical config for BreakoutChecker
+    cfg = ORBStrategyConfig(
+        stop_pct=stop_pct,
+        target_pct=target_pct,
+        latest_entry=latest_entry,
+        confirmation_bars=confirmation_bars,
+        skip_first_post_range_bar=config.get("skip_first_post_range_bar", False),
+        intrabar_policy=IntrabarPolicy(config.get("intrabar_policy", "conservative")),
+        strategy_mode=StrategyMode(config.get("strategy_mode", "symmetric_otm")),
+        max_signal_age_seconds=max_signal_age,
+    )
+
+    # Use a module-level checker per symbol to maintain state
+    if not hasattr(check_breakout, "_checkers"):
+        check_breakout._checkers = {}
+    if symbol not in check_breakout._checkers:
+        check_breakout._checkers[symbol] = BreakoutChecker(cfg)
+    checker = check_breakout._checkers[symbol]
+
+    # Convert legacy ORBRange to canonical ORBRange
+    from orb_strategy import ORBRange as CanonicalORBRange
+    from datetime import datetime as _dt
+    # Parse range_end_time (e.g. "09:35") into today's datetime
+    range_end_ts = _dt.now()
+    try:
+        parts = orb_range.range_end_time.split(":")
+        range_end_ts = _dt.now().replace(hour=int(parts[0]), minute=int(parts[1]), second=0, microsecond=0)
+    except Exception:
+        pass
+    canonical_range = CanonicalORBRange(
+        symbol=orb_range.symbol,
+        range_high=orb_range.range_high,
+        range_low=orb_range.range_low,
+        range_start_ts=range_end_ts,  # not used by checker
+        range_end_ts=range_end_ts,
+        bar_count=0,
+    )
+
+    # Check the last bar (most recent) for breakout
+    if not bars:
+        return None
+    last_bar = bars[-1]
+    current_ts = datetime.now()
+    sig = checker.check(symbol, last_bar, canonical_range, current_ts=current_ts)
+    if sig is None:
+        return None
+
+    # Convert canonical ORBSignal to legacy ORBSignal format
+    return ORBSignal(
+        symbol=sig.symbol,
+        side=sig.side,
+        entry_price=sig.entry_price,
+        stop_price=sig.stop_price,
+        target_price=sig.target_price,
+        timestamp=sig.signal_ts.isoformat() if hasattr(sig.signal_ts, 'isoformat') else str(sig.signal_ts),
+        option_type=sig.option_type,
+    )
 
 
 # ============================================================
@@ -512,7 +708,11 @@ def _alpaca_paper_url() -> str:
 
 
 def find_option_contract(symbol: str, signal: ORBSignal, config: dict) -> Optional[dict]:
-    """Find an option contract for the ORB signal via AlpacaOptionsProvider."""
+    """Find an option contract for the ORB signal via AlpacaOptionsProvider.
+
+    Uses canonical select_strike from orb_strategy.py for strike selection.
+    Falls back to legacy +offset behavior if strategy_mode is legacy.
+    """
     try:
         from alpaca_options_provider import AlpacaOptionsProvider, build_occ_symbol
         provider = AlpacaOptionsProvider()
@@ -521,9 +721,18 @@ def find_option_contract(symbol: str, signal: ORBSignal, config: dict) -> Option
             return None
 
         spot = signal.entry_price
-        strike_step = STRIKE_STEPS.get(symbol, 2.5)
-        atm_strike = round(spot / strike_step) * strike_step
-        target_strike = atm_strike + config.get("strike_offset", 1) * strike_step
+        # Use canonical strike selection
+        strategy_mode = config.get("strategy_mode", "symmetric_otm")
+        if strategy_mode == "symmetric_otm":
+            cfg = ORBStrategyConfig(strategy_mode=StrategyMode.SYMMETRIC_OTM,
+                                    strike_offset=config.get("strike_offset", 1))
+        else:
+            cfg = ORBStrategyConfig.legacy()
+            cfg = ORBStrategyConfig(
+                strategy_mode=StrategyMode.LEGACY_PLUS_STRIKE,
+                strike_offset=config.get("strike_offset", 1),
+            )
+        target_strike = canonical_select_strike(spot, signal.option_type, symbol, cfg)
 
         # Find expiration within DTE range
         today = now_et().date()
@@ -548,8 +757,54 @@ def find_option_contract(symbol: str, signal: ORBSignal, config: dict) -> Option
         return None
 
 
+# ── Execution service singleton ─────────────────────────────────────────
+_execution_service = None
+
+
+def _get_execution_service():
+    """Lazy-init the centralized ORB execution service (paper-only)."""
+    global _execution_service
+    if _execution_service is None:
+        try:
+            import sys as _sys
+            _server_dir = os.path.join(os.path.dirname(_AGENTS_DIR), "service", "server")
+            if _server_dir not in _sys.path:
+                _sys.path.insert(0, _server_dir)
+            from orb_execution_service import ORBExecutionService
+            _execution_service = ORBExecutionService()
+        except Exception as e:
+            logger.warning(f"Could not init ORBExecutionService, falling back to raw API: {e}")
+            _execution_service = False  # sentinel: fallback to legacy
+    return _execution_service
+
+
 def place_option_order(contract: dict, qty: int) -> Optional[dict]:
-    """Place a market buy order for an option contract via Alpaca paper API."""
+    """Place a market buy order for an option contract via centralized execution service."""
+    svc = _get_execution_service()
+    if svc:
+        session_date = et_date_str()
+        result = svc.execute_entry(
+            symbol=contract["underlying"],
+            occ_symbol=contract["occ_symbol"],
+            qty=qty,
+            session_date=session_date,
+        )
+        if result.is_filled:
+            logger.info(f"OPTION ORDER {contract['occ_symbol']} — qty={qty} — filled={result.filled_qty}@{result.filled_price}")
+            return {"id": result.alpaca_order_id, "status": "filled",
+                    "filled_qty": str(result.filled_qty), "filled_avg_price": str(result.filled_price)}
+        elif result.status == "pending":
+            logger.info(f"OPTION ORDER {contract['occ_symbol']} — qty={qty} — pending (order_id={result.alpaca_order_id})")
+            return {"id": result.alpaca_order_id, "status": "pending"}
+        else:
+            logger.error(f"Option order failed: {result.status} — {result.error}")
+            return None
+    # Fallback: legacy raw urllib path
+    return _place_option_order_legacy(contract, qty)
+
+
+def _place_option_order_legacy(contract: dict, qty: int) -> Optional[dict]:
+    """Legacy raw urllib option order (fallback when service unavailable)."""
     try:
         url = f"{_alpaca_paper_url()}/orders"
         body = {
@@ -577,7 +832,32 @@ def place_option_order(contract: dict, qty: int) -> Optional[dict]:
 
 
 def close_option_order(contract_symbol: str, qty: int) -> Optional[dict]:
-    """Place a market sell order to close an option position via Alpaca paper API."""
+    """Place a market sell order to close an option position via centralized execution service."""
+    svc = _get_execution_service()
+    if svc:
+        session_date = et_date_str()
+        result = svc.execute_exit(
+            symbol=contract_symbol,
+            occ_symbol=contract_symbol,
+            qty=qty,
+            session_date=session_date,
+        )
+        if result.is_filled:
+            logger.info(f"OPTION CLOSE {contract_symbol} — qty={qty} — filled={result.filled_qty}@{result.filled_price}")
+            return {"id": result.alpaca_order_id, "status": "filled",
+                    "filled_qty": str(result.filled_qty), "filled_avg_price": str(result.filled_price)}
+        elif result.status == "pending":
+            logger.info(f"OPTION CLOSE {contract_symbol} — qty={qty} — pending")
+            return {"id": result.alpaca_order_id, "status": "pending"}
+        else:
+            logger.error(f"Option close failed: {result.status} — {result.error}")
+            return None
+    # Fallback: legacy raw urllib path
+    return _close_option_order_legacy(contract_symbol, qty)
+
+
+def _close_option_order_legacy(contract_symbol: str, qty: int) -> Optional[dict]:
+    """Legacy raw urllib option close (fallback when service unavailable)."""
     try:
         url = f"{_alpaca_paper_url()}/orders"
         body = {
@@ -625,6 +905,37 @@ def execute_entry(token: str, signal: ORBSignal, config: dict, equity: float,
     """Execute an ORB options entry: find contract, place order, record position."""
     symbol = signal.symbol
 
+    if not config.get("paper_only", True):
+        logger.error("ORBRunner paper-only gate rejected non-paper execution")
+        narrative.emit("risk", "decision", "halted", priority="critical",
+                        message="Paper-only policy rejected execution.")
+        return False
+
+    # Phase 10: Shadow mode — log signal but don't execute
+    if config.get("shadow_mode", False):
+        today = et_date_str()
+        shadow = state.get("shadow_signals", {})
+        shadow.setdefault(today, []).append({
+            "symbol": symbol,
+            "side": signal.side,
+            "entry_price": signal.entry_price,
+            "stop_price": signal.stop_price,
+            "target_price": signal.target_price,
+            "option_type": signal.option_type,
+            "timestamp": signal.timestamp,
+            "equity": equity,
+        })
+        state["shadow_signals"] = shadow
+        logger.info(f"SHADOW MODE: would enter {symbol} {signal.side} "
+                    f"entry={signal.entry_price} stop={signal.stop_price} "
+                    f"target={signal.target_price}")
+        narrative.emit("shadow", "signal", "logged", priority="action", facts={
+            "symbol": symbol, "side": signal.side,
+            "entry": signal.entry_price, "stop": signal.stop_price,
+            "target": signal.target_price,
+        })
+        return False  # don't update state as a real position
+
     # Find option contract
     contract = find_option_contract(symbol, signal, config)
     if contract is None:
@@ -635,10 +946,18 @@ def execute_entry(token: str, signal: ORBSignal, config: dict, equity: float,
     position_pct = config.get("position_pct", 10.0)
     budget = equity * position_pct / 100.0
 
-    # Estimate option price (we'll use a rough OTM price estimate)
-    # In live trading, we'd fetch a quote; for paper, market order handles it
-    # Assume ~$2-5 per contract for OTM short-dated options
-    est_option_price = 3.0  # conservative estimate
+    # Phase 4: Improved option price estimation
+    # Use a simple OTM premium estimate based on underlying price and moneyness
+    spot = signal.entry_price
+    strike_step = STRIKE_STEPS.get(symbol, 2.5)
+    atm = round(spot / strike_step) * strike_step
+    otm_distance = abs(atm - spot) / spot  # how far OTM we are
+    # Rough premium: ~2% of underlying for near-ATM, scaling down for further OTM
+    est_option_price = max(0.50, spot * 0.02 * (1.0 - otm_distance * 0.5))
+    min_option_price = config.get("min_option_entry_price", 0.20)
+    if est_option_price < min_option_price:
+        logger.info(f"Skipping {symbol}: estimated option premium ${est_option_price:.2f} below minimum ${min_option_price:.2f}")
+        return False
     qty = max(1, int(budget / (est_option_price * 100)))
     if qty < 1:
         logger.warning(f"Insufficient budget for {symbol} option: budget=${budget:.2f}")
@@ -664,6 +983,9 @@ def execute_entry(token: str, signal: ORBSignal, config: dict, equity: float,
         "bars_held": 0,
         "order_id": result.get("id"),
     }
+    # Record order lifecycle
+    record_order_lifecycle(state, symbol, "orb:entry", result.get("id"), "entered")
+
     state["signals_posted"][symbol] = et_date_str()
 
     narrative.emit("entry", "entry", "complete", priority="trade", facts={
@@ -701,6 +1023,8 @@ def execute_exit(token: str, symbol: str, position: dict, reason: str,
         state["day_loss_streaks"][symbol] = 0
         state["consecutive_losses"] = 0
 
+    record_order_lifecycle(state, symbol, "orb:exit", result.get("id"), "exited")
+
     del state["open_positions"][symbol]
 
     narrative.emit("exit", "exit", "complete", priority="trade", facts={
@@ -708,6 +1032,20 @@ def execute_exit(token: str, symbol: str, position: dict, reason: str,
     })
     post_activity(token, f"ORB EXIT {symbol} — {reason} — {occ_symbol} qty={qty}", symbol=symbol)
     return True
+
+
+def _elapsed_minutes(entry_ts: str, current_ts: Any) -> float:
+    """Return elapsed minutes between stored and market-bar timestamps."""
+    try:
+        entry = datetime.fromisoformat(str(entry_ts).replace("Z", "+00:00"))
+        current = datetime.fromisoformat(str(current_ts).replace("Z", "+00:00"))
+        if entry.tzinfo is not None:
+            entry = entry.astimezone(ET).replace(tzinfo=None)
+        if current.tzinfo is not None:
+            current = current.astimezone(ET).replace(tzinfo=None)
+        return max(0.0, (current - entry).total_seconds() / 60.0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def check_exits(token: str, state: dict, config: dict) -> dict:
@@ -720,7 +1058,6 @@ def check_exits(token: str, state: dict, config: dict) -> dict:
 
     for symbol in list(positions.keys()):
         pos = positions[symbol]
-        pos["bars_held"] = pos.get("bars_held", 0) + 1
 
         # Fetch current underlying price
         bars = fetch_1m_bars(symbol)
@@ -732,18 +1069,23 @@ def check_exits(token: str, state: dict, config: dict) -> dict:
         current_low = float(latest_bar["Low"])
 
         exit_reason = None
-        in_confirmation = pos["bars_held"] < confirmation_minutes
+        elapsed = _elapsed_minutes(pos.get("entry_ts"), latest_bar.get("Timestamp"))
+        in_confirmation = elapsed < confirmation_minutes
 
-        if pos["side"] == "long":
-            if current_high >= pos["target_price"]:
-                exit_reason = "take_profit"
-            elif not in_confirmation and current_low <= pos["stop_price"]:
-                exit_reason = "stop_loss"
-        else:
-            if current_low <= pos["target_price"]:
-                exit_reason = "take_profit"
-            elif not in_confirmation and current_high >= pos["stop_price"]:
-                exit_reason = "stop_loss"
+        # Use canonical check_exit from orb_strategy.py
+        intrabar_policy_str = config.get("intrabar_policy", "legacy")
+        intrabar_policy = (IntrabarPolicy.CONSERVATIVE
+                           if intrabar_policy_str == "conservative"
+                           else IntrabarPolicy.LEGACY)
+        exit_reason = canonical_check_exit(
+            side=pos["side"],
+            current_high=current_high,
+            current_low=current_low,
+            stop_price=pos["stop_price"],
+            target_price=pos["target_price"],
+            in_confirmation=in_confirmation,
+            intrabar_policy=intrabar_policy,
+        )
 
         if exit_reason is None and is_force_exit_time():
             exit_reason = "eod_close"
@@ -796,11 +1138,31 @@ def run_orb_signals(token: str, symbols: list[str], config: dict,
         return state
 
     narrative.emit("scan", "phase", "started", priority="action", facts={
-        "symbols": symbols, "window": "09:30-10:30",
+        "symbols": symbols, "window": "09:30-10:00",
         "open_positions": len(open_positions), "max_positions": max_positions,
     })
 
     placed = 0
+
+    # Pre-fetch all bars in parallel to minimize latency
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    bars_cache: dict[str, Optional[list[dict]]] = {}
+    symbols_to_fetch = [
+        s for s in symbols
+        if signals_posted.get(s) != today
+        and not (circuit_breaker > 0 and day_loss_streaks.get(s, 0) >= circuit_breaker)
+    ]
+    if symbols_to_fetch:
+        with ThreadPoolExecutor(max_workers=min(8, len(symbols_to_fetch))) as pool:
+            futures = {pool.submit(fetch_1m_bars, s): s for s in symbols_to_fetch}
+            for fut in as_completed(futures, timeout=30):
+                sym = futures[fut]
+                try:
+                    bars_cache[sym] = fut.result()
+                except Exception as e:
+                    logger.warning(f"Bar fetch failed for {sym}: {e}")
+                    bars_cache[sym] = None
+
     for symbol in symbols:
         if len(open_positions) + placed >= max_positions:
             break
@@ -814,8 +1176,8 @@ def run_orb_signals(token: str, symbols: list[str], config: dict,
             logger.info(f"Circuit breaker active for {symbol} — skipping")
             continue
 
-        # Fetch bars and build range
-        bars = fetch_1m_bars(symbol)
+        # Use pre-fetched bars
+        bars = bars_cache.get(symbol)
         if not bars:
             continue
 
@@ -840,6 +1202,29 @@ def run_orb_signals(token: str, symbols: list[str], config: dict,
     })
     if placed == 0:
         post_activity(token, f"ORB scan complete — 0 signals from {len(symbols)} symbols")
+    return state
+
+
+def update_risk_state(state: dict, equity: float, today: str, config: dict) -> dict:
+    """Track equity risk limits without changing strategy signals."""
+    risk = state.setdefault("risk_state", {})
+    if risk.get("date") != today:
+        risk["date"] = today
+        risk["day_start_equity"] = equity
+        risk["daily_halt_reason"] = None
+    risk["peak_equity"] = max(float(risk.get("peak_equity", equity)), equity)
+    day_start = max(float(risk.get("day_start_equity", equity)), 0.01)
+    peak = max(float(risk.get("peak_equity", equity)), 0.01)
+    daily_loss_pct = max(0.0, (day_start - equity) / day_start * 100)
+    drawdown_pct = max(0.0, (peak - equity) / peak * 100)
+    risk["daily_loss_pct"] = round(daily_loss_pct, 4)
+    risk["drawdown_pct"] = round(drawdown_pct, 4)
+    daily_limit = config.get("daily_loss_limit_pct", 10.0)
+    drawdown_limit = config.get("max_drawdown_limit_pct", 30.0)
+    if daily_loss_pct >= daily_limit:
+        risk["daily_halt_reason"] = f"daily_loss_limit_{daily_limit:g}%"
+    if drawdown_pct >= drawdown_limit:
+        risk["rolling_halt_reason"] = f"drawdown_limit_{drawdown_limit:g}%"
     return state
 
 
@@ -878,18 +1263,74 @@ def run_cycle(token: str, state: dict, config: dict, symbols: list[str]) -> dict
         price = float(p.get("current_price", 0)) or float(p.get("entry_price", 0))
         equity += qty * price
 
+    state = update_risk_state(state, equity, et_date_str(), config)
+    risk = state.get("risk_state", {})
     narrative.emit("portfolio", "phase", "measured", priority="action", facts={
         "cash": round(cash, 2), "equity": round(equity, 2),
         "open_positions": len(state.get("open_positions", {})),
+        "daily_loss_pct": risk.get("daily_loss_pct", 0),
+        "drawdown_pct": risk.get("drawdown_pct", 0),
     })
 
-    # 3. Check if we're in market hours
+    # 3. Dynamic symbol discovery (once per day, before ORB window)
+    # Run BEFORE market hours check — discovery should happen at 09:20, pre-open
+    today = et_date_str()
+    discovery_mode = config.get("discovery_mode", "fixed")
+    discovered = state.get("discovered_symbols", {})
+    discovery_meta = state.get("discovery_meta", {})
+    if discovery_mode == "dynamic" and today not in discovered:
+        if et_time_str() >= "09:20" and et_time_str() < config.get("min_entry_time", "09:30"):
+            movers = discover_movers(config)
+            discovered[today] = movers
+            discovery_meta[today] = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "et_time": et_time_str(),
+                "late": False,
+                "count": len(movers),
+            }
+            state["discovered_symbols"] = discovered
+            state["discovery_meta"] = discovery_meta
+            symbols = movers
+            narrative.emit("discovery", "phase", "complete", priority="action", facts={
+                "mode": "dynamic", "symbols": movers, "count": len(movers),
+            })
+            post_activity(token, f"Discovery: {len(movers)} movers selected — {', '.join(movers)}")
+        elif et_time_str() >= config.get("min_entry_time", "09:30") and today not in discovered:
+            # ORB window already started without discovery — do it now
+            # Phase 6: Flag as late discovery (lookahead risk)
+            movers = discover_movers(config)
+            discovered[today] = movers
+            discovery_meta[today] = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "et_time": et_time_str(),
+                "late": True,
+                "count": len(movers),
+                "warning": "Discovery after 09:30 — may include opening range data (lookahead risk)",
+            }
+            state["discovered_symbols"] = discovered
+            state["discovery_meta"] = discovery_meta
+            symbols = movers
+            narrative.emit("discovery", "phase", "late", priority="action", facts={
+                "mode": "dynamic", "symbols": movers, "count": len(movers),
+                "late": True,
+            })
+            post_activity(token, f"Late discovery: {len(movers)} movers — {', '.join(movers)} (LOOKAHEAD RISK)")
+    elif discovery_mode == "dynamic" and today in discovered:
+        symbols = discovered[today]
+
+    # 4. Check if we're in market hours (gates trading, not discovery)
     if not is_market_hours():
         logger.info("Outside market hours — skipping cycle")
         return state
 
-    # 4. Force exit at 15:55 ET
-    today = et_date_str()
+    # Phase 3: Daily reconciliation with Alpaca (before trading)
+    if state.get("last_reconcile_date") != today:
+        try:
+            state = reconcile_state_with_alpaca(state)
+        except Exception as e:
+            logger.warning(f"Daily reconciliation failed: {e}")
+
+    # 5. Force exit at 15:55 ET
     if is_force_exit_time() and state.get("last_force_exit_date") != today:
         if state.get("open_positions"):
             state = force_exit_all(token, state)
@@ -900,33 +1341,18 @@ def run_cycle(token: str, state: dict, config: dict, symbols: list[str]) -> dict
     # 5. Check exits on open positions
     state = check_exits(token, state, config)
 
-    # 6. Dynamic symbol discovery (once per day, before ORB window)
-    discovery_mode = config.get("discovery_mode", "fixed")
-    discovered = state.get("discovered_symbols", {})
-    if discovery_mode == "dynamic" and today not in discovered:
-        if et_time_str() >= "09:20" and et_time_str() < config.get("min_entry_time", "09:30"):
-            movers = discover_movers(config)
-            discovered[today] = movers
-            state["discovered_symbols"] = discovered
-            symbols = movers
-            narrative.emit("discovery", "phase", "complete", priority="action", facts={
-                "mode": "dynamic", "symbols": movers, "count": len(movers),
-            })
-            post_activity(token, f"Discovery: {len(movers)} movers selected — {', '.join(movers)}")
-        elif et_time_str() >= config.get("min_entry_time", "09:30") and today not in discovered:
-            # ORB window already started without discovery — do it now
-            movers = discover_movers(config)
-            discovered[today] = movers
-            state["discovered_symbols"] = discovered
-            symbols = movers
-            narrative.emit("discovery", "phase", "late", priority="action", facts={
-                "mode": "dynamic", "symbols": movers, "count": len(movers),
-            })
-            post_activity(token, f"Late discovery: {len(movers)} movers — {', '.join(movers)}")
-    elif discovery_mode == "dynamic" and today in discovered:
-        symbols = discovered[today]
-
     # 7. During ORB window: generate signals and enter
+    risk = state.get("risk_state", {})
+    risk_halt = risk.get("daily_halt_reason") or risk.get("rolling_halt_reason")
+    if risk_halt:
+        narrative.emit("risk", "decision", "halted", priority="critical", facts={
+            "reason": risk_halt,
+            "daily_loss_pct": risk.get("daily_loss_pct", 0),
+            "drawdown_pct": risk.get("drawdown_pct", 0),
+        })
+        logger.warning(f"Risk guardrail active — skipping new entries: {risk_halt}")
+        return state
+
     if not can_trade or goal_achieved:
         logger.info(f"Cycle skip: can_trade={can_trade} goal_achieved={goal_achieved}")
         return state
@@ -958,6 +1384,13 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
     config = dict(ORB_CONFIG)
     symbols = list(DEFAULT_SYMBOLS)
 
+    # Phase 3: Reconcile state with Alpaca on startup
+    try:
+        state = reconcile_state_with_alpaca(state)
+        save_state(state)
+    except Exception as e:
+        logger.warning(f"Startup reconciliation failed: {e}")
+
     logger.info(f"State loaded: cycles_run={state.get('cycles_run', 0)} "
                 f"open_positions={len(state.get('open_positions', {}))}")
     logger.info(f"Discovery: {config.get('discovery_mode', 'fixed')} | "
@@ -980,9 +1413,8 @@ def run_loop(stop_event: threading.Event, poll_interval: int = DEFAULT_POLL_INTE
                 raise RuntimeError("config service unavailable")
             live_poll = live_config.get("poll_interval", poll_interval)
 
-            # Override symbols from config if present
-            if live_config.get("watchlist"):
-                symbols = live_config["watchlist"]
+            # Apply only explicitly allowed platform runtime settings.
+            symbols = apply_platform_runtime_config(live_config, symbols)
 
             # Run the cycle
             state = run_cycle(token, state, config, symbols)

@@ -1038,3 +1038,27 @@ This is the strongest config found across all batches. Next steps: holdout valid
 - **Key insight:** The original 0.7% stop was the single biggest problem. It was too tight for the underlying noise — the stock would wiggle 0.7% on nothing, stop out the option at -17%, and then continue in the breakout direction. Widening to 1.0% lets the trade breathe. Combined with the 10-minute confirmation period (no stop checking for 10 min after entry), this filters the whipsaws while keeping the real stop-outs.
 - **Caveat:** BS pricing uses constant IV (fetched once from Schwab). Real IV varies by strike (smile) and over time. The theoretical prices don't capture bid-ask spread changes or intraday IV shifts. Results are optimistic vs real fills but sufficient for validating the edge across regimes.
 - **Decision:** The strategy is now tradeable across regimes. Next steps: live paper trading to validate fills, IV sensitivity analysis, and potentially walk-forward optimization on the risk management parameters.
+
+### Batch ORB-OPT-9 — Corrected execution audit and canonical signal validation (2026-08-17)
+
+- **Hypothesis:** The apparent ORB options winner remains viable after removing look-ahead timing, correcting put strike selection, sharing canonical signal logic, and modeling realistic option execution.
+- **Harness:** `research/strategy_search/orb_sweep.py` and `research/strategy_search/orb_options_bs_backtester.py`
+- **Signal path:** `agents/orb_strategy.py` (`OpeningRangeBuilder` + `BreakoutChecker`) used by the backtester and runner.
+- **Dates:** Full period 2026-06-15 through 2026-08-17; chronological holdout 2026-07-16 through 2026-08-17.
+- **Locked configuration:** 5-minute exclusive range, 2-bar confirmation, skip first post-range bar, 10:00 latest entry, 1.0% stop, 2.0% target, 3% position sizing, max 4 positions, OTM+1 calls and symmetric OTM+1 puts, DTE 2-14, minimum option premium $0.20.
+- **Execution assumptions:** Frozen premarket discovery, 100 bps option spread, 50 bps adverse slippage, $0.65 per-contract fee, conservative intrabar ordering, and theoretical BS pricing only where historical option bars are unavailable.
+- **Full-period results:**
+  | IV | Return | PF | Max DD | Trades |
+  |---:|---:|---:|---:|---:|
+  | 25% | +220.75% | 2.033 | 32.92% | 149 |
+  | 50% | +112.76% | 1.567 | 38.92% | 167 |
+  | 75% | +67.79% | 1.314 | 50.55% | 182 |
+- **Holdout results:**
+  | IV | Return | PF | Max DD | Trades |
+  |---:|---:|---:|---:|---:|
+  | 25% | +150.30% | 2.623 | 22.03% | 77 |
+  | 50% | +103.86% | 2.176 | 24.95% | 84 |
+  | 75% | +75.12% | 1.776 | 28.84% | 91 |
+- **Risk controls added:** Explicit paper-only gate, 10% daily loss pause, 30% rolling drawdown pause, persistent risk state, and structured discovery/execution observability.
+- **Decision:** **Promising and ready for shadow mode; not approved for live capital.** The corrected strategy remains positive across IV assumptions and holdout data, but full-period drawdown is too high for promotion and live execution behavior is not yet observed.
+- **Required next evidence:** At least 10 clean shadow sessions recording discovered symbols, rejected signals, option quotes/fills, spread and slippage, risk state, and realized drawdown. See `STRATEGY_ORB_OPTIONS_WINNER.md` for the canonical configuration and promotion gates.

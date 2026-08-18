@@ -16,13 +16,15 @@ from stockboy_models import (
     StockBoySupervisorStatus, StockBoyObservationDetail,
 )
 from stockboy_policy import (
-    CONTROLLED_RUNNERS, PolicyConfig, PolicyViolation, validate_action,
+    CONTROLLED_RUNNERS, OBSERVED_RUNNERS, PolicyConfig, PolicyViolation, validate_action,
     validate_override, CooldownTracker, action_cooldown_key,
 )
 from routes_shared import utc_now_iso_z
 
 
 RUNNER_AGENT_NAMES = tuple(CONTROLLED_RUNNERS.values())
+# Phase 8: Include observed runners in agent name list for position display
+ALL_RUNNER_AGENT_NAMES = tuple(list(CONTROLLED_RUNNERS.values()) + list(OBSERVED_RUNNERS.values()))
 
 
 def _json(value: Any) -> str:
@@ -145,8 +147,12 @@ def _runner_health(cursor, agent_ids: dict[str, int]) -> list[StockBoyRunnerHeal
         "cryptorunner": "cryptorunner-runner",
         "scalprunner": "scalprunner-runner",
         "fencebarrunner": "fencebarrunner-runner",
+        # Phase 8: observed runner bot keys
+        "orbrunner": "orb-runner",
     }
-    for runner_key, agent_name in CONTROLLED_RUNNERS.items():
+    # Phase 8: Include both controlled and observed runners
+    all_runners = {**CONTROLLED_RUNNERS, **OBSERVED_RUNNERS}
+    for runner_key, agent_name in all_runners.items():
         agent_id = agent_ids.get(agent_name)
         if not agent_id:
             result.append(StockBoyRunnerHealth(runner_key=runner_key, agent_name=agent_name))
@@ -169,7 +175,9 @@ def _runner_health(cursor, agent_ids: dict[str, int]) -> list[StockBoyRunnerHeal
             (runner_key,),
         )
         overrides = _as_dict(cursor.fetchone())
-        bot = bot_statuses.get(bot_keys[runner_key], {})
+        bot = bot_statuses.get(bot_keys.get(runner_key, ""), {})
+        # Phase 8: Mark observed runners differently
+        is_observed = runner_key in OBSERVED_RUNNERS
         result.append(StockBoyRunnerHealth(
             runner_key=runner_key,
             agent_name=agent_name,
@@ -181,17 +189,20 @@ def _runner_health(cursor, agent_ids: dict[str, int]) -> list[StockBoyRunnerHeal
             open_positions=len(positions),
             unrealized_pnl=pnl,
             active_overrides=int((overrides or {}).get("count") or 0),
+            # Phase 8: observed runners have no overrides
+            latest_assessment="observe-only" if is_observed else None,
         ))
     return result
 
 
 def _position_details(cursor, agent_ids: dict[str, int]) -> list[StockBoyPositionDetail]:
-    placeholders = ",".join("?" for _ in RUNNER_AGENT_NAMES)
+    # Phase 8: Include observed runner positions for Arena visibility
+    placeholders = ",".join("?" for _ in ALL_RUNNER_AGENT_NAMES)
     cursor.execute(
         f"""SELECT p.*, a.name AS agent_name
             FROM positions p JOIN agents a ON a.id = p.agent_id
             WHERE a.name IN ({placeholders}) ORDER BY p.opened_at DESC""",
-        RUNNER_AGENT_NAMES,
+        ALL_RUNNER_AGENT_NAMES,
     )
     result = []
     for row in cursor.fetchall():

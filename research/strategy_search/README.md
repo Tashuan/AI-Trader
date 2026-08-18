@@ -23,7 +23,8 @@ Other strategy families are comparison or fallback work only unless the journal 
 ## Validated Strategies
 
 - **VolFence** — Volatility-filtered opening-range breakout on 5m bars. Winning config: 2.0R target, ATR > 1.2%, ETF exclusion. +1.18% at 5bps over 22 months. See `STRATEGY_VolFence.md`.
-- **ORB** — Opening range breakout on 1m bars. Winning config: 5min range, 0.7% stop, 1.2% target. +7.83% at 2bps over 2 months (in-sample), regime-dependent. Edge too thin for small equity accounts — options-based implementation is next. See `STRATEGY_ORB.md`.
+- **ORB Options** — Corrected paper strategy using canonical 5m range / 2-bar confirmation, 1.0% stop, 2.0% target, 3% position sizing, minimum $0.20 option premium, and conservative spread/slippage/fee assumptions. Positive full-period and chronological holdout results, but full-period drawdown is too high for live promotion. See `STRATEGY_ORB_OPTIONS_WINNER.md` and `docs/ORB_OPTIONS_STRATEGY.md`.
+- **ORB equity archive** — Historical 1m equity ORB research and the superseded optimistic options pass. See `STRATEGY_ORB.md`.
 
 ## Artifact contract
 

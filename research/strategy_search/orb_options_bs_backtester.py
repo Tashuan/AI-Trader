@@ -10,8 +10,9 @@ Assumptions:
   - IV held constant during the holding period (avg 2.8h)
   - Risk-free rate = 5% (configurable)
   - No dividends (close enough for short-term options on growth stocks)
-  - Option price = BS theoretical value (no bid-ask spread modeling)
-  - Slippage modeled as bps on theoretical price
+  - Option price = BS theoretical mid-price
+  - Bid/ask spread and adverse slippage are configurable fill assumptions
+  - Contract fees are configurable per-contract, per-side
 
 Usage:
   cd agents
@@ -53,6 +54,17 @@ from scalp_alt_signals import (
 from orb_options_backtester import (
     STRIKE_STEPS, _find_expiration, build_schwab_symbol,
     ORBSignalGenerator, ORB_CONFIG,
+)
+# Phase 5: import canonical strategy core
+from orb_strategy import (
+    check_exit as canonical_check_exit,
+    IntrabarPolicy,
+    ORBStrategyConfig,
+    StrategyMode,
+    RangeEndPolicy,
+    OpeningRangeBuilder,
+    BreakoutChecker,
+    select_strike as canonical_select_strike,
 )
 
 # ── Black-Scholes pricing ──────────────────────────────────────────────
@@ -130,6 +142,23 @@ def bs_theta(S: float, K: float, T: float, r: float, sigma: float,
     return theta / 365.0  # Convert annual to daily
 
 
+def option_fill_price(
+    mid_price: float,
+    is_entry: bool,
+    option_slippage_bps: float,
+    option_spread_bps: float,
+) -> float:
+    """Model market fills from a BS mid-price.
+
+    option_spread_bps is the full bid/ask spread. Entries pay the ask and
+    exits receive the bid; slippage is adverse on top of the half-spread.
+    """
+    half_spread = option_spread_bps / 20000.0
+    slippage = option_slippage_bps / 10000.0
+    multiplier = 1.0 + half_spread + slippage if is_entry else 1.0 - half_spread - slippage
+    return max(0.01, mid_price * multiplier)
+
+
 # ── IV cache ───────────────────────────────────────────────────────────
 
 class IVCache:
@@ -192,6 +221,57 @@ class IVCache:
                 self._iv[sym] = 0.50
 
 
+class CanonicalSignalAdapter:
+    """Incremental adapter from canonical ORB signals to dicts."""
+
+    def __init__(self, symbol: str, config: dict):
+        self.symbol = symbol
+        self.config = ORBStrategyConfig(
+            strategy_mode=StrategyMode(config.get("strategy_mode", "symmetric_otm")),
+            range_minutes=config.get("range_minutes", 5),
+            range_end_policy=RangeEndPolicy(config.get("range_end_policy", "exclusive")),
+            latest_entry=config.get("latest_entry", "10:30"),
+            stop_pct=config.get("stop_pct", 1.0),
+            target_pct=config.get("target_pct", 1.5),
+            confirmation_minutes=config.get("confirmation_minutes", 10),
+            confirmation_bars=config.get("confirmation_bars", 1),
+            skip_first_post_range_bar=config.get("skip_first_post_range_bar", False),
+            min_entry_time=config.get("min_entry_time", "09:30"),
+            max_signal_age_seconds=10**9,
+        )
+        self.builder = OpeningRangeBuilder(self.config)
+        self.checker = BreakoutChecker(self.config)
+        self.session_date = None
+        self.orb_range = None
+
+    def reset(self, date) -> None:
+        self.session_date = date
+        self.orb_range = None
+        self.checker.reset()
+
+    def on_bar(self, ts, bar, idx, day_bars) -> dict | None:
+        if self.orb_range is None:
+            records = day_bars[["Timestamp", "Open", "High", "Low", "Close"]].to_dict("records")
+            candidate = self.builder.build(self.symbol, records)
+            if candidate is not None and ts.time() > candidate.range_end_ts.time():
+                self.orb_range = candidate
+        if self.orb_range is None:
+            return None
+        signal = self.checker.check(self.symbol, bar.to_dict(), self.orb_range, current_ts=ts)
+        if signal is None:
+            return None
+        return {
+            "symbol": signal.symbol,
+            "side": signal.side,
+            "entry_price": signal.entry_price,
+            "stop_price": signal.stop_price,
+            "target_price": signal.target_price,
+            "range_high": signal.range_high,
+            "range_low": signal.range_low,
+            "ts": signal.signal_timestamp_str,
+        }
+
+
 # ── Position ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -234,6 +314,13 @@ def run_bs_options_backtest(
     confirmation_minutes: int = 0,
     circuit_breaker: int = 0,
     min_entry_time: str = "09:30",
+    discovery_config: dict = None,
+    premarket_changes: dict[Any, dict[str, float]] | None = None,
+    frozen_symbols: dict[Any, list[str]] | None = None,
+    intrabar_policy: IntrabarPolicy = IntrabarPolicy.LEGACY,
+    option_spread_bps: float = 0.0,
+    option_spread_by_symbol: dict[str, float] | None = None,
+    contract_fee: float = 0.0,
 ) -> dict:
     """Run options ORB backtest using Black-Scholes theoretical pricing.
 
@@ -246,6 +333,20 @@ def run_bs_options_backtest(
     - circuit_breaker: Stop trading after N consecutive losses in a day
       (prevents cascading drawdowns from losing streaks)
     - min_entry_time: Skip entries before this time (first 15 min are noisy)
+
+    Signal extensions (read from config dict):
+    - confirmation_bars: N consecutive closes outside range (default 1)
+    - min_range_width_pct: skip symbols with narrow opening ranges (default 0.0)
+    - skip_first_post_range_bar: never enter on first bar after range (default False)
+    - range_end_policy: "inclusive" (legacy) or "exclusive" (09:35 is first breakout bar)
+
+    Dynamic discovery:
+    - discovery_config: dict with universe, max_symbols, and min_change_pct.
+    - premarket_changes: date -> symbol -> percent change measured from the
+      last pre-09:30 quote versus previous close. Required with discovery_config;
+      the backtester refuses to use the 09:30 opening print for discovery.
+    - frozen_symbols: date -> already-selected symbols. When supplied, no
+      discovery occurs inside the replay loop.
     """
     max_positions = config.get("max_positions", 3)
     position_pct = config.get("position_pct", 30.0)
@@ -260,9 +361,47 @@ def run_bs_options_backtest(
         ts_to_idx[sym] = {ts: i for i, ts in enumerate(df["Timestamp"])}
         day_groups[sym] = {d: g for d, g in df.groupby(df["Timestamp"].dt.date)}
         all_dates.update(day_groups[sym].keys())
-    all_dates = sorted(all_dates)
+    start_d = dt_date.fromisoformat(start_date)
+    end_d = dt_date.fromisoformat(end_date)
+    all_dates = sorted(d for d in all_dates if start_d <= d <= end_d)
 
-    strategies: dict[str, ORBSignalGenerator] = {}
+    # ── Frozen discovery: selection is completed before replay ───────
+    day_symbols: dict[Any, list[str]] = {}
+    if frozen_symbols is not None:
+        day_symbols = {
+            date: [sym for sym in frozen_symbols.get(date, []) if sym in frames]
+            for date in all_dates
+        }
+        active_symbols = symbols
+    elif discovery_config:
+        if premarket_changes is None:
+            raise ValueError(
+                "premarket_changes is required for dynamic discovery; "
+                "09:30 opening prices are not valid pre-market inputs"
+            )
+        disc_universe = discovery_config.get("universe", symbols)
+        disc_max = discovery_config.get("max_symbols", 8)
+        disc_min_change = discovery_config.get("min_change_pct", 1.0)
+        disc_exclude = set(discovery_config.get("exclude_symbols", []))
+        for date in all_dates:
+            changes = premarket_changes.get(date, {})
+            movers = [
+                (sym, abs(float(changes[sym])), float(changes[sym]))
+                for sym in disc_universe
+                if sym not in disc_exclude
+                and sym in frames
+                and sym in changes
+                and abs(float(changes[sym])) >= disc_min_change
+            ]
+            movers.sort(key=lambda x: x[1], reverse=True)
+            day_symbols[date] = [m[0] for m in movers[:disc_max]]
+        active_symbols = disc_universe
+    else:
+        active_symbols = symbols
+        for date in all_dates:
+            day_symbols[date] = list(symbols)
+
+    strategies: dict[str, CanonicalSignalAdapter] = {}
     positions: dict[str, BSPosition] = {}
     trades: list[TradeRecord] = []
     curve: list[dict] = []
@@ -296,7 +435,7 @@ def run_bs_options_backtest(
             day_loss_streaks = {}  # reset per day
         for sym in frames:
             if sym not in strategies:
-                strategies[sym] = ORBSignalGenerator(sym, config)
+                strategies[sym] = CanonicalSignalAdapter(sym, config)
             strat = strategies[sym]
             if strat.session_date != date:
                 strat.reset(date)
@@ -348,32 +487,43 @@ def run_bs_options_backtest(
                 # Confirmation period: don't check stops for first N minutes
                 in_confirmation = pos.bars_held < confirmation_minutes
 
-                if pos.option_type == "call":
-                    # Long call = long underlying
-                    # Take profit always honored, stop only after confirmation
-                    if hi >= pos.target_price:
-                        exit_reason = "take_profit"
-                    elif not in_confirmation and lo <= pos.stop_price:
-                        exit_reason = "stop_loss"
-                else:
-                    # Long put = short underlying
-                    if lo <= pos.target_price:
-                        exit_reason = "take_profit"
-                    elif not in_confirmation and hi >= pos.stop_price:
-                        exit_reason = "stop_loss"
+                # Phase 5: Use canonical check_exit from orb_strategy.py
+                # BSPosition has option_type not side: call=long, put=short
+                pos_side = "long" if pos.option_type == "call" else "short"
+                exit_reason = canonical_check_exit(
+                    side=pos_side,
+                    current_high=hi,
+                    current_low=lo,
+                    stop_price=pos.stop_price,
+                    target_price=pos.target_price,
+                    in_confirmation=in_confirmation,
+                    intrabar_policy=intrabar_policy,
+                )
 
                 if exit_reason is None and ts.time() >= dt_time(15, 55):
                     exit_reason = "eod_close"
 
                 if exit_reason is not None:
-                    # Price option via BS at exit
+                    # Stop/target exits fill at the touched underlying level;
+                    # only EOD exits use the bar close.
+                    exit_spot = px
+                    if exit_reason == "take_profit":
+                        exit_spot = pos.target_price
+                    elif exit_reason == "stop_loss":
+                        exit_spot = pos.stop_price
                     T_exit = _time_to_expiry(ts, pos.expiration)
                     option_px = bs_price(
-                        px, pos.strike, T_exit, risk_free_rate,
+                        exit_spot, pos.strike, T_exit, risk_free_rate,
                         pos.iv, pos.option_type
                     )
-                    fill_px = option_px * (1 - option_slippage_bps / 10000)
-                    fee = fill_px * pos.qty * 100 * fee_rate
+                    fill_px = option_fill_price(
+                        option_px, is_entry=False,
+                        option_slippage_bps=option_slippage_bps,
+                        option_spread_bps=(option_spread_by_symbol or {}).get(
+                            pos.symbol, option_spread_bps
+                        ),
+                    )
+                    fee = fill_px * pos.qty * 100 * fee_rate + contract_fee * pos.qty
                     pnl = (fill_px - pos.entry_price) * pos.qty * 100 - fee - pos.entry_fee
                     cash += fill_px * pos.qty * 100 - fee
 
@@ -421,17 +571,18 @@ def run_bs_options_backtest(
                 continue
 
             # Circuit breaker: stop trading a symbol after N consecutive losses
+            current_day_syms = day_symbols.get(date, [])
             if circuit_breaker > 0:
                 # Check if ALL symbols are blocked
                 all_blocked = all(
                     day_loss_streaks.get(s, 0) >= circuit_breaker
-                    for s in symbols if s not in positions
+                    for s in current_day_syms if s not in positions
                 )
                 if all_blocked:
                     diagnostics["circuit_breaker"] += 1
                     continue
 
-            for sym in symbols:
+            for sym in current_day_syms:
                 if sym in positions or sym not in bars:
                     continue
                 strat = strategies.get(sym)
@@ -448,6 +599,24 @@ def run_bs_options_backtest(
                 signal = strat.on_bar(ts, bars[sym], idx, day_df)
                 if signal is None:
                     continue
+
+                # ── Entry-quality filters using current information ──
+                premarket_change = (premarket_changes or {}).get(date, {}).get(sym)
+                if config.get("require_premarket_alignment") and premarket_change is not None:
+                    aligned = (signal["side"] == "long" and premarket_change > 0) or (
+                        signal["side"] == "short" and premarket_change < 0
+                    )
+                    if not aligned:
+                        diagnostics["premarket_misaligned"] += 1
+                        continue
+
+                max_extension = config.get("max_entry_extension_pct", 0.0)
+                if max_extension > 0:
+                    edge = signal["range_high"] if signal["side"] == "long" else signal["range_low"]
+                    extension_pct = abs(signal["entry_price"] - edge) / signal["entry_price"] * 100
+                    if extension_pct > max_extension:
+                        diagnostics["overextended_entry"] += 1
+                        continue
 
                 # ── SPY regime filter ────────────────────────────
                 if use_spy_filter and date in spy_direction:
@@ -469,8 +638,18 @@ def run_bs_options_backtest(
                     diagnostics["no_expiry"] += 1
                     continue
 
-                atm_strike = round(spot / strike_step) * strike_step
-                target_strike = atm_strike + strike_offset * strike_step
+                strategy_mode = config.get("strategy_mode", "symmetric_otm")
+                strike_config = ORBStrategyConfig(
+                    strategy_mode=(
+                        StrategyMode.SYMMETRIC_OTM
+                        if strategy_mode == "symmetric_otm"
+                        else StrategyMode.LEGACY_PLUS_STRIKE
+                    ),
+                    strike_offset=strike_offset,
+                )
+                target_strike = canonical_select_strike(
+                    spot, option_type, sym, strike_config
+                )
 
                 # Get IV for this contract
                 iv = iv_cache.get_iv(sym, target_strike, option_type, expiry)
@@ -482,16 +661,23 @@ def run_bs_options_backtest(
                     iv, option_type
                 )
 
-                if option_entry <= 0:
-                    diagnostics["zero_option_price"] += 1
+                min_option_price = config.get("min_option_entry_price", 0.0)
+                if option_entry <= 0 or option_entry < min_option_price:
+                    diagnostics["option_price_filter"] += 1
                     continue
 
                 # Position sizing: use position_pct of equity for option premium
                 notional = equity * position_pct / 100.0
                 # Apply entry slippage (buy fills higher)
-                fill_entry = option_entry * (1 + option_slippage_bps / 10000)
+                fill_entry = option_fill_price(
+                    option_entry, is_entry=True,
+                    option_slippage_bps=option_slippage_bps,
+                    option_spread_bps=(option_spread_by_symbol or {}).get(
+                        sym, option_spread_bps
+                    ),
+                )
                 qty = max(1, int(notional / (fill_entry * 100)))
-                entry_fee = fill_entry * qty * 100 * fee_rate
+                entry_fee = fill_entry * qty * 100 * fee_rate + contract_fee * qty
                 cost = fill_entry * qty * 100 + entry_fee
                 if cost > cash:
                     qty = max(1, int(cash / (fill_entry * 100 + entry_fee)))
@@ -519,8 +705,14 @@ def run_bs_options_backtest(
         T = _time_to_expiry(last_ts, pos.expiration)
         last_px = pos.entry_underlying  # fallback
         option_px = bs_price(last_px, pos.strike, T, risk_free_rate, pos.iv, pos.option_type)
-        fill_px = option_px * (1 - option_slippage_bps / 10000)
-        fee = fill_px * pos.qty * 100 * fee_rate
+        fill_px = option_fill_price(
+            option_px, is_entry=False,
+            option_slippage_bps=option_slippage_bps,
+            option_spread_bps=(option_spread_by_symbol or {}).get(
+                pos.symbol, option_spread_bps
+            ),
+        )
+        fee = fill_px * pos.qty * 100 * fee_rate + contract_fee * pos.qty
         pnl = (fill_px - pos.entry_price) * pos.qty * 100 - fee - pos.entry_fee
         cash += fill_px * pos.qty * 100 - fee
         pnl_pct = pnl / (pos.entry_price * pos.qty * 100) * 100 if pos.entry_price > 0 else 0
@@ -556,6 +748,11 @@ def run_bs_options_backtest(
         "dte_max": dte_max, "position_pct": position_pct,
         "risk_free_rate": risk_free_rate,
         "option_slippage_bps": option_slippage_bps,
+        "option_spread_bps": option_spread_bps,
+        "option_spread_by_symbol": option_spread_by_symbol,
+        "contract_fee": contract_fee,
+        "intrabar_policy": intrabar_policy.value,
+        "strategy_mode": config.get("strategy_mode", "symmetric_otm"),
         "pricing_model": "black_scholes",
     }
     return r
@@ -584,7 +781,9 @@ def main():
     parser.add_argument("--start", default=DEFAULT_START)
     parser.add_argument("--end", default=DEFAULT_END)
     parser.add_argument("--capital", type=float, default=10000.0)
-    parser.add_argument("--slippage", type=float, default=10.0, help="Option slippage in bps")
+    parser.add_argument("--slippage", type=float, default=10.0, help="Adverse option slippage per fill in bps")
+    parser.add_argument("--spread", type=float, default=0.0, help="Full option bid/ask spread in bps")
+    parser.add_argument("--contract-fee", type=float, default=0.0, help="Fee per contract per side")
     parser.add_argument("--fee-rate", type=float, default=0.0)
     parser.add_argument("--strike-offset", type=int, default=0)
     parser.add_argument("--dte-min", type=int, default=2)
@@ -602,6 +801,8 @@ def main():
                         help="Stop trading after N consecutive losses in a day")
     parser.add_argument("--min-entry-time", type=str, default="09:30",
                         help="Skip entries before this time (HH:MM)")
+    parser.add_argument("--intrabar-policy", choices=["legacy", "conservative"], default="legacy")
+    parser.add_argument("--strategy-mode", choices=["legacy_plus_strike", "symmetric_otm"], default="symmetric_otm")
     parser.add_argument("--position-pct", type=float, default=0,
                         help="Override position size (0 = use config default 30%)")
     parser.add_argument("--stop-pct", type=float, default=0,
@@ -660,6 +861,7 @@ def main():
         config["stop_pct"] = args.stop_pct
     if args.target_pct > 0:
         config["target_pct"] = args.target_pct
+    config["strategy_mode"] = args.strategy_mode
 
     # Run backtest
     print("  Running BS options ORB backtest...")
@@ -668,6 +870,7 @@ def main():
         symbols=symbols, frames=frames, prev_closes=prev_closes,
         iv_cache=iv_cache, capital=args.capital,
         slippage_bps=SLIPPAGE_BPS, option_slippage_bps=opt_slippage,
+        option_spread_bps=args.spread, contract_fee=args.contract_fee,
         fee_rate=fee_rate, config=config,
         start_date=args.start, end_date=args.end,
         strike_offset=args.strike_offset, dte_min=args.dte_min,
@@ -676,6 +879,9 @@ def main():
         confirmation_minutes=args.confirmation_min,
         circuit_breaker=args.circuit_breaker,
         min_entry_time=args.min_entry_time,
+        intrabar_policy=(IntrabarPolicy.CONSERVATIVE
+                         if args.intrabar_policy == "conservative"
+                         else IntrabarPolicy.LEGACY),
     )
     elapsed = time_mod.time() - t0
 

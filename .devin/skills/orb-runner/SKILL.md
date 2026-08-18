@@ -16,14 +16,16 @@ ORBRunner trades OTM options on opening range breakouts via Alpaca's paper tradi
 
 ## Strategy Summary
 
-1. **09:20 ET** — Discover top movers (Schwab movers → Alpaca snapshots → fallback to fixed 4 symbols)
-2. **09:30–09:35** — Build 5-min opening range (high/low) per symbol using 1m equity bars
-3. **09:35–10:30** — Watch for 1m close above range high (long) or below range low (short)
-4. **On breakout** — Buy OTM+1 call (long) or put (short) via Alpaca options API, nearest DTE 2–14
-5. **Exit** — Underlying hits 1.0% stop or 1.5% target (10-min confirmation before stops active)
+The current canonical configuration is `2.1-corrected-paper` from `ORB_CONFIG` in `agents/orb_runner.py`. It is positive in corrected historical tests but remains paper/shadow-only because full-period drawdown has not passed the live-capital gate.
+
+1. **09:30–09:35 ET** — Build an exclusive 5-minute opening range from 1m equity bars
+2. **After the range** — Skip the first post-range bar, then require two consecutive breakout closes
+3. **09:35–10:00 ET** — Enter only on a confirmed close above the range high or below the range low
+4. **On breakout** — Buy symmetric OTM+1 call/put via Alpaca options API, nearest DTE 2–14
+5. **Exit** — Underlying hits 1.0% stop or 2.0% target; stops remain inactive for 10 elapsed minutes
 6. **15:55 ET** — Force-close all remaining positions
 
-Risk controls: 3 concurrent positions max, 10% equity per trade, 3-loss circuit breaker per symbol, goal check before trading.
+Risk controls: 4 concurrent positions max, 3% equity per trade, $0.20 minimum option premium, 3-loss circuit breaker per symbol, 10% daily-loss pause, 30% rolling-drawdown pause, paper-only gate, and goal check before trading.
 
 ## Key Files
 
@@ -41,35 +43,55 @@ Risk controls: 3 concurrent positions max, 10% equity per trade, 3-loss circuit 
 
 ## Config
 
-All config lives in `ORB_CONFIG` at the top of `agents/orb_runner.py`. It does **not** use `strategy_registry.py` or the 3-layer parameter resolution model. To change behavior, edit `ORB_CONFIG` directly or override via the platform's `fetch_config(token)` watchlist field.
+All strategy config lives in `ORB_CONFIG` at the top of `agents/orb_runner.py`. It does **not** use `strategy_registry.py` or the 3-layer parameter resolution model.
 
-| Key | Default | Description |
-|---|---|---|
-| `range_minutes` | 5 | Opening range window length |
-| `stop_pct` | 1.0 | Stop loss distance on underlying (%) |
-| `target_pct` | 1.5 | Profit target distance on underlying (%) |
-| `latest_entry` | "10:30" | No new entries after this ET time |
-| `max_positions` | 3 | Max concurrent option positions |
-| `position_pct` | 10.0 | % of equity per trade (option premium) |
-| `strike_offset` | 1 | OTM strike offset from ATM |
+The platform `fetch_config(token)` endpoint is consulted each loop, but only `poll_interval` is honored. Any legacy `watchlist` is explicitly ignored so database state cannot replace the validated strategy universe or alter the experiment.
+
+| Key | Corrected value | Description |
+|---|---:|---|
+| `config_version` | `2.1-corrected-paper` | Canonical paper configuration |
+| `range_minutes` | 5 | Exclusive opening range window |
+| `range_end_policy` | `exclusive` | 09:30–09:34 are range bars; 09:35 is eligible |
+| `confirmation_bars` | 2 | Consecutive closes required |
+| `skip_first_post_range_bar` | `true` | Ignore first eligible post-range bar |
+| `stop_pct` / `target_pct` | 1.0 / 2.0 | Underlying stop and target (%) |
+| `latest_entry` | `10:00` | No new entries after this ET time |
+| `max_positions` | 4 | Max concurrent option positions |
+| `position_pct` | 3.0 | % of equity per trade (option premium) |
+| `strategy_mode` | `symmetric_otm` | Calls higher strike; puts lower strike |
+| `strike_offset` | 1 | OTM strike distance |
 | `dte_min` / `dte_max` | 2 / 14 | Days to expiration range |
-| `confirmation_minutes` | 10 | Minutes after entry before stops checked |
+| `min_option_entry_price` | 0.20 | Minimum option premium per share |
+| `confirmation_minutes` | 10 | Elapsed minutes before stops activate |
 | `circuit_breaker` | 3 | Consecutive losses before halting a symbol |
-| `discovery_mode` | "dynamic" | "dynamic" (movers) or "fixed" (DEFAULT_SYMBOLS) |
-| `discovery_max_symbols` | 8 | Max symbols after discovery |
-| `discovery_min_change_pct` | 1.0 | Min abs daily change % to qualify |
+| `intrabar_policy` | `conservative` | Stop-first if stop and target share a bar |
+| `discovery_mode` | `fixed` | Use validated NVDA/TSLA/AAPL/COIN universe |
+| `shadow_mode` | `true` | Log signals; do not place orders |
+| `paper_only` | `true` | Reject non-paper execution |
+| `daily_loss_limit_pct` | 10.0 | Daily loss pause |
+| `max_drawdown_limit_pct` | 30.0 | Rolling drawdown pause |
+
+Research fill assumptions are 100 bps full spread, 50 bps adverse slippage, and $0.65 per-contract fee. Live Alpaca paper execution uses actual quotes and fills.
 
 Strike steps per symbol are in `STRIKE_STEPS` dict (e.g. NVDA $2.50, AAPL $2.50, AMD $0.50).
 
 ## Symbol Discovery
 
-`discover_movers(config)` in `orb_runner.py` — runs once per day at ~09:20 ET, cached in `state["discovered_symbols"][date]`:
+The corrected runner defaults to `discovery_mode: "fixed"` and uses the validated universe:
 
-1. **Schwab movers** (primary) — `schwab_provider.movers_all()` fetches up/down movers from $COMPX, $DJI, $SPX
-2. **Alpaca snapshots** (fallback) — `alpaca_realtime_provider.screen_movers(SCANNER_UNIVERSE, top_n)` ranks 34 symbols by abs daily change %
-3. **DEFAULT_SYMBOLS** (final fallback) — `["NVDA", "TSLA", "AAPL", "COIN"]` if neither provider available
+```text
+NVDA, TSLA, AAPL, COIN
+```
 
-Filtered by `discovery_min_change_pct`, capped at `discovery_max_symbols`. Set `discovery_mode: "fixed"` to skip discovery and use DEFAULT_SYMBOLS (matches backtest).
+This is deliberate: dynamic discovery was not part of the winning fixed-universe backtest. Legacy platform watchlists are ignored by the runner, so the fixed universe remains reproducible.
+
+Dynamic discovery remains available as a separate experiment. When enabled, `discover_movers(config)` runs once per day and caches results in `state["discovered_symbols"][date]`:
+
+1. Schwab movers (primary)
+2. Alpaca snapshots (fallback)
+3. Fixed default symbols (final fallback)
+
+Discovery is filtered by `discovery_min_change_pct`, capped at `discovery_max_symbols`, and flagged if it runs after 09:30 ET because that can introduce lookahead.
 
 ## State Persistence
 
@@ -80,6 +102,9 @@ Filtered by `discovery_min_change_pct`, capped at `discovery_max_symbols`. Set `
 - `open_positions` — symbol → position metadata (occ_symbol, qty, entry, stop, target, option_type)
 - `discovered_symbols` — date → list of movers selected that day
 - `last_force_exit_date` — tracks EOD close completion
+- `shadow_signals` — signals logged without orders while shadow mode is enabled
+- `risk_state` — daily baseline, peak equity, drawdown, and halt reasons
+- `config_version` — active runner configuration version
 
 ## Arena Integration
 
@@ -108,12 +133,13 @@ Events emitted: `startup:ready`, `cycle:observed`, `portfolio:measured`, `discov
 |---|---|---|
 | File | `orb_options_bs_backtester.py` | `orb_runner.py` |
 | Pricing | Black-Scholes (constant IV) | Real Alpaca option prices |
-| Symbols | Fixed (NVDA, TSLA, AAPL, COIN) | Dynamic discovery (default) |
-| Execution | Simulated (10 bps slippage) | Real Alpaca market orders |
-| Exits | Underlying stop/target/EOD | Same (checks underlying price) |
-| Config | CLI flags | `ORB_CONFIG` dict |
+| Symbols | Fixed (NVDA, TSLA, AAPL, COIN) | Fixed validated universe by default |
+| Execution | BS + 100 bps spread + 50 bps slippage + $0.65 fee | Alpaca paper orders; actual fills |
+| Signals | Exclusive range, skip first bar, two-bar confirmation | Same canonical `orb_strategy.py` path |
+| Exits | 1.0% stop / 2.0% target, conservative intrabar | Same underlying stop/target/EOD behavior |
+| Config | CLI/config dict | `ORB_CONFIG` dict; only poll interval from platform |
 
-The backtest validated the edge (+147% return, 1.259 profit factor, 45% win rate across 4.5 months). The live runner is the forward paper test to validate real fill behavior and slippage.
+The corrected backtest is positive across IV assumptions and chronological holdout data, but full-period drawdown is not yet approved for live capital. The runner is currently shadow-only and must collect clean forward sessions before limited paper execution.
 
 ## Environment Variables
 
@@ -126,15 +152,19 @@ The backtest validated the edge (+147% return, 1.259 profit factor, 45% win rate
 
 ## Common Tasks
 
-**"Start paper trading":** `POST /api/arena/orb-runner/start` or click the ORBRunner card on the Arena Agents page.
+**"Start shadow mode":** `POST /api/arena/orb-runner/start` or click the ORBRunner card on the Arena Agents page. With the current `shadow_mode: true`, the runner logs signals and places no orders.
+
+**"Enable limited paper execution":** Only after the shadow-session gate is approved, set `ORB_CONFIG["shadow_mode"]` to `false`; keep `paper_only: true`. This is an explicit source-controlled change, not a database toggle.
 
 **"Change traded symbols":** Set `discovery_mode: "fixed"` and edit `DEFAULT_SYMBOLS`, or keep `"dynamic"` and adjust `discovery_max_symbols` / `discovery_min_change_pct` / `SCANNER_UNIVERSE`.
 
-**"Change stop/target":** Edit `ORB_CONFIG["stop_pct"]` and `ORB_CONFIG["target_pct"]`. These are on the underlying price, not the option price.
+**"Change stop/target":** Edit `ORB_CONFIG["stop_pct"]` and `ORB_CONFIG["target_pct"]`. Current corrected values are 1.0% / 2.0%, measured on the underlying rather than the option price.
 
-**"Change strike selection":** Edit `ORB_CONFIG["strike_offset"]` (currently +1 = OTM by 1 strike step). Add new symbols to `STRIKE_STEPS` dict.
+**"Change strategy universe":** Keep `discovery_mode: "fixed"` and edit `DEFAULT_SYMBOLS` only when intentionally creating a new research candidate. Platform/API watchlists are ignored by the canonical runner.
 
-**"Run the backtest":** `cd agents && python3 ../research/strategy_search/orb_options_bs_backtester.py --symbols NVDA,TSLA,AAPL,COIN --start 2026-04-01 --end 2026-08-16 --strike-offset 1 --no-iv-fetch`
+**"Change strike selection":** Keep `strategy_mode: "symmetric_otm"` and edit `strike_offset` only with a new validation. Calls select the next higher strike; puts select the next lower strike.
+
+**"Run the corrected backtest":** Use the canonical document and pass the corrected parameters explicitly, including `--strategy-mode symmetric_otm`, `--intrabar-policy conservative`, 2-bar confirmation, 1.0% / 2.0% stop-target, 3% position sizing, a $0.20 minimum premium, 100 bps spread, 50 bps slippage, and $0.65 contract fees. See `research/strategy_search/STRATEGY_ORB_OPTIONS_WINNER.md` for the reproducible configuration.
 
 **"Run validation suite":** `python3 ../research/strategy_search/orb_options_validation.py --test all`
 
@@ -145,5 +175,7 @@ The backtest validated the edge (+147% return, 1.259 profit factor, 45% win rate
 - Option positions live on Alpaca's side, not in the platform's `positions` table. The platform DB doesn't know about ORBRunner's trades — only the personality-log events and `orb_runner_state.json` track them.
 - Schwab OAuth is currently blocked (Akamai 403). Discovery falls through to Alpaca snapshots automatically.
 - The runner fetches 1m equity bars via `arena_market_data` (the Arena router), not directly from Alpaca. Option bars are fetched via `alpaca_options_provider`.
-- `discovery_mode` is `"dynamic"` by default. The backtest used a fixed 4-symbol universe, so live results may differ from backtest if different symbols are discovered.
+- `discovery_mode` is `"fixed"` by default. The backtest used the fixed four-symbol universe, and platform watchlists are ignored to preserve it.
+- `shadow_mode` is `true` by default, so starting the runner logs would-have-traded signals and does not place paper orders.
+- Strategy parameters and symbols are source-controlled in `ORB_CONFIG`/`DEFAULT_SYMBOLS`; the platform config endpoint only supplies `poll_interval`.
 - Not in StockBoy's `CONTROLLED_RUNNERS` — no supervisor monitoring, no position-level risk management.
