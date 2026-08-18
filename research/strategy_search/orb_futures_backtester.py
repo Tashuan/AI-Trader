@@ -83,6 +83,7 @@ CONTRACTS: dict[str, FuturesContract] = {
 
 FUTURES_ORB_CONFIG = {
     "config_version": "futures-orb-baseline-v0.1",
+    "bar_interval_minutes": 5,
     "range_minutes": 5,
     "range_end_policy": "exclusive",
     "confirmation_bars": 2,
@@ -94,6 +95,8 @@ FUTURES_ORB_CONFIG = {
     "max_contracts": 4,
     "stop_model": "range_width",
     "stop_range_multiplier": 1.0,
+    "stop_ticks": 8,
+    "target_ticks": 12,
     "target_r_multiple": 2.0,
     # Optional legacy percentage model for comparison only.
     "stop_pct": 0.2,
@@ -110,13 +113,25 @@ FUTURES_ORB_CONFIG = {
 
 # ── Data fetching ───────────────────────────────────────────────────────
 
-def fetch_futures_5m(symbols: list[str], period: str = "60d") -> dict[str, pd.DataFrame]:
-    """Fetch 5m bars from yfinance, filtered to RTH (09:30-16:00 ET)."""
+def fetch_futures_5m(
+    symbols: list[str],
+    period: str = "60d",
+    provider: str = "yfinance",
+    start: str | None = None,
+    end: str | None = None,
+    interval: str = "5m",
+) -> dict[str, pd.DataFrame]:
+    """Fetch intraday bars from yfinance or Massive, filtered to RTH."""
+    if provider == "massive":
+        if not start or not end:
+            raise ValueError("Massive provider requires --start and --end")
+        from massive_futures_data import fetch_massive_futures_bars
+        return fetch_massive_futures_bars(symbols, start, end, resolution=interval)
     import yfinance as yf
     frames: dict[str, pd.DataFrame] = {}
     for sym in symbols:
         try:
-            df = yf.Ticker(sym).history(period=period, interval="5m")
+            df = yf.Ticker(sym).history(period=period, interval=interval)
             if df is None or df.empty:
                 print(f"  {sym}: no data")
                 continue
@@ -232,7 +247,8 @@ def check_exit(
         return ("force_exit", bar_close)
 
     # Confirmation period: only check target, not stop
-    in_confirmation = pos.bars_held * 5 < confirm_mins  # 5m bars
+    bar_minutes = config.get("bar_interval_minutes", 5)
+    in_confirmation = pos.bars_held * bar_minutes < confirm_mins
 
     if pos.side == "long":
         target_touched = bar_high >= pos.target_price
@@ -420,7 +436,7 @@ def run_futures_orb_backtest(
                         price_diff = pos.entry_price - exit_price
                     gross_pnl = price_diff * contract.multiplier * pos.qty
                     exit_commission = commission * pos.qty
-                    net_pnl = gross_pnl - exit_commission
+                    net_pnl = gross_pnl - exit_commission - pos.entry_cost
                     equity += net_pnl
 
                     # Track circuit breaker
@@ -481,10 +497,14 @@ def run_futures_orb_backtest(
             )
             entry_price = round_to_tick(entry_price, contract)
             range_width = rh - rl
-            stop_dist = range_width * config["stop_range_multiplier"]
-            if config["stop_model"] == "percentage":
-                stop_dist = signal.entry_price * config.get("stop_pct", 0.2) / 100
-            target_dist = stop_dist * config["target_r_multiple"]
+            if config["stop_model"] == "ticks":
+                stop_dist = contract.tick_size * config["stop_ticks"]
+                target_dist = contract.tick_size * config["target_ticks"]
+            else:
+                stop_dist = range_width * config["stop_range_multiplier"]
+                if config["stop_model"] == "percentage":
+                    stop_dist = signal.entry_price * config.get("stop_pct", 0.2) / 100
+                target_dist = stop_dist * config["target_r_multiple"]
             stop_price = (
                 signal.entry_price - stop_dist
                 if signal.side == "long" else signal.entry_price + stop_dist
@@ -514,7 +534,6 @@ def run_futures_orb_backtest(
                 stop_price=stop_price, target_price=target_price,
                 qty=qty, bars_held=0, entry_cost=entry_commission,
             )
-            equity -= entry_commission
             positions.append(pos)
 
         # Force-exit any remaining positions at end of day
@@ -541,7 +560,7 @@ def run_futures_orb_backtest(
                 price_diff = pos.entry_price - exit_price
             gross_pnl = price_diff * contract.multiplier * pos.qty
             exit_commission = commission * pos.qty
-            net_pnl = gross_pnl - exit_commission
+            net_pnl = gross_pnl - exit_commission - pos.entry_cost
             equity += net_pnl
 
             trades.append(FuturesTrade(
@@ -674,12 +693,18 @@ def print_report(result: dict, label: str = ""):
 def main():
     parser = argparse.ArgumentParser(description="Futures ORB backtester")
     parser.add_argument("--symbols", default="MES=F,MNQ=F,M2K=F,MYM=F",
-                        help="Comma-separated yfinance futures symbols")
+                        help="Comma-separated futures symbols")
+    parser.add_argument("--provider", choices=["yfinance", "massive"], default="yfinance")
+    parser.add_argument("--interval", choices=["1m", "5m"], default="5m")
     parser.add_argument("--period", default="60d",
                         help="yfinance history period (5m max is ~60d)")
+    parser.add_argument("--start", default=None, help="Massive start date YYYY-MM-DD")
+    parser.add_argument("--end", default=None, help="Massive end date YYYY-MM-DD")
     parser.add_argument("--capital", type=float, default=10000.0)
     parser.add_argument("--risk-pct", type=float, default=None)
     parser.add_argument("--stop-range-multiplier", type=float, default=None)
+    parser.add_argument("--stop-ticks", type=int, default=None)
+    parser.add_argument("--target-ticks", type=int, default=None)
     parser.add_argument("--target-r", type=float, default=None)
     parser.add_argument("--max-contracts", type=int, default=None)
     parser.add_argument("--stop-pct", type=float, default=None,
@@ -698,18 +723,31 @@ def main():
     args = parser.parse_args()
 
     symbols = [s.strip() for s in args.symbols.split(",")]
-    print(f"Fetching 5m futures data from yfinance (period={args.period})...")
-    frames = fetch_futures_5m(symbols, period=args.period)
+    source_desc = (
+        f"Massive ({args.start} to {args.end})"
+        if args.provider == "massive"
+        else f"yfinance (period={args.period})"
+    )
+    print(f"Fetching 5m futures data from {source_desc}...")
+    frames = fetch_futures_5m(
+        symbols, period=args.period, provider=args.provider,
+        start=args.start, end=args.end, interval=args.interval,
+    )
     if not frames:
         print("No data fetched. Exiting.")
         return
 
     # Build config from CLI overrides
-    config = {**FUTURES_ORB_CONFIG}
+    config = {**FUTURES_ORB_CONFIG, "bar_interval_minutes": int(args.interval.rstrip("m"))}
     if args.risk_pct is not None:
         config["risk_per_trade_pct"] = args.risk_pct
     if args.stop_range_multiplier is not None:
         config["stop_range_multiplier"] = args.stop_range_multiplier
+    if args.stop_ticks is not None:
+        config["stop_model"] = "ticks"
+        config["stop_ticks"] = args.stop_ticks
+    if args.target_ticks is not None:
+        config["target_ticks"] = args.target_ticks
     if args.target_r is not None:
         config["target_r_multiple"] = args.target_r
     if args.max_contracts is not None:

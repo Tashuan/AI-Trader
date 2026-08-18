@@ -28,9 +28,9 @@ Other strategy families are comparison or fallback work only unless the journal 
 
 ## Futures ORB — research preparation
 
-The futures ORB adaptation is currently a research-only backtesting track. The foundation lives in `orb_futures_backtester.py` and reuses the canonical ORB signal engine from `agents/orb_strategy.py`. It defaults to MES/MNQ/M2K/MYM RTH data, tick-aware costs, micro-contract metadata, dollar-risk sizing, and the corrected exclusive-range/two-confirmation/skip-first-bar signal rules.
+The futures ORB adaptation is currently a research-only backtesting track. The foundation lives in `orb_futures_backtester.py` and `orb_futures_validation.py`, reusing the canonical ORB signal engine from `agents/orb_strategy.py`. It defaults to MES/MNQ/M2K/MYM RTH data, tick-aware costs, micro-contract metadata, dollar-risk sizing, and the corrected exclusive-range/two-confirmation/skip-first-bar signal rules.
 
-The initial smoke replay was positive but used only approximately 60 days of yfinance 5m data, so it is labeled `promising_not_validated`. No FuturesRunner exists and no futures execution has been enabled. Full status, results, assumptions, and promotion gates are documented in [`../../docs/FUTURES_ORB_STRATEGY.md`](../../docs/FUTURES_ORB_STRATEGY.md).
+The initial smoke replay was positive but used only approximately 60 days of yfinance 5m data. Massive REST access is now working and has been integrated with quarterly-contract stitching and parquet caching. The first two-year MES validation was negative, so the track remains `promising_not_validated` with no approved candidate. No FuturesRunner exists and no futures execution has been enabled. Full status, results, assumptions, and promotion gates are documented in [`../../docs/FUTURES_ORB_STRATEGY.md`](../../docs/FUTURES_ORB_STRATEGY.md).
 
 ## Artifact contract
 

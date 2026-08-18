@@ -57,7 +57,10 @@ The platform `fetch_config(token)` endpoint is consulted each loop, but only `po
 | `stop_pct` / `target_pct` | 1.0 / 2.0 | Underlying stop and target (%) |
 | `latest_entry` | `10:00` | No new entries after this ET time |
 | `max_positions` | 4 | Max concurrent option positions |
-| `position_pct` | 3.0 | % of equity per trade (option premium) |
+| `position_pct` | 3.0 | Baseline allocation per trade |
+| `dynamic_sizing` | `true` | Shadow candidate uses cumulative allocation |
+| `max_position_pct` | 6.0 | Dynamic per-trade cap |
+| `max_total_pct` | 12.0 | Dynamic cumulative daily cap |
 | `strategy_mode` | `symmetric_otm` | Calls higher strike; puts lower strike |
 | `strike_offset` | 1 | OTM strike distance |
 | `dte_min` / `dte_max` | 2 / 14 | Days to expiration range |
@@ -65,7 +68,7 @@ The platform `fetch_config(token)` endpoint is consulted each loop, but only `po
 | `confirmation_minutes` | 10 | Elapsed minutes before stops activate |
 | `circuit_breaker` | 3 | Consecutive losses before halting a symbol |
 | `intrabar_policy` | `conservative` | Stop-first if stop and target share a bar |
-| `discovery_mode` | `fixed` | Use validated NVDA/TSLA/AAPL/COIN universe |
+| `discovery_mode` | `dynamic` | Premarket movers for shadow validation; fixed remains the backtest universe |
 | `shadow_mode` | `true` | Log signals; do not place orders |
 | `paper_only` | `true` | Reject non-paper execution |
 | `daily_loss_limit_pct` | 10.0 | Daily loss pause |
@@ -77,15 +80,13 @@ Strike steps per symbol are in `STRIKE_STEPS` dict (e.g. NVDA $2.50, AAPL $2.50,
 
 ## Symbol Discovery
 
-The corrected runner defaults to `discovery_mode: "fixed"` and uses the validated universe:
+The current runner uses `discovery_mode: "dynamic"` for forward shadow validation. The historical backtest used the fixed universe:
 
 ```text
 NVDA, TSLA, AAPL, COIN
 ```
 
-This is deliberate: dynamic discovery was not part of the winning fixed-universe backtest. Legacy platform watchlists are ignored by the runner, so the fixed universe remains reproducible.
-
-Dynamic discovery remains available as a separate experiment. When enabled, `discover_movers(config)` runs once per day and caches results in `state["discovered_symbols"][date]`:
+Dynamic discovery is intentionally a separate live-vs-backtest experiment. `discover_movers(config)` runs once per day and caches results in `state["discovered_symbols"][date]`:
 
 1. Schwab movers (primary)
 2. Alpaca snapshots (fallback)
@@ -102,9 +103,18 @@ Discovery is filtered by `discovery_min_change_pct`, capped at `discovery_max_sy
 - `open_positions` — symbol → position metadata (occ_symbol, qty, entry, stop, target, option_type)
 - `discovered_symbols` — date → list of movers selected that day
 - `last_force_exit_date` — tracks EOD close completion
-- `shadow_signals` — signals logged without orders while shadow mode is enabled
+- `shadow_signals` — signals logged without orders while shadow mode is enabled; each signal includes sizing metadata
+- `sizing_state` — per-day cumulative reserved allocation for dynamic sizing
 - `risk_state` — daily baseline, peak equity, drawdown, and halt reasons
 - `config_version` — active runner configuration version
+
+## Shadow Sizing Validation
+
+Dynamic shadow sizing reserves up to 6% of day-start equity per signal and 12% cumulatively per day. Reserved allocation is not released when a hypothetical position would exit. Once exhausted, later signals remain visible with `allocated_budget: 0` and no order is placed.
+
+Each shadow signal records `sizing.mode`, `base_position_pct`, `max_position_pct`, `max_total_pct`, `day_start_equity`, `day_deployed_before`, `remaining_budget_before`, `allocated_budget`, `allocation_pct`, `budget_available`, and `trade_number`. This is an allocation model only; shadow mode does not resolve an option contract or submit an order.
+
+Initial corrected backtest: dynamic 6%/12% returned +75.92% versus fixed 3% +34.20% at 50% IV, with 15.11% versus 27.28% max drawdown. IV, chronological holdout, inverted-bear, and cap sensitivity checks were positive. These are theoretical results; collect 20 clean dynamic-discovery shadow sessions before any paper promotion.
 
 ## Arena Integration
 
@@ -175,7 +185,8 @@ The corrected backtest is positive across IV assumptions and chronological holdo
 - Option positions live on Alpaca's side, not in the platform's `positions` table. The platform DB doesn't know about ORBRunner's trades — only the personality-log events and `orb_runner_state.json` track them.
 - Schwab OAuth is currently blocked (Akamai 403). Discovery falls through to Alpaca snapshots automatically.
 - The runner fetches 1m equity bars via `arena_market_data` (the Arena router), not directly from Alpaca. Option bars are fetched via `alpaca_options_provider`.
-- `discovery_mode` is `"fixed"` by default. The backtest used the fixed four-symbol universe, and platform watchlists are ignored to preserve it.
+- `discovery_mode` is `"dynamic"` for the current forward shadow experiment. The backtest used the fixed four-symbol universe, so discovery fidelity is still under validation.
+- `dynamic_sizing` is enabled for shadow metadata at 6% per trade / 12% cumulative daily allocation; it does not authorize orders by itself.
 - `shadow_mode` is `true` by default, so starting the runner logs would-have-traded signals and does not place paper orders.
 - Strategy parameters and symbols are source-controlled in `ORB_CONFIG`/`DEFAULT_SYMBOLS`; the platform config endpoint only supplies `poll_interval`.
 - Not in StockBoy's `CONTROLLED_RUNNERS` — no supervisor monitoring, no position-level risk management.

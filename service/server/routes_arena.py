@@ -76,6 +76,9 @@ from bot_manager import (
     start_orb_runner,
     stop_orb_runner,
     get_orb_runner_status,
+    start_mnq_scalp_shadow,
+    stop_mnq_scalp_shadow,
+    get_mnq_scalp_shadow_status,
 )
 
 
@@ -573,6 +576,27 @@ def register_arena_routes(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/arena/orb-runner/status")
     async def arena_orb_runner_status():
         return get_orb_runner_status()
+
+    # ── MNQ scalp shadow endpoints ───────────────────────────────────
+    @app.post("/api/arena/mnq-scalp-shadow/start")
+    async def arena_start_mnq_scalp_shadow():
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        agents_dir = os.path.join(project_root, "agents")
+        result = start_mnq_scalp_shadow(agents_dir)
+        if result.get("success"):
+            await asyncio.sleep(0.5)
+            status = get_mnq_scalp_shadow_status()
+            if not status["running"] and status.get("last_error"):
+                return {"success": False, "message": "MNQ scalp shadow crashed on startup", "error": status["last_error"]}
+        return result
+
+    @app.post("/api/arena/mnq-scalp-shadow/stop")
+    async def arena_stop_mnq_scalp_shadow():
+        return stop_mnq_scalp_shadow()
+
+    @app.get("/api/arena/mnq-scalp-shadow/status")
+    async def arena_mnq_scalp_shadow_status():
+        return get_mnq_scalp_shadow_status()
 
     # ── StockBoy supervisor endpoints ────────────────────────────────
     @app.post("/api/arena/stockboy/start")

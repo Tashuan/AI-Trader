@@ -436,6 +436,54 @@ def get_orb_runner_status() -> dict:
         return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "runner", "last_error": None}
 
 
+# ── MNQ scalp shadow management ────────────────────────────────────────
+
+_MNQ_SCALP_SHADOW_KEY = "mnq-scalp-shadow"
+
+
+def start_mnq_scalp_shadow(agents_dir: str, poll_interval: int = 30) -> dict:
+    """Start the paperless MNQ scalp shadow monitor."""
+    with _lock:
+        existing = _bots.get(_MNQ_SCALP_SHADOW_KEY)
+        if existing and existing.thread.is_alive():
+            return {"success": False, "message": "MNQ scalp shadow is already running"}
+        try:
+            _ensure_agents_path(agents_dir)
+            from mnq_scalp_shadow import run_loop
+            stop_event = threading.Event()
+            thread = threading.Thread(
+                target=_wrap_target(_MNQ_SCALP_SHADOW_KEY, run_loop, (stop_event, poll_interval)),
+                name="ManagedRunner-mnq-scalp-shadow",
+                daemon=True,
+            )
+            thread.start()
+            _bots[_MNQ_SCALP_SHADOW_KEY] = ManagedBot(
+                agent_key=_MNQ_SCALP_SHADOW_KEY,
+                thread=thread,
+                stop_event=stop_event,
+                started_at=time.time(),
+                bot_type="shadow",
+            )
+            return {"success": True, "message": "MNQ scalp shadow started", "thread": thread.name}
+        except Exception as exc:
+            return {"success": False, "message": f"Failed to start MNQ scalp shadow: {exc}"}
+
+
+def stop_mnq_scalp_shadow() -> dict:
+    """Stop the paperless MNQ scalp shadow monitor."""
+    return stop_bot(_MNQ_SCALP_SHADOW_KEY)
+
+
+def get_mnq_scalp_shadow_status() -> dict:
+    """Return process status for the paperless MNQ scalp monitor."""
+    with _lock:
+        bot = _bots.get(_MNQ_SCALP_SHADOW_KEY)
+        if not bot or not bot.thread.is_alive():
+            _bots.pop(_MNQ_SCALP_SHADOW_KEY, None)
+            return {"running": False, "pid": None, "thread": None, "bot_type": "shadow", "last_error": _get_dead_error(_MNQ_SCALP_SHADOW_KEY)}
+        return {"running": True, "pid": None, "thread": bot.thread.name, "bot_type": "shadow", "last_error": None}
+
+
 # ── StockBoy supervisor management ─────────────────────────────────────
 
 def start_stockboy() -> dict:

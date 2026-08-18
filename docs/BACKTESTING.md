@@ -152,7 +152,7 @@ This is a research-only futures adaptation of the corrected ORB signal structure
 | Costs | Tick slippage and per-contract commission |
 | Status | Smoke-tested; not validated or promoted |
 
-The backtester consumes `OpeningRangeBuilder` and `BreakoutChecker` from `agents/orb_strategy.py` so the futures research signal path follows the canonical ORB behavior. Micro contracts are the default research vehicle for a $10,000 account. The current yfinance intraday history is too short for final walk-forward promotion; see [`docs/FUTURES_ORB_STRATEGY.md`](FUTURES_ORB_STRATEGY.md).
+The backtester consumes `OpeningRangeBuilder` and `BreakoutChecker` from `agents/orb_strategy.py` so the futures research signal path follows the canonical ORB behavior. Micro contracts are the default research vehicle for a $10,000 account. The companion validation harness is `research/strategy_search/orb_futures_validation.py`. The current yfinance intraday history is too short for final walk-forward promotion; see [`docs/FUTURES_ORB_STRATEGY.md`](FUTURES_ORB_STRATEGY.md).
 
 ### Legacy Backtester (AI Agents)
 

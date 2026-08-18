@@ -20,8 +20,9 @@ This is the canonical strategy record for the corrected ORB options configuratio
 5. Enter short on a confirmed close below the range low and buy a symmetric OTM put.
 6. Do not open entries after 10:00 ET.
 7. Permit at most four concurrent positions and one signal per symbol per session.
-8. Size each position at 3% of equity based on option premium.
-9. Require an option entry premium of at least $0.20 per share.
+8. Baseline size is 3% of day-start equity based on option premium.
+9. The shadow sizing candidate reserves up to 6% per trade and 12% cumulatively per day.
+10. Require an option entry premium of at least $0.20 per share.
 10. Apply a 1.0% underlying stop and 2.0% underlying target.
 11. Force-close all positions at the end of the session.
 
@@ -38,6 +39,9 @@ The live runner must use the same canonical range and breakout path as the backt
   "latest_entry": "10:00",
   "max_positions": 4,
   "position_pct": 3.0,
+  "dynamic_sizing": true,
+  "max_position_pct": 6.0,
+  "max_total_pct": 12.0,
   "strike_offset": 1,
   "dte_min": 2,
   "dte_max": 14,
@@ -73,6 +77,20 @@ The backtester also uses conservative intrabar ordering for bars that touch both
 
 The result remains positive across the IV sensitivity range and in the later holdout. It is not yet promotable because the full-period drawdown exceeds the aggressive risk gate at the middle and high IV assumptions, and Black-Scholes remains an approximation of real option execution.
 
+### Dynamic sizing candidate — initial validation (2026-08-18)
+
+The corrected backtester was extended with cumulative allocation accounting. Dynamic sizing reserves up to 6% per trade and 12% total per day; closed positions do not release the reserved budget.
+
+| Test | Result |
+|---|---|
+| Full period, 50% IV | +75.92%, PF 1.484, 15.11% max DD, 207 trades |
+| IV sweep, 0.50x–1.50x | Positive at every multiplier: +2,151.03% to +10.08% |
+| Chronological windows | 4/4 positive: +8.05%, +11.58%, +25.69%, +7.99% |
+| Synthetic inverted-bear | +29.19%, PF 1.199, 18.25% max DD |
+| Best cap sensitivity | 6%/12%; higher caps did not improve risk-adjusted results |
+
+These are theoretical Black-Scholes results on the fixed historical universe and are not a forecast of live returns. The runner currently uses dynamic discovery, so the candidate requires at least 20 clean dynamic-discovery shadow sessions with allocation metadata before any paper-order promotion.
+
 ## 4. Execution and Data Assumptions
 
 The corrected pass addresses the failure modes found in the earlier audit:
@@ -95,6 +113,7 @@ ORBRunner is paper-only and must retain these mechanical controls:
 - Rolling drawdown pause at 30% from peak equity.
 - No new entries after a risk halt; existing positions continue to be monitored for exits.
 - Maximum four concurrent positions.
+- Dynamic candidate cap of 6% per trade and 12% cumulative daily allocation.
 - Minimum option premium filter of $0.20.
 - Persistent risk state and structured discovery, entry, exit, and halt events.
 
@@ -109,7 +128,7 @@ A risk halt is a safety boundary, not a signal to increase size or resume live t
 | Limited paper | Pending clean shadow sessions and execution review |
 | Live capital | Rejected for now |
 
-Required next evidence is at least 10 clean shadow sessions, including actual option quotes/fills, rejected signals, discovery selections, spread/slippage observations, daily loss state, and realized drawdown. Re-run validation after the paper sample; do not promote from the backtest alone.
+Required next evidence is at least 20 clean dynamic-discovery shadow sessions, including sizing metadata, rejected signals, discovery selections, option quote availability, spread/slippage observations, daily loss state, and modeled drawdown. Re-run validation after the shadow sample; do not promote from the backtest alone.
 
 ## 7. Source References
 

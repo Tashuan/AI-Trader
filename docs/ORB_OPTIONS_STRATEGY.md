@@ -60,7 +60,10 @@ Options are priced using **Black-Scholes** with the following assumptions:
 | `target_pct` | 2.0% | Profit target distance from entry (on underlying) |
 | `latest_entry` | 10:00 | No new entries after this time |
 | `max_positions` | 4 | Maximum concurrent positions |
-| `position_pct` | 3.0% | % of equity allocated per trade (option premium) |
+| `position_pct` | 3.0% | Baseline allocation per trade |
+| `dynamic_sizing` | true (shadow candidate) | Reserve cumulative daily allocation when enabled |
+| `max_position_pct` | 6.0% | Dynamic per-trade allocation cap |
+| `max_total_pct` | 12.0% | Dynamic cumulative daily allocation cap |
 | `strike_offset` | +1 | OTM strike offset from ATM |
 | `dte_min` | 2 | Minimum days to expiration |
 | `dte_max` | 14 | Maximum days to expiration |
@@ -157,6 +160,40 @@ Inverts equity returns (×-1) to create a mirror-image bear market, then runs th
 
 **Verdict: MIXED.** The bear market is *more* profitable than the bull market (+166% vs +147%), but not via puts. Calls actually made more money in the inverted market. This means the edge is **structural** (opening range breakouts work in both directions) rather than **directional** (regime-aware). The strategy isn't bull-market-dependent, which is good, but it doesn't exhibit the put-call regime behavior you'd expect from a truly regime-aware system.
 
+## Dynamic Sizing Validation (2026-08-18)
+
+Dynamic sizing is a research candidate layered on the corrected ORB configuration. It is not yet approved for paper orders.
+
+### Policy
+
+- Baseline allocation: 3% of day-start equity per trade.
+- Dynamic cap: up to 6% per trade.
+- Daily cap: 12% cumulative reserved entry budget.
+- Entry cost, including contract fees, is reserved cumulatively; closing a position does not release that day's allocation.
+- Once the daily cap is exhausted, later signals are logged but receive zero hypothetical allocation.
+- Shadow metadata records the mode, caps, day-start equity, allocation before/after the signal, reserved budget, and trade number. It does not estimate quantity because no option contract or fill is acquired in shadow mode.
+
+### Initial corrected backtest
+
+Universe: NVDA, TSLA, AAPL, COIN. Dates: 2026-04-01 through 2026-08-16. Assumptions: 1-minute equity bars, Black-Scholes pricing, 50% default IV, 100 bps spread, 50 bps slippage, $0.65 contract fee, $10,000 initial capital.
+
+| Configuration | Return | PF | Win rate | Max DD | Trades |
+|---|---:|---:|---:|---:|---:|
+| Fixed 3% | +34.20% | 1.170 | 40% | 27.28% | 312 |
+| Dynamic 6% / 12% | **+75.92%** | **1.484** | **44%** | **15.11%** | 207 |
+
+### Sensitivity and holdout results
+
+The dynamic 6%/12% candidate remained positive across IV multipliers from 0.50x to 1.50x: +2,151.03%, +230.13%, +75.92%, +38.45%, and +10.08%, respectively. The large low-IV returns are theoretical BS-sizing outputs and should not be interpreted as expected live returns.
+
+Chronological windows were all positive: April–May +8.05%, June +11.58%, July +25.69%, and August 1–16 +7.99%. Synthetic inverted-bear results were positive for fixed 3% (+23.24%) and dynamic 6%/12% (+29.19%).
+
+Cap sensitivity at 50% IV favored 6%/12%: 3%/12% +12.85%, 4%/12% +35.66%, 6%/12% +75.92%, 9%/12% +71.73%, and 12%/12% +44.03%. The 12% total cap is still a modeled assumption, not a live risk approval.
+
+### Validation decision
+
+**Status: promising; shadow validation required.** The backtest is robust across the tested IV, chronological, and synthetic regime checks, but it uses a fixed historical universe while the runner currently uses dynamic discovery. Collect at least 20 clean dynamic-discovery shadow sessions with sizing metadata before changing `shadow_mode` or placing paper orders. `paper_only` must remain true.
+
 ## How to Run
 
 ### Backtest (BS pricing)
@@ -240,7 +277,8 @@ python3 ../research/strategy_search/orb_options_backtester.py \
 - Strategy logic implemented and backtested across 4.5 months
 - Validated via IV sensitivity (PASS), walk-forward (PASS), and bear market (MIXED)
 - **ORBRunner built and integrated into the Arena platform** — paper trades options via Alpaca
-- Fixed four-symbol universe enabled by default to match the validated strategy; dynamic discovery remains an explicit separate paper experiment
+- Dynamic discovery is enabled for shadow validation; the historical backtest results used the fixed four-symbol universe
+- Dynamic sizing metadata is enabled in shadow signals at a 6% per-trade / 12% cumulative daily cap
 - Full platform logging via PersonalityLogForwarder — events visible in Timeline UI
 - Start/stop/control via Arena Agents page (yellow runner card)
 
@@ -254,13 +292,13 @@ The strategy is deployed as `agents/orb_runner.py` — a deterministic runner th
 |---|---|
 | 09:20–09:29 | **Discovery** — calls Schwab movers / Alpaca snapshots, selects top movers ranked by daily change % |
 | 09:30–09:35 | **Range build** — fetches 1m bars, marks opening range high/low per symbol |
-| 09:35–10:30 | **ORB window** — watches for breakout closes, buys OTM+1 options on signal |
-| 10:30–15:55 | **Monitoring** — checks open positions for stop/target on underlying, no new entries |
+| 09:35–10:00 | **ORB window** — watches for confirmed breakout closes and logs shadow signals |
+| 10:00–15:55 | **Monitoring** — checks open positions for stop/target on underlying, no new entries |
 | 15:55 | **Force exit** — closes all remaining option positions |
 
 ### Symbol Discovery
 
-By default, the runner uses the **fixed validated universe** (`discovery_mode: "fixed"`) so paper signals reproduce the backtest universe. Dynamic discovery is available only as a separate experiment:
+For the current shadow experiment, the runner uses **dynamic discovery** (`discovery_mode: "dynamic"`). This does not reproduce the fixed-universe backtest and is intentionally treated as a separate forward-validation experiment:
 
 1. **Schwab movers** (primary) — live up/down movers from $COMPX, $DJI, $SPX
 2. **Alpaca snapshots** (fallback) — batch snapshots of a 34-symbol universe, ranked by abs daily change %
@@ -268,14 +306,18 @@ By default, the runner uses the **fixed validated universe** (`discovery_mode: "
 
 Discovery runs once per day before the ORB window and caches the result in `orb_runner_state.json`. Symbols are filtered by `discovery_min_change_pct` (default 1.0%) and capped at `discovery_max_symbols` (default 8).
 
-Set `discovery_mode: "fixed"` in `ORB_CONFIG` to use the static 4-symbol universe (matches the backtest).
+Set `discovery_mode: "fixed"` in `ORB_CONFIG` to reproduce the static four-symbol historical universe. Dynamic discovery remains the active shadow-validation mode.
+
+### Dynamic Sizing Metadata
+
+Each shadow signal contains a `sizing` object with `mode`, `base_position_pct`, `max_position_pct`, `max_total_pct`, `day_start_equity`, `day_deployed_before`, `remaining_budget_before`, `allocated_budget`, `allocation_pct`, `budget_available`, and `trade_number`. The runner reserves the allocated budget in `sizing_state` but submits no order.
 
 ### Option Execution
 
 - **Contract selection** — OTM+1 strike from ATM, nearest expiration in 2–14 DTE range
 - **Order type** — Market buy (paper) via Alpaca `POST /v2/orders`
-- **Position sizing** — 10% of equity per trade, estimated at ~$3/contract for qty calculation
-- **Exit** — Market sell when underlying hits stop (1.0%), target (1.5%), or EOD (15:55)
+- **Position sizing** — Shadow candidate reserves up to 6% per trade and 12% cumulatively per day; live execution remains disabled
+- **Exit** — Underlying stop (1.0%), target (2.0%), or EOD (15:55)
 - **Confirmation period** — 10 minutes after entry before stops are checked
 
 ### Platform Integration

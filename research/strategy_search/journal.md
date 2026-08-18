@@ -1076,3 +1076,102 @@ This is the strongest config found across all batches. Next steps: holdout valid
 - **Comparison:** A 0.05% extension filter reduced return to +1.22% but reduced drawdown to 3.57% and increased PF to 1.268 over only 20 trades. A 1.0x range stop lost -14.23% with PF 0.431. These are hypotheses, not promotions.
 - **Tests:** Full suite passed: 255 passed, 89 skipped. Focused ORB/futures tests passed: 45 passed.
 - **Decision:** **Research foundation complete; no FuturesRunner.** Acquire longer futures history, validate rolls and data quality, run parameter/cost/outlier/walk-forward tests, and only then consider shadow mode and runner construction. See `docs/FUTURES_ORB_STRATEGY.md`.
+
+### Batch FUTURES-ORB-2 — Controlled RTH candidate validation (2026-08-18)
+
+- **Harness:** `research/strategy_search/orb_futures_validation.py`
+- **Data:** yfinance 5m RTH bars, 2026-06-08 through 2026-08-17, approximately 60 days.
+- **Windows:** Eight 10-day diagnostic windows, stepped by 10 days. This is not sufficient for final walk-forward promotion because the underlying sample is too short.
+- **Candidates:** Baseline, 0.05% and 0.10% extension filters, 1.5R target, 1.0x range stop, 10m and 15m ranges, and one-bar confirmation.
+- **Best headline result:** Baseline +3.02%, PF 1.230, 6/8 profitable windows, 64 trades.
+- **Outlier test:** Baseline total P&L was +$301.50, but its best day contributed +$297.50; P&L without that day was only +$4.00.
+- **Most promising robustness candidate:** 0.05% extension filter: +2.06%, PF 1.406, 5/8 profitable windows, and +$64.25 without its best day, but only 19 trades.
+- **Rejected variations:** 1.0x range stop (-14.23%, PF 0.431), 10m range (-6.81%), 15m range (-5.71%).
+- **Decision:** **No winner.** The baseline is rejected as outlier-dependent; the extension candidate is promising but severely under-sampled. Stop optimization on this short dataset and acquire longer futures history before further tuning.
+
+### Batch FUTURES-ORB-3 — Massive REST provider and MES multi-year validation (2026-08-18)
+
+- **Provider:** Massive REST `/futures/v1/aggs/{ticker}` using the updated local API key.
+- **Implementation:** Added `research/strategy_search/massive_futures_data.py` with quarterly contract-code mapping, pagination, America/New_York normalization, RTH filtering, rate-limit backoff, and per-contract parquet caching under ignored `cache/massive_futures/`.
+- **Data:** MES quarterly contracts, 2024-08-19 through 2026-08-17, 5-minute aggregates derived directly from Massive REST 5-minute bars. 13 diagnostic 60-day windows.
+- **Results:** Baseline -22.05%, PF 0.983, max DD 33.89%, 5/13 positive windows, 338 trades. The least-bad tested variant was a 10-minute range at -2.14%, PF 1.097, max DD 15.82%, 6/13 positive windows.
+- **Decision:** **MES ORB rejected for now.** The longer sample removes the short-sample positive result. Continue validating other micro index products for completeness, but do not promote MES or build a runner around it.
+
+### Batch FUTURES-ORB-4 — MNQ multi-year validation (2026-08-18)
+
+- **Data:** Massive REST MNQ quarterly contracts, 2024-08-19 through 2026-08-17, 13 diagnostic 60-day windows.
+- **Results:** Baseline +5.97%, PF 1.112, max DD 19.28%, 6/13 positive windows, 273 trades. Stronger candidates included stop 1.0x range (+21.44%, PF 1.617, 8/13 windows), 10m range (+9.08%, PF 1.180, 8/13), 15m range (+8.60%, PF 1.253, 7/13), and one-bar confirmation (+13.68%, PF 1.162, 7/13).
+- **Outlier check:** Baseline P&L without its best day remained +$388; stop 1.0x remained +$1,931.50; one-bar confirmation remained +$1,161. These are encouraging but still in-sample candidate results.
+- **Decision:** **MNQ is promising, not validated.** The original baseline is not automatically the best futures configuration. Freeze a candidate, acquire quote/slippage evidence, and test an untouched holdout before promotion. Do not optimize further on the same sample.
+
+### Batch FUTURES-ORB-5 — Frozen MNQ holdout and slippage sensitivity (2026-08-18)
+
+- **Frozen candidate:** 1.0x opening-range stop, 2R target, two-bar confirmation, 5-minute range, 1% risk.
+- **Holdout:** 2026-01-01 through 2026-08-17; no parameter changes.
+- **Results:** 1 tick +0.30%, PF 1.156, max DD 2.50%, 7 trades; 2 ticks +0.22%, PF 1.129, max DD 2.53%, 7 trades; 3 ticks -1.57%, PF 0.581, max DD 2.56%, 6 trades.
+- **Outlier test:** At 1 tick, total P&L was +$30.50, but the best day contributed +$176.50; P&L without that day was -$146.00.
+- **Decision:** **MNQ candidate fails holdout robustness.** It is not promotion-ready and must not be tuned against this holdout.
+
+### Batch FUTURES-ORB-6 — M2K/MYM completion and M2K holdout (2026-08-18)
+
+- **M2K full sample:** 2024-08-19 through 2026-08-17, 13 diagnostic windows. Baseline -26.52% (PF 0.935); 0.05% extension +6.11% (PF 1.834, 8/13 positive windows, 31 trades); 0.10% extension +5.62% (PF 1.418, 8/13 windows, 71 trades).
+- **MYM full sample:** All tested candidates were negative. Best result was a 15m range at -0.30%, PF 1.099, 12.21% max DD, 5/13 positive windows.
+- **Frozen M2K holdout:** 0.05% extension, 2026-01-01 through 2026-08-17. At 1/2/3 ticks slippage: +2.40%/+2.21%/+1.32%; PF 2.154/2.041/1.784; max DD 2.10%/2.15%/1.74%; eight trades.
+- **Outlier check:** M2K holdout P&L without best day remained positive at +$78.50, +$61.50, and +$19.50 for 1/2/3 tick slippage.
+- **Decision:** **M2K is the leading research candidate, not validated.** The holdout is only eight trades and the candidate was identified after full-sample inspection, so reserve a genuinely untouched future/shadow period before any runner work.
+
+### Batch FUTURES-ORB-7 — Separate M2K 2025 date-range test and commission correction (2026-08-18)
+
+- **Accounting correction:** Entry commissions are now included in each trade's net P&L rather than deducted only from the equity curve. Total equity, trade records, and per-symbol attribution now reconcile.
+- **Frozen candidate:** M2K, 0.05% extension filter, 0.5x range stop, 2R target, two-bar confirmation.
+- **Separate period:** 2025-01-01 through 2025-12-31, 14 trades.
+- **Results:** 1 tick +1.40%, PF 1.279, max DD 4.05%; 2 ticks +1.31%, PF 1.269, max DD 3.89%; 3 ticks +1.14%, PF 1.238, max DD 3.81%.
+- **Outlier check:** P&L without best day was +$12.00, +$5.00, and -$9.50 at 1/2/3 ticks.
+- **Decision:** Directionally positive but under-sampled and nearly best-day dependent. M2K remains `promising_not_validated`; no runner approval.
+
+### Batch FUTURES-SCALP-1 — 1-minute tick-target scalp experiment (2026-08-18)
+
+- **Hypothesis:** The ORB can be adapted into a true short-duration scalp using 1-minute confirmation bars and fixed tick stops/targets.
+- **Universe:** MES, MNQ, M2K, MYM.
+- **Profiles:** 4/8 ticks, 8/12 ticks, and 10/20 ticks stop/target. Risk 1%, one position, 5-minute opening range, two 1-minute confirmation closes.
+- **2025 H1 results:** 4/8 -31.32% PF 0.229; 8/12 -10.90% PF 0.690; 10/20 +25.76% PF 1.459 at 1 tick. The 10/20 profile remained +3.64% PF 1.062 at 2 ticks and -18.62% PF 0.689 at 3 ticks.
+- **2026 Jan-Feb check:** 10/20 +10.30% PF 1.515 at 1 tick; +1.65% PF 1.081 at 2 ticks; -5.13% PF 0.755 at 3 ticks.
+- **Decision:** Tight and balanced scalps rejected. Momentum 10/20 is the only retained scalp hypothesis, but its edge is highly execution-cost sensitive and not runner-ready.
+
+### Batch FUTURES-SCALP-2 — High-R:R MNQ scalp and grace-period audit (2026-08-18)
+
+- **Candidate:** MNQ only, 1-minute entries, 5-minute opening range, two confirmations, 10-tick stop, 40-tick target, 3-tick slippage.
+- **Critical audit:** The inherited 10-minute no-stop grace was inflated. Full-period results were -85.51% with immediate stops, -24.48% with 2-minute grace, +81.52% with 5-minute grace, and +128.52% with 10-minute grace.
+- **5-minute grace period results:** 2024 H2 +2.24% PF 1.108; 2025 H1 +27.12% PF 2.738; 2025 H2 +20.16% PF 2.077; 2026 Jan-Feb +8.68% PF 2.517; 2026 Mar-Aug +18.80% PF 2.063. All use 3-tick slippage.
+- **Scalp duration:** Full-period average hold 2.8 minutes, median 2 minutes, 90th percentile 5 minutes, maximum 8 minutes.
+- **Decision:** **MNQ 10/40 with 5-minute stop grace is the leading scalp hypothesis, not validated.** The grace period is a material risk rule and must be validated with quote-aware shadow fills before any runner is built.
+
+### Batch FUTURES-SCALP-3 — Full OHLCV and product/cutoff robustness (2026-08-18)
+
+- **Full data:** Massive REST 1m RTH bars, 2024-08-19 through 2026-08-14.
+- **Frozen 10/40, 5-minute grace, 3-tick slippage:** MES -60.88% PF 0.519; MNQ +81.52% PF 2.074; M2K -61.00% PF 0.494; MYM -54.73% PF 0.562.
+- **MNQ cutoff/confirmation sensitivity:** 09:45/2 bars +64.84% PF 2.165; 09:45/3 bars +63.12% PF 2.839; 10:00/2 bars +81.52% PF 2.074; 10:00/3 bars +95.04% PF 2.692; 10:15/2 bars +85.52% PF 2.068; 10:15/3 bars +101.56% PF 2.562.
+- **Decision:** The OHLCV evidence supports an MNQ-specific high-R:R scalp hypothesis, not a generic futures strategy. Product isolation is strong, but all sensitivity results are historical and quote data is unavailable under the current Massive plan. Keep it shadow-only.
+
+### Batch ORB-OPT-7 — Dynamic sizing candidate validation (2026-08-18)
+
+- **Hypothesis:** When only one or two ORB option signals qualify, increasing allocation can improve capital efficiency without allowing uncontrolled concentration.
+- **Policy:** Baseline 3%; dynamic cap 6% per trade; cumulative daily cap 12%; entry cost is reserved cumulatively and is not released after exit.
+- **Implementation:** `research/strategy_search/orb_options_bs_backtester.py` now tracks actual cumulative entry cost. `agents/orb_runner.py` records the same allocation model in `shadow_signals[*].sizing` and `sizing_state`; shadow mode still submits zero orders.
+- **Universe/data:** NVDA, TSLA, AAPL, COIN; 1-minute equity bars; 2026-04-01 through 2026-08-16; cached Alpaca data.
+- **Costs/model:** Black-Scholes, 50% default IV, 100 bps spread, 50 bps adverse slippage, $0.65 contract fee, $10,000 initial capital, corrected exclusive range/two-bar confirmation/skip-first-bar rules, $0.20 premium filter.
+- **Full-period comparison:** Fixed 3% returned +34.20%, PF 1.170, 27.28% max DD, 312 trades. Dynamic 6%/12% returned +75.92%, PF 1.484, 15.11% max DD, 207 trades.
+- **IV sensitivity:** Dynamic remained positive at every tested multiplier: 0.50x +2,151.03%; 0.75x +230.13%; 1.00x +75.92%; 1.25x +38.45%; 1.50x +10.08%. Low-IV returns are theoretical BS outputs, not live-return forecasts.
+- **Chronological windows:** April–May +8.05%; June +11.58%; July +25.69%; August 1–16 +7.99% (4/4 positive).
+- **Regime/cap checks:** Inverted-bear dynamic +29.19%, PF 1.199, 18.25% max DD. The 6%/12% cap was stronger than 3%, 4%, 9%, and 12% per-trade variants on the tested sample.
+- **Decision:** **Promising, not promoted.** Keep `shadow_mode=true` and `paper_only=true`; collect at least 20 clean dynamic-discovery shadow sessions with allocation metadata before enabling limited paper execution.
+
+### Batch FUTURES-SCALP-4 — MNQ shadow monitor deployed (2026-08-18)
+
+- **Action:** Built and deployed a paperless RTH shadow monitor for the frozen MNQ 10/40 5-minute-grace candidate.
+- **Monitor:** `agents/mnq_scalp_shadow.py` — 1-minute bars, 5-minute opening range, two confirmation closes, 10-tick stop, 40-tick target, 5-minute stop grace, 3-tick modeled slippage. No broker client, no order route. Every hypothetical trade records `shadow_only`, `paper_orders: false`, `live_orders: false`, `orders_submitted: false`.
+- **Backend integration:** Start/stop/status endpoints added at `/api/arena/mnq-scalp-shadow/{start,stop,status}`. State persisted to `agents/mnq_scalp_shadow_state.json`.
+- **Tests:** 6 futures/shadow tests pass — signal, grace, target/stop, shadow-only enforcement, state management.
+- **First live session (2026-08-18):** One hypothetical trade recorded — long entry 29761.00, stop exit 29757.75, -$36.00. Session closed outside RTH.
+- **Monitoring infrastructure:** MNQ shadow watcher (polls state file every 30s, logs changes to `agents/mnq_shadow_watcher.log`) and backend watchdog (health-checks every 60s, auto-restarts backend and re-arms both runners after 3 failures, logs to `agents/backend_watchdog.log`).
+- **Decision:** Shadow monitor is live and collecting forward evidence. No runner, no orders, no paper execution. Next milestone: collect multiple RTH sessions of shadow trades to validate the 5-minute stop grace behavior under live conditions.

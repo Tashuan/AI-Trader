@@ -1,0 +1,38 @@
+{
+  "mode": "shadow_only",
+  "paper_orders": false,
+  "live_orders": false,
+  "symbol": "MNQ=F",
+  "config_version": "mnq-scalp-shadow-v0.1",
+  "session_date": "2026-08-18",
+  "cycles_run": 20,
+  "last_cycle_time": "2026-08-18T18:23:11.853034-04:00",
+  "last_bar_time": "2026-08-18T15:55:00-04:00",
+  "range_high": 29755.0,
+  "range_low": 29631.0,
+  "first_post_range_seen": true,
+  "confirmation_side": null,
+  "confirmation_count": 0,
+  "open_trade": null,
+  "shadow_trades": [
+    {
+      "symbol": "MNQ=F",
+      "side": "long",
+      "entry_time": "2026-08-18T09:41:00-04:00",
+      "signal_price": 29760.25,
+      "entry_price": 29761.0,
+      "stop_price": 29758.5,
+      "target_price": 29771.0,
+      "qty": 4,
+      "mode": "shadow_only",
+      "orders_submitted": false,
+      "exit_time": "2026-08-18T09:46:00-04:00",
+      "exit_price": 29757.75,
+      "pnl": -36.0,
+      "reason": "stop_loss"
+    }
+  ],
+  "daily_pnl": -36.0,
+  "status": "outside_rth",
+  "last_error": null
+}

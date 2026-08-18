@@ -159,6 +159,18 @@ def option_fill_price(
     return max(0.01, mid_price * multiplier)
 
 
+def dynamic_entry_budget(
+    day_start_equity: float,
+    day_deployed: float,
+    max_position_pct: float,
+    max_total_pct: float,
+) -> float:
+    """Return remaining budget for one dynamically sized entry."""
+    total = day_start_equity * max_total_pct / 100.0
+    cap = day_start_equity * max_position_pct / 100.0
+    return max(0.0, min(cap, total - day_deployed))
+
+
 # ── IV cache ───────────────────────────────────────────────────────────
 
 class IVCache:
@@ -350,6 +362,10 @@ def run_bs_options_backtest(
     """
     max_positions = config.get("max_positions", 3)
     position_pct = config.get("position_pct", 30.0)
+    # Dynamic sizing reserves a cumulative daily deployment budget.
+    dynamic_sizing = config.get("dynamic_sizing", False)
+    max_position_pct = config.get("max_position_pct", position_pct)  # per-trade cap
+    max_total_pct = config.get("max_total_pct", position_pct * max_positions)  # daily cap
     min_entry_h, min_entry_m = map(int, min_entry_time.split(":"))
     min_entry_time_dt = dt_time(min_entry_h, min_entry_m)
 
@@ -428,11 +444,15 @@ def run_bs_options_backtest(
     # Circuit breaker state: track consecutive losses per symbol per day
     current_trade_day = None
     day_loss_streaks: dict[str, int] = {}  # symbol -> consecutive losses
+    day_start_equity = capital
+    day_deployed = 0.0  # cumulative entry cost, never released after exit
 
     for date in all_dates:
         if date != current_trade_day:
             current_trade_day = date
             day_loss_streaks = {}  # reset per day
+            day_start_equity = cash
+            day_deployed = 0.0
         for sym in frames:
             if sym not in strategies:
                 strategies[sym] = CanonicalSignalAdapter(sym, config)
@@ -666,8 +686,18 @@ def run_bs_options_backtest(
                     diagnostics["option_price_filter"] += 1
                     continue
 
-                # Position sizing: use position_pct of equity for option premium
-                notional = equity * position_pct / 100.0
+                # Position sizing: reserve cumulative daily allocation.
+                if dynamic_sizing:
+                    notional = dynamic_entry_budget(
+                        day_start_equity, day_deployed,
+                        max_position_pct, max_total_pct,
+                    )
+                    if notional <= 0:
+                        diagnostics["dynamic_budget_exhausted"] += 1
+                        continue
+                    remaining_budget = notional
+                else:
+                    notional = equity * position_pct / 100.0
                 # Apply entry slippage (buy fills higher)
                 fill_entry = option_fill_price(
                     option_entry, is_entry=True,
@@ -679,13 +709,27 @@ def run_bs_options_backtest(
                 qty = max(1, int(notional / (fill_entry * 100)))
                 entry_fee = fill_entry * qty * 100 * fee_rate + contract_fee * qty
                 cost = fill_entry * qty * 100 + entry_fee
+
+                if dynamic_sizing and cost > remaining_budget:
+                    per_contract_cost = fill_entry * 100 * (1 + fee_rate) + contract_fee
+                    qty = int(remaining_budget / per_contract_cost)
+                    if qty < 1:
+                        diagnostics["dynamic_budget_exhausted"] += 1
+                        continue
+                    entry_fee = fill_entry * qty * 100 * fee_rate + contract_fee * qty
+                    cost = fill_entry * qty * 100 + entry_fee
+
                 if cost > cash:
-                    qty = max(1, int(cash / (fill_entry * 100 + entry_fee)))
+                    per_contract_cost = fill_entry * 100 * (1 + fee_rate) + contract_fee
+                    qty = int(cash / per_contract_cost)
                     if qty < 1:
                         diagnostics["insufficient_capital"] += 1
                         continue
+                    entry_fee = fill_entry * qty * 100 * fee_rate + contract_fee * qty
                     cost = fill_entry * qty * 100 + entry_fee
                 cash -= cost
+                if dynamic_sizing:
+                    day_deployed += cost
 
                 stop_price = spot * (1 - config["stop_pct"] / 100) if option_type == "call" else spot * (1 + config["stop_pct"] / 100)
                 target_price = spot * (1 + config["target_pct"] / 100) if option_type == "call" else spot * (1 - config["target_pct"] / 100)
@@ -746,6 +790,9 @@ def run_bs_options_backtest(
     r["config"] = {
         "strike_offset": strike_offset, "dte_min": dte_min,
         "dte_max": dte_max, "position_pct": position_pct,
+        "dynamic_sizing": dynamic_sizing,
+        "max_position_pct": max_position_pct,
+        "max_total_pct": max_total_pct,
         "risk_free_rate": risk_free_rate,
         "option_slippage_bps": option_slippage_bps,
         "option_spread_bps": option_spread_bps,

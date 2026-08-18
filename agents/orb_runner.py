@@ -114,14 +114,17 @@ ORB_CONFIG = {
     "circuit_breaker": 3,
     "risk_free_rate": 0.05,
     "min_entry_time": "09:30",
-    # Fixed universe matches the validated backtest. Dynamic discovery is a
-    # separate paper experiment and does not reproduce the winning sample.
-    "discovery_mode": "fixed",
+    # Dynamic discovery selects premarket movers before the ORB window.
+    "discovery_mode": "dynamic",
     "discovery_max_symbols": 4,
     "discovery_min_change_pct": 1.0,
     "discovery_universe": SCANNER_UNIVERSE,
     "max_signal_age_seconds": 300,
     "intrabar_policy": "conservative",
+    # Candidate sizing is measured in shadow mode; execution remains disabled.
+    "dynamic_sizing": True,
+    "max_position_pct": 6.0,
+    "max_total_pct": 12.0,
     # Shadow mode remains enabled until the shadow gate is explicitly cleared.
     "shadow_mode": True,
     "paper_only": True,
@@ -148,7 +151,8 @@ _DEFAULT_STATE = {
     "order_history": {},           # symbol -> {client_order_id, alpaca_order_id, status, ts}
     "last_reconcile_date": None,  # YYYY-MM-DD of last Alpaca reconciliation
     "config_version": "2.1-corrected-paper",  # tracked config version
-    "shadow_signals": {},          # Phase 10: date -> list of shadow signals (would-have-traded)
+    "shadow_signals": {},          # date -> list of shadow signals
+    "sizing_state": {},            # date -> cumulative reserved allocation
     "risk_state": {},              # daily equity baseline, peak, and halt reason
 }
 
@@ -900,6 +904,37 @@ def get_alpaca_positions() -> list[dict]:
 # Position Management
 # ============================================================
 
+def _entry_sizing(config: dict, equity: float, state: dict, today: str) -> dict:
+    dynamic = config.get("dynamic_sizing", False)
+    risk = state.get("risk_state", {})
+    day_start = float(risk.get("day_start_equity") or equity)
+    sizing = state.setdefault("sizing_state", {})
+    record = sizing.setdefault(today, {"day_start_equity": day_start, "deployed": 0.0})
+    deployed = float(record.get("deployed", 0.0))
+    base_pct = float(config.get("position_pct", 3.0))
+    max_pct = float(config.get("max_position_pct", base_pct))
+    total_pct = float(config.get("max_total_pct", base_pct))
+    total_budget = day_start * total_pct / 100.0
+    cap = day_start * max_pct / 100.0
+    allocated = min(cap, max(0.0, total_budget - deployed)) if dynamic else equity * base_pct / 100.0
+    return {
+        "mode": "dynamic" if dynamic else "fixed",
+        "base_position_pct": base_pct,
+        "max_position_pct": max_pct,
+        "max_total_pct": total_pct,
+        "day_start_equity": day_start,
+        "day_deployed_before": deployed,
+        "remaining_budget_before": max(0.0, total_budget - deployed),
+        "allocated_budget": allocated,
+        "trade_number": len(state.get("shadow_signals", {}).get(today, [])) + 1,
+    }
+
+
+def _reserve_entry_budget(state: dict, today: str, amount: float) -> None:
+    record = state.setdefault("sizing_state", {}).setdefault(today, {"deployed": 0.0})
+    record["deployed"] = round(float(record.get("deployed", 0.0)) + amount, 2)
+
+
 def execute_entry(token: str, signal: ORBSignal, config: dict, equity: float,
                   state: dict) -> bool:
     """Execute an ORB options entry: find contract, place order, record position."""
@@ -914,6 +949,11 @@ def execute_entry(token: str, signal: ORBSignal, config: dict, equity: float,
     # Phase 10: Shadow mode — log signal but don't execute
     if config.get("shadow_mode", False):
         today = et_date_str()
+        sizing = _entry_sizing(config, equity, state, today)
+        sizing["allocation_pct"] = round(
+            sizing["allocated_budget"] / sizing["day_start_equity"] * 100, 4
+        ) if sizing["day_start_equity"] else 0.0
+        sizing["budget_available"] = sizing["allocated_budget"] > 0
         shadow = state.get("shadow_signals", {})
         shadow.setdefault(today, []).append({
             "symbol": symbol,
@@ -924,11 +964,15 @@ def execute_entry(token: str, signal: ORBSignal, config: dict, equity: float,
             "option_type": signal.option_type,
             "timestamp": signal.timestamp,
             "equity": equity,
+            "sizing": sizing,
         })
+        if sizing["budget_available"] and config.get("dynamic_sizing", False):
+            _reserve_entry_budget(state, today, sizing["allocated_budget"])
         state["shadow_signals"] = shadow
         logger.info(f"SHADOW MODE: would enter {symbol} {signal.side} "
                     f"entry={signal.entry_price} stop={signal.stop_price} "
-                    f"target={signal.target_price}")
+                    f"target={signal.target_price} "
+                    f"budget=${sizing['allocated_budget']:.2f}")
         narrative.emit("shadow", "signal", "logged", priority="action", facts={
             "symbol": symbol, "side": signal.side,
             "entry": signal.entry_price, "stop": signal.stop_price,
@@ -942,9 +986,13 @@ def execute_entry(token: str, signal: ORBSignal, config: dict, equity: float,
         post_activity(token, f"ENTRY FAILED {symbol} — no option contract found", symbol=symbol)
         return False
 
-    # Position sizing: position_pct of equity for option premium
-    position_pct = config.get("position_pct", 10.0)
-    budget = equity * position_pct / 100.0
+    # Position sizing: reserve cumulative daily allocation.
+    today = et_date_str()
+    sizing = _entry_sizing(config, equity, state, today)
+    budget = sizing["allocated_budget"]
+    if budget <= 0:
+        logger.info(f"Skipping {symbol}: dynamic sizing budget exhausted")
+        return False
 
     # Phase 4: Improved option price estimation
     # Use a simple OTM premium estimate based on underlying price and moneyness
@@ -967,6 +1015,8 @@ def execute_entry(token: str, signal: ORBSignal, config: dict, equity: float,
     result = place_option_order(contract, qty)
     if result is None:
         return False
+    if config.get("dynamic_sizing", False):
+        _reserve_entry_budget(state, today, sizing["allocated_budget"])
 
     # Record position in state
     state["open_positions"][symbol] = {

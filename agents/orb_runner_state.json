@@ -2,9 +2,9 @@
   "consecutive_losses": 0,
   "day_loss_streaks": {},
   "signals_posted": {},
-  "last_cycle_time": "2026-08-17T15:11:39.923638+00:00",
-  "cycles_run": 122,
-  "last_force_exit_date": null,
+  "last_cycle_time": "2026-08-18T22:23:05.763840+00:00",
+  "cycles_run": 1699,
+  "last_force_exit_date": "2026-08-18",
   "open_positions": {},
   "discovered_symbols": {
     "2026-08-17": [
@@ -16,6 +16,12 @@
       "SPOT",
       "DKNG",
       "SHOP"
+    ],
+    "2026-08-18": [
+      "RIOT",
+      "MARA",
+      "SNAP",
+      "XPEV"
     ]
   },
   "discovery_meta": {
@@ -24,10 +30,68 @@
       "et_time": "09:22",
       "late": false,
       "count": 8
+    },
+    "2026-08-18": {
+      "timestamp": "2026-08-18T13:24:41.980771+00:00",
+      "et_time": "09:24",
+      "late": false,
+      "count": 4
     }
   },
   "order_history": {},
-  "last_reconcile_date": "2026-08-17",
+  "last_reconcile_date": "2026-08-18",
   "config_version": "2.1-corrected-paper",
-  "shadow_signals": {}
+  "shadow_signals": {
+    "2026-08-18": [
+      {
+        "symbol": "RIOT",
+        "side": "long",
+        "entry_price": 19.8,
+        "stop_price": 19.602,
+        "target_price": 20.196,
+        "option_type": "call",
+        "timestamp": "2026-08-18T09:37:00",
+        "equity": 10000.0
+      },
+      {
+        "symbol": "SNAP",
+        "side": "long",
+        "entry_price": 5.26,
+        "stop_price": 5.2074,
+        "target_price": 5.3652,
+        "option_type": "call",
+        "timestamp": "2026-08-18T09:37:00",
+        "equity": 10000.0
+      },
+      {
+        "symbol": "XPEV",
+        "side": "short",
+        "entry_price": 11.965,
+        "stop_price": 12.08465,
+        "target_price": 11.7257,
+        "option_type": "put",
+        "timestamp": "2026-08-18T09:38:00",
+        "equity": 10000.0
+      },
+      {
+        "symbol": "MARA",
+        "side": "short",
+        "entry_price": 9.285,
+        "stop_price": 9.37785,
+        "target_price": 9.0993,
+        "option_type": "put",
+        "timestamp": "2026-08-18T09:44:00",
+        "equity": 10000.0
+      }
+    ]
+  },
+  "sizing_state": {},
+  "risk_state": {
+    "date": "2026-08-18",
+    "day_start_equity": 10000.0,
+    "daily_halt_reason": null,
+    "peak_equity": 10000.0,
+    "daily_loss_pct": 0.0,
+    "drawdown_pct": 0.0
+  }
 }
